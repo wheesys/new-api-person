@@ -25,13 +25,8 @@ import { ModelMutateDrawer } from './drawers/model-mutate-drawer'
 import { useModels } from './models-provider'
 
 export function ModelsDialogs() {
-  const {
-    open,
-    setOpen,
-    currentRow,
-    descriptionData,
-    setDescriptionData,
-  } = useModels()
+  const { open, setOpen, currentRow, descriptionData, setDescriptionData } =
+    useModels()
 
   return (
     <>

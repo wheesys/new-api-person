@@ -94,7 +94,6 @@ export function ModelsPrimaryButtons() {
               <List className='h-4 w-4' />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
-
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

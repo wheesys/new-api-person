@@ -74,6 +74,7 @@ func InvalidatePricingCache() {
 
 	pricingMap = nil
 	lastGetPricingTime = time.Time{}
+	invalidateModelBasePriceCache()
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
@@ -168,6 +169,7 @@ func updatePricing() {
 	// 预加载模型元数据一次，避免循环查询
 	var allMeta []Model
 	_ = DB.Find(&allMeta).Error
+	refreshModelBasePriceCache(allMeta)
 	metaMap := make(map[string]*Model)
 	prefixList := make([]*Model, 0)
 	suffixList := make([]*Model, 0)
@@ -333,7 +335,7 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+		modelPrice, findPrice := GetModelFixedPrice(model, false)
 		if findPrice {
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1

@@ -23,11 +23,7 @@ import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
 
-import {
-  ModelsSection,
-  PulseSection,
-  RankingsHero,
-} from './components'
+import { ModelsSection, PulseSection, RankingsHero } from './components'
 import { useRankings } from './hooks/use-rankings'
 import type { RankingPeriod } from './types'
 

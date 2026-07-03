@@ -192,9 +192,7 @@ export function Pricing() {
               value={searchInput}
               onChange={setSearchInput}
               onClear={clearSearch}
-              placeholder={t(
-                'Search model name, endpoint, or tag...'
-              )}
+              placeholder={t('Search model name, endpoint, or tag...')}
               className='mx-auto mt-4 max-w-2xl sm:mt-6'
             />
           </header>

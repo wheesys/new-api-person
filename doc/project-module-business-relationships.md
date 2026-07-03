@@ -264,10 +264,10 @@
 - 单次请求的资金来源可以是钱包或订阅。
 - API 令牌额度和用户/订阅额度都会参与预扣和结算。
 - 计费倍率来自模型倍率、分组倍率、补全倍率、缓存倍率、音频/图片倍率，部分模型支持表达式计费。
-- 模型基础固定价格来自 `ModelPrice` 配置，用于按次、按请求、按任务或按动作收费的模型，例如 Midjourney 动作、Suno、图片生成、视频任务、部分 TTS 等；它不是供应商价格，也不按供应商归属计算。
-- `ModelPrice` 表示乘以分组倍率之前的模型基础价格。基础公式是 `ModelPrice * QuotaPerUnit * GroupRatio`，任务类业务还可叠加适配器估算出的时长、分辨率、数量等 `OtherRatios`。
-- `ModelPrice` 可以在页面配置，不是只能后台固定死。主要入口是“系统设置 -> 计费设置 -> Model Pricing / 模型定价 -> Model prices / 模型价格”，也可以在“模型管理 -> 新增/编辑模型 -> Per-request (fixed price)”里给单个模型设置。
-- 后端 `defaultModelPrice` 只提供默认基础价。页面保存后会写入 `options` 表的 `ModelPrice`，启动和配置同步时再加载到内存 `modelPriceMap` 中覆盖默认值。
+- 模型基础固定价格来自模型自身设置中的 `base_price` 字段，用于按次、按请求、按任务或按动作收费的模型，例如 Midjourney 动作、Suno、图片生成、视频任务、部分 TTS 等；它不是供应商价格，也不按供应商归属计算。
+- `base_price` 表示乘以分组倍率之前的模型基础价格。基础公式是 `base_price * QuotaPerUnit * GroupRatio`，任务类业务还可叠加适配器估算出的时长、分辨率、数量等 `OtherRatios`。
+- `base_price` 在“模型管理 -> 新增/编辑模型 -> Per-request (fixed price)”里配置。模型管理的顶层 `Pricing / 定价` 页签只管理模型倍率、表达式计费、工具价格和上游价格同步，不再保存固定基础价。
+- 后端计费读取顺序是：模型自身 `base_price` 优先，其次兼容旧 `options.ModelPrice`，最后使用后端 `defaultModelPrice` 默认基础价。`options.ModelPrice` 保留为历史部署 fallback，新页面不再作为主要配置入口。
 - 请求失败时，预扣费会尽量退款；违规费用可按策略扣除。
 
 ### 9. 日志、数据看板与排行榜模块

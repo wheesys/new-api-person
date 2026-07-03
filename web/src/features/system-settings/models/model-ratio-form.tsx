@@ -69,6 +69,7 @@ type ModelRatioFormProps = {
   isSaving: boolean
   isResetting: boolean
   variant?: 'default' | 'unset'
+  includeModelFixedPrice?: boolean
 }
 
 type ModelJsonFieldName =
@@ -172,6 +173,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
   isSaving,
   isResetting,
   variant = 'default',
+  includeModelFixedPrice = true,
 }: ModelRatioFormProps) {
   const { t } = useTranslation()
   const isUnsetVariant = variant === 'unset'
@@ -219,6 +221,10 @@ export const ModelRatioForm = memo(function ModelRatioForm({
     await form.handleSubmit(onSave)()
   }, [editMode, form, onSave])
 
+  const visibleModelJsonFields = includeModelFixedPrice
+    ? modelJsonFields
+    : modelJsonFields.filter((field) => field.name !== 'ModelPrice')
+
   return (
     <div className='space-y-6'>
       {!isUnsetVariant && (
@@ -265,7 +271,9 @@ export const ModelRatioForm = memo(function ModelRatioForm({
           <div className='space-y-6'>
             <ModelRatioVisualEditor
               ref={visualEditorRef}
-              savedModelPrice={savedValues.ModelPrice}
+              savedModelPrice={
+                includeModelFixedPrice ? savedValues.ModelPrice : '{}'
+              }
               savedModelRatio={savedValues.ModelRatio}
               savedCacheRatio={savedValues.CacheRatio}
               savedCreateCacheRatio={savedValues.CreateCacheRatio}
@@ -275,7 +283,9 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               savedAudioCompletionRatio={savedValues.AudioCompletionRatio}
               savedBillingMode={savedValues.BillingMode}
               savedBillingExpr={savedValues.BillingExpr}
-              modelPrice={form.watch('ModelPrice')}
+              modelPrice={
+                includeModelFixedPrice ? form.watch('ModelPrice') : '{}'
+              }
               modelRatio={form.watch('ModelRatio')}
               cacheRatio={form.watch('CacheRatio')}
               createCacheRatio={form.watch('CreateCacheRatio')}
@@ -294,6 +304,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               filterMode={isUnsetVariant ? 'unset' : 'all'}
               onSave={handleSave}
               isSaving={isSaving}
+              includeModelFixedPrice={includeModelFixedPrice}
               onChange={(field, value) => {
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',
@@ -333,7 +344,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
         ) : (
           <SettingsForm onSubmit={form.handleSubmit(onSave)}>
             <div className='grid min-w-0 gap-x-5 gap-y-8 lg:grid-cols-2 2xl:grid-cols-3'>
-              {modelJsonFields.map((config) => (
+              {visibleModelJsonFields.map((config) => (
                 <ModelJsonTextareaField
                   key={config.name}
                   form={form}

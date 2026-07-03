@@ -81,9 +81,7 @@ export function ModelsTable() {
 
   // Use search API whenever any filter is active so all filters are applied server-side.
   const shouldSearch = Boolean(
-    globalFilter?.trim() ||
-    statusFilterValue ||
-    syncFilterValue
+    globalFilter?.trim() || statusFilterValue || syncFilterValue
   )
 
   // Fetch models data

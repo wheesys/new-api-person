@@ -93,6 +93,7 @@ type ModelRatioVisualEditorProps = {
   onChange: (field: string, value: string) => void
   onSave: () => void | Promise<void>
   isSaving: boolean
+  includeModelFixedPrice?: boolean
 }
 
 export type ModelRatioVisualEditorHandle = {
@@ -132,6 +133,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     onChange,
     onSave,
     isSaving,
+    includeModelFixedPrice = true,
   },
   ref
 ) {
@@ -271,11 +273,13 @@ const ModelRatioVisualEditorComponent = forwardRef<
     () =>
       models.reduce(
         (acc, model) => {
-          const mode =
-            model.billingMode === 'per-request' ||
-            model.billingMode === 'tiered_expr'
-              ? model.billingMode
-              : 'per-token'
+          let mode: PricingMode = 'per-token'
+          if (includeModelFixedPrice && model.billingMode === 'per-request') {
+            mode = 'per-request'
+          }
+          if (model.billingMode === 'tiered_expr') {
+            mode = 'tiered_expr'
+          }
           acc[mode] += 1
           return acc
         },
@@ -285,17 +289,43 @@ const ModelRatioVisualEditorComponent = forwardRef<
           tiered_expr: 0,
         } as Record<'per-token' | 'per-request' | 'tiered_expr', number>
       ),
-    [models]
+    [includeModelFixedPrice, models]
   )
+  const billingModeFilterOptions = useMemo(() => {
+    const options = [
+      {
+        label: 'Per-token',
+        value: 'per-token',
+        count: modeCounts['per-token'],
+      },
+    ]
+    if (includeModelFixedPrice) {
+      options.push({
+        label: 'Per-request',
+        value: 'per-request',
+        count: modeCounts['per-request'],
+      })
+    }
+    options.push({
+      label: 'Expression',
+      value: 'tiered_expr',
+      count: modeCounts.tiered_expr,
+    })
+    return options
+  }, [includeModelFixedPrice, modeCounts])
 
   const handleEdit = useCallback(
     (model: ModelRow) => {
       const editableModel = model.draft ?? model.saved ?? model
-      let editBillingMode: PricingMode = 'per-token'
+      let billingMode: PricingMode = 'per-token'
       if (editableModel.billingMode === 'tiered_expr') {
-        editBillingMode = 'tiered_expr'
-      } else if (editableModel.price && editableModel.price !== '') {
-        editBillingMode = 'per-request'
+        billingMode = 'tiered_expr'
+      } else if (
+        includeModelFixedPrice &&
+        editableModel.price &&
+        editableModel.price !== ''
+      ) {
+        billingMode = 'per-request'
       }
       setEditData({
         name: editableModel.name,
@@ -307,14 +337,14 @@ const ModelRatioVisualEditorComponent = forwardRef<
         imageRatio: editableModel.imageRatio,
         audioRatio: editableModel.audioRatio,
         audioCompletionRatio: editableModel.audioCompletionRatio,
-        billingMode: editBillingMode,
+        billingMode,
         billingExpr: editableModel.billingExpr,
         requestRuleExpr: editableModel.requestRuleExpr,
       })
       setEditorOpen(true)
       if (isMobile) setSheetOpen(true)
     },
-    [isMobile]
+    [includeModelFixedPrice, isMobile]
   )
 
   const handleAdd = useCallback(() => {
@@ -340,10 +370,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
   const handleDelete = useCallback(
     (name: string) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
+      const priceMap = includeModelFixedPrice
+        ? safeJsonParse<Record<string, number>>(modelPrice, {
+            fallback: {},
+            silent: true,
+          })
+        : {}
       const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
         fallback: {},
         silent: true,
@@ -381,7 +413,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
         { fallback: {}, silent: true }
       )
 
-      delete priceMap[name]
+      if (includeModelFixedPrice) {
+        delete priceMap[name]
+      }
       delete ratioMap[name]
       delete cacheMap[name]
       delete createCacheMap[name]
@@ -392,7 +426,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
       delete billingModeMap[name]
       delete billingExprMap[name]
 
-      onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
+      if (includeModelFixedPrice) {
+        onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
+      }
       onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
       onChange('CacheRatio', JSON.stringify(cacheMap, null, 2))
       onChange('CreateCacheRatio', JSON.stringify(createCacheMap, null, 2))
@@ -431,6 +467,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingExpr,
       onChange,
       editData,
+      includeModelFixedPrice,
     ]
   )
 
@@ -480,10 +517,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
   const persistPricingData = useCallback(
     (data: ModelRatioData, targetNames: string[] = [data.name]) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
+      const priceMap = includeModelFixedPrice
+        ? safeJsonParse<Record<string, number>>(modelPrice, {
+            fallback: {},
+            silent: true,
+          })
+        : {}
       const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
         fallback: {},
         silent: true,
@@ -526,13 +565,19 @@ const ModelRatioVisualEditorComponent = forwardRef<
         name: string,
         value: string | undefined
       ) => {
-        if (!value || value === '') return
-        const parsed = parseFloat(value)
-        if (Number.isFinite(parsed)) target[name] = parsed
+        if (!value || value === '') {
+          return
+        }
+        const parsed = Number.parseFloat(value)
+        if (Number.isFinite(parsed)) {
+          target[name] = parsed
+        }
       }
 
       targetNames.forEach((name) => {
-        delete priceMap[name]
+        if (includeModelFixedPrice) {
+          delete priceMap[name]
+        }
         delete ratioMap[name]
         delete cacheMap[name]
         delete createCacheMap[name]
@@ -556,7 +601,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
           // serve as fallback during multi-instance sync delays. The backend's
           // ModelPriceHelper checks billing_mode first, so these values are
           // only consulted when billing_setting hasn't propagated yet.
-          setIfPresent(priceMap, name, data.price)
+          if (includeModelFixedPrice) {
+            setIfPresent(priceMap, name, data.price)
+          }
           setIfPresent(ratioMap, name, data.ratio)
           setIfPresent(cacheMap, name, data.cacheRatio)
           setIfPresent(createCacheMap, name, data.createCacheRatio)
@@ -564,7 +611,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
           setIfPresent(imageMap, name, data.imageRatio)
           setIfPresent(audioMap, name, data.audioRatio)
           setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
-        } else if (data.price && data.price !== '') {
+        } else if (includeModelFixedPrice && data.price && data.price !== '') {
           setIfPresent(priceMap, name, data.price)
         } else {
           setIfPresent(ratioMap, name, data.ratio)
@@ -577,7 +624,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
         }
       })
 
-      onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
+      if (includeModelFixedPrice) {
+        onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
+      }
       onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
       onChange('CacheRatio', JSON.stringify(cacheMap, null, 2))
       onChange('CreateCacheRatio', JSON.stringify(createCacheMap, null, 2))
@@ -609,6 +658,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       onChange,
+      includeModelFixedPrice,
     ]
   )
 
@@ -686,23 +736,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
               {
                 columnId: 'billingMode',
                 title: t('Mode'),
-                options: [
-                  {
-                    label: 'Per-token',
-                    value: 'per-token',
-                    count: modeCounts['per-token'],
-                  },
-                  {
-                    label: 'Per-request',
-                    value: 'per-request',
-                    count: modeCounts['per-request'],
-                  },
-                  {
-                    label: 'Expression',
-                    value: 'tiered_expr',
-                    count: modeCounts.tiered_expr,
-                  },
-                ],
+                options: billingModeFilterOptions,
               },
             ]}
             preActions={
@@ -779,6 +813,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
               editData={editData}
               onSave={onSave}
               isSaving={isSaving}
+              includeModelFixedPrice={includeModelFixedPrice}
               className='h-full min-h-0'
             />
           ) : (
@@ -819,6 +854,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
           editData={editData}
           onSave={onSave}
           isSaving={isSaving}
+          includeModelFixedPrice={includeModelFixedPrice}
         />
       )}
     </div>
@@ -856,7 +892,8 @@ export const ModelRatioVisualEditor = memo(
       prevProps.filterMode === nextProps.filterMode &&
       prevProps.onChange === nextProps.onChange &&
       prevProps.onSave === nextProps.onSave &&
-      prevProps.isSaving === nextProps.isSaving
+      prevProps.isSaving === nextProps.isSaving &&
+      prevProps.includeModelFixedPrice === nextProps.includeModelFixedPrice
     )
   }
 )

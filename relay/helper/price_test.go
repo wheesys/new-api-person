@@ -1,11 +1,14 @@
 package helper
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -13,8 +16,42 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func setupPriceHelperTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.RedisEnabled = false
+
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	model.LOG_DB = db
+	require.NoError(t, db.AutoMigrate(&model.Model{}))
+	model.InvalidatePricingCache()
+	originalModelPrices := ratio_setting.ModelPrice2JSONString()
+
+	t.Cleanup(func() {
+		model.InvalidatePricingCache()
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalModelPrices))
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	return db
+}
 
 func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -271,4 +308,34 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Equal(t, "QuotaFromFloat", clamp.Op)
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 	require.Nil(t, info.Billing)
+}
+
+func TestModelPriceHelperUsesModelBasePriceBeforeGlobalModelPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPriceHelperTestDB(t)
+	const modelName = "zz-helper-fixed-price-model"
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"zz-helper-fixed-price-model":0.4}`))
+	basePrice := 0.2
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: modelName,
+		Status:    1,
+		BasePrice: &basePrice,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, basePrice, priceData.ModelPrice)
+	require.Equal(t, int(basePrice*common.QuotaPerUnit), priceData.QuotaToPreConsume)
 }

@@ -40,6 +40,7 @@ export interface Model {
   icon?: string
   tags?: string
   endpoints?: string
+  base_price?: number | null
   status: number
   sync_official: number
   created_time: number
@@ -192,6 +193,7 @@ export const modelFormSchema = z.object({
   icon: z.string().default(''),
   tags: z.array(z.string()).default([]),
   endpoints: z.string().default(''),
+  base_price: z.number().nullable().optional(),
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
   sync_official: z.boolean().default(true),
@@ -248,7 +250,7 @@ export type SyncSource = 'official' | 'config'
 /**
  * Model tab type
  */
-export type ModelTabCategory = 'metadata' | 'deployments'
+export type ModelTabCategory = 'metadata' | 'deployments' | 'pricing'
 
 /**
  * Deployment entity from API

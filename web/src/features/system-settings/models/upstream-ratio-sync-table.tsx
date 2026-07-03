@@ -57,6 +57,7 @@ type UpstreamRatioSyncTableProps = {
   resolutions: ResolutionsMap
   isDisabled: boolean
   isSyncing: boolean
+  includeModelFixedPrice?: boolean
   onSelectValue: (
     model: string,
     ratioType: RatioType,
@@ -81,6 +82,7 @@ export function UpstreamRatioSyncTable({
   resolutions,
   isDisabled,
   isSyncing,
+  includeModelFixedPrice = true,
   onSelectValue,
   onSelectValues,
   onUnselectValue,
@@ -272,7 +274,10 @@ export function UpstreamRatioSyncTable({
         <Select
           items={[
             { value: '__all__', label: t('All Types') },
-            ...RATIO_TYPE_OPTIONS.map((option) => ({
+            ...RATIO_TYPE_OPTIONS.filter(
+              (option) =>
+                includeModelFixedPrice || option.value !== 'model_price'
+            ).map((option) => ({
               value: option.value,
               label: t(option.label),
             })),
@@ -287,7 +292,10 @@ export function UpstreamRatioSyncTable({
           <SelectContent alignItemWithTrigger={false}>
             <SelectGroup>
               <SelectItem value='__all__'>{t('All Types')}</SelectItem>
-              {RATIO_TYPE_OPTIONS.map((option) => (
+              {RATIO_TYPE_OPTIONS.filter(
+                (option) =>
+                  includeModelFixedPrice || option.value !== 'model_price'
+              ).map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {t(option.label)}
                 </SelectItem>

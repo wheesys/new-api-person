@@ -79,6 +79,7 @@ type UpstreamRatioSyncProps = {
     'billing_setting.billing_mode': string
     'billing_setting.billing_expr': string
   }
+  includeModelFixedPrice?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,10 @@ function parseJsonRecord<T>(raw: string | undefined | null): Record<string, T> {
 // Component
 // ---------------------------------------------------------------------------
 
-export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
+export function UpstreamRatioSync({
+  modelRatios,
+  includeModelFixedPrice = true,
+}: UpstreamRatioSyncProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -169,6 +173,17 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       }
 
       const { differences: diffs, test_results } = data.data
+      const filteredDiffs = includeModelFixedPrice
+        ? diffs
+        : Object.fromEntries(
+            Object.entries(diffs)
+              .map(([model, ratios]) => {
+                const nextRatios = { ...ratios }
+                delete nextRatios.model_price
+                return [model, nextRatios] as const
+              })
+              .filter(([, ratios]) => Object.keys(ratios).length > 0)
+          )
 
       const errorResults = test_results.filter((r) => r.status === 'error')
       if (errorResults.length > 0) {
@@ -178,10 +193,10 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         toast.warning(t('Some channels failed: {{errorMsg}}', { errorMsg }))
       }
 
-      setDifferences(diffs)
+      setDifferences(filteredDiffs)
       setResolutions({})
 
-      if (Object.keys(diffs).length === 0) {
+      if (Object.keys(filteredDiffs).length === 0) {
         toast.success(t('No price differences found'))
       } else {
         toast.success(t('Upstream prices fetched successfully'))
@@ -300,7 +315,9 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       AudioCompletionRatio: parseJsonRecord<number>(
         modelRatios.AudioCompletionRatio
       ),
-      ModelPrice: parseJsonRecord<number>(modelRatios.ModelPrice),
+      ModelPrice: includeModelFixedPrice
+        ? parseJsonRecord<number>(modelRatios.ModelPrice)
+        : {},
       'billing_setting.billing_mode': parseJsonRecord<string>(
         modelRatios['billing_setting.billing_mode']
       ),
@@ -308,7 +325,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         modelRatios['billing_setting.billing_expr']
       ),
     }
-  }, [modelRatios])
+  }, [includeModelFixedPrice, modelRatios])
 
   type ParsedRatios = typeof parsedRatios
 
@@ -316,7 +333,12 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
     model: string,
     currentRatios: ParsedRatios
   ): 'price' | 'ratio' | null => {
-    if (currentRatios.ModelPrice[model] !== undefined) return 'price'
+    if (
+      includeModelFixedPrice &&
+      currentRatios.ModelPrice[model] !== undefined
+    ) {
+      return 'price'
+    }
     if (
       currentRatios.ModelRatio[model] !== undefined ||
       currentRatios.CompletionRatio[model] !== undefined ||
@@ -341,7 +363,9 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         ImageRatio: { ...currentRatios.ImageRatio },
         AudioRatio: { ...currentRatios.AudioRatio },
         AudioCompletionRatio: { ...currentRatios.AudioCompletionRatio },
-        ModelPrice: { ...currentRatios.ModelPrice },
+        ModelPrice: includeModelFixedPrice
+          ? { ...currentRatios.ModelPrice }
+          : {},
         'billing_setting.billing_mode': {
           ...currentRatios['billing_setting.billing_mode'],
         },
@@ -352,7 +376,8 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
       Object.entries(resolutions).forEach(([model, ratios]) => {
         const selectedTypes = Object.keys(ratios)
-        const hasPrice = selectedTypes.includes('model_price')
+        const hasPrice =
+          includeModelFixedPrice && selectedTypes.includes('model_price')
         const hasRatio = selectedTypes.some((rt) =>
           RATIO_SYNC_FIELDS.includes(rt as RatioType)
         )
@@ -367,10 +392,15 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
           delete finalRatios.AudioCompletionRatio[model]
         }
         if (hasRatio) {
-          delete finalRatios.ModelPrice[model]
+          if (includeModelFixedPrice) {
+            delete finalRatios.ModelPrice[model]
+          }
         }
 
         Object.entries(ratios).forEach(([ratioType, value]) => {
+          if (!includeModelFixedPrice && ratioType === 'model_price') {
+            return
+          }
           const optionKey = optionKeyBySyncField(ratioType)
           finalRatios[optionKey][model] = NUMERIC_SYNC_FIELDS.has(ratioType)
             ? Number(value)
@@ -378,10 +408,12 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         })
       })
 
-      const updates = Object.entries(finalRatios).map(([key, value]) => ({
-        key,
-        value: JSON.stringify(value, null, 2),
-      }))
+      const updates = Object.entries(finalRatios)
+        .filter(([key]) => includeModelFixedPrice || key !== 'ModelPrice')
+        .map(([key, value]) => ({
+          key,
+          value: JSON.stringify(value, null, 2),
+        }))
 
       return new Promise<boolean>((resolve) => {
         syncMutate(updates, {
@@ -390,7 +422,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         })
       })
     },
-    [resolutions, syncMutate]
+    [includeModelFixedPrice, resolutions, syncMutate]
   )
 
   const findSourceChannel = (
@@ -416,7 +448,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       const localCat = getLocalBillingCategory(model, currentRatios)
       const selectedTypes = Object.keys(ratios)
       let newCat: 'price' | 'ratio' | 'tiered'
-      if ('model_price' in ratios) {
+      if (includeModelFixedPrice && 'model_price' in ratios) {
         newCat = 'price'
       } else if (RATIO_SYNC_FIELDS.some((rt) => selectedTypes.includes(rt))) {
         newCat = 'ratio'
@@ -506,6 +538,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
           onSelectValues={handleSelectValues}
           onUnselectValue={handleUnselectValue}
           onUnselectValues={handleUnselectValues}
+          includeModelFixedPrice={includeModelFixedPrice}
         />
       </div>
 

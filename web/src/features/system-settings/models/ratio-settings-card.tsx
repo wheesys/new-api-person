@@ -49,9 +49,13 @@ function formatJsonValidationError(
   error?: JsonValidationError,
   fallback = 'Invalid JSON'
 ) {
-  if (!error) return t(fallback)
+  if (!error) {
+    return t(fallback)
+  }
 
-  if (error.type === 'required') return t('Value is required')
+  if (error.type === 'required') {
+    return t('Value is required')
+  }
   if (error.type === 'structure') {
     return t(
       fallback === 'Invalid JSON' ? 'JSON structure is invalid' : fallback
@@ -149,6 +153,8 @@ type RatioSettingsCardProps = {
   toolPricesDefault: string
   titleKey?: string
   visibleTabs?: RatioTabId[]
+  includeModelFixedPrice?: boolean
+  inlineTabSwitcher?: boolean
 }
 
 export function RatioSettingsCard({
@@ -157,6 +163,8 @@ export function RatioSettingsCard({
   toolPricesDefault,
   titleKey = 'Pricing Ratios',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
+  includeModelFixedPrice = true,
+  inlineTabSwitcher = false,
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -312,7 +320,9 @@ export function RatioSettingsCard({
   const saveModelRatios = useCallback(
     async (values: ModelFormValues) => {
       const normalized = {
-        ModelPrice: normalizeJsonString(values.ModelPrice),
+        ModelPrice: includeModelFixedPrice
+          ? normalizeJsonString(values.ModelPrice)
+          : modelNormalizedDefaults.current.ModelPrice,
         ModelRatio: normalizeJsonString(values.ModelRatio),
         CacheRatio: normalizeJsonString(values.CacheRatio),
         CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
@@ -349,7 +359,7 @@ export function RatioSettingsCard({
       modelNormalizedDefaults.current = normalized
       setSavedModelValues(normalized)
     },
-    [t, updateOption]
+    [includeModelFixedPrice, t, updateOption]
   )
 
   const saveGroupRatios = useCallback(
@@ -396,7 +406,7 @@ export function RatioSettingsCard({
   }, [resetMutate])
 
   const tabLabels: Record<RatioTabId, string> = {
-    models: 'Model prices',
+    models: includeModelFixedPrice ? 'Model prices' : 'Model ratios',
     'unset-models': 'Unset price models',
     groups: 'Group ratios',
     'tool-prices': 'Tool prices',
@@ -423,6 +433,7 @@ export function RatioSettingsCard({
           isSaving={updateOption.isPending}
           isResetting={resetMutation.isPending}
           variant={tab === 'unset-models' ? 'unset' : 'default'}
+          includeModelFixedPrice={includeModelFixedPrice}
         />
       )
     }
@@ -452,6 +463,7 @@ export function RatioSettingsCard({
           'billing_setting.billing_mode': modelDefaults.BillingMode,
           'billing_setting.billing_expr': modelDefaults.BillingExpr,
         }}
+        includeModelFixedPrice={includeModelFixedPrice}
       />
     )
   }
@@ -474,9 +486,13 @@ export function RatioSettingsCard({
         </SettingsSection>
       ) : (
         <Tabs defaultValue={defaultTab} className='h-full min-h-0 gap-6'>
-          <SettingsPageTitleStatusPortal>
-            {renderTabSwitcher()}
-          </SettingsPageTitleStatusPortal>
+          {inlineTabSwitcher ? (
+            <div>{renderTabSwitcher()}</div>
+          ) : (
+            <SettingsPageTitleStatusPortal>
+              {renderTabSwitcher()}
+            </SettingsPageTitleStatusPortal>
+          )}
 
           <SettingsSection title={t(titleKey)} className='min-h-0 flex-1'>
             {visibleTabs.map((tab) => (
