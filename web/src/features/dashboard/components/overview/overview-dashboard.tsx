@@ -26,7 +26,6 @@ import {
   ChevronUp,
   Circle,
   Copy,
-  CreditCard,
   FileText,
   KeyRound,
   ListChecks,
@@ -83,7 +82,6 @@ const SETUP_GUIDE_CODE_PATTERN = [
 
 type DashboardActionPath =
   | '/keys'
-  | '/wallet'
   | '/playground'
   | '/channels'
   | '/usage-logs'
@@ -375,9 +373,9 @@ function RequestPreview(props: {
           <span className='bg-success size-2 rounded-full' />
         </div>
         <div className='flex flex-col gap-1 overflow-hidden'>
-          {previewLines.map((line) => (
+          {previewLines.map((line, index) => (
             <code
-              key={line}
+              key={`${index}-${line}`}
               className='text-muted-foreground truncate'
               title={line}
             >
@@ -470,8 +468,6 @@ export function OverviewDashboard() {
   >(() => getSavedSetupGuideExpanded())
 
   const requestCount = Number(user?.request_count ?? 0)
-  const remainQuota = Number(user?.quota ?? 0)
-  const usedQuota = Number(user?.used_quota ?? 0)
   const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
 
   const apiKeysQuery = useQuery({
@@ -507,11 +503,11 @@ export function OverviewDashboard() {
         completed: Boolean(preferredKey),
       },
       {
-        title: t('Add credits'),
-        description: t('Keep enough balance before production traffic'),
-        to: '/wallet',
-        icon: CreditCard,
-        completed: remainQuota > 0 || usedQuota > 0,
+        title: t('Choose a model'),
+        description: t('Review available models before production traffic'),
+        to: '/pricing',
+        icon: BookOpen,
+        completed: Boolean(modelsQuery.data?.length),
       },
       {
         title: t('Send a request'),
@@ -521,7 +517,7 @@ export function OverviewDashboard() {
         completed: requestCount > 0,
       },
     ],
-    [preferredKey, remainQuota, requestCount, t, usedQuota]
+    [modelsQuery.data?.length, preferredKey, requestCount, t]
   )
 
   const quickActions = useMemo<QuickAction[]>(
@@ -637,7 +633,7 @@ export function OverviewDashboard() {
                       </h3>
                       <p className='text-muted-foreground max-w-xl text-sm leading-relaxed'>
                         {t(
-                          'A focused home for keys, balance, routing, and service health.'
+                          'A focused home for keys, routing, usage, and service health.'
                         )}
                       </p>
                     </div>

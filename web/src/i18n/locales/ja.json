@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "ライブ利用データに基づいて更新される、プラットフォームで最も使われているモデルを確認できます。",
     "Refine models by group, type, endpoint, and tags.": "グループ、タイプ、エンドポイント、タグでモデルを絞り込みます。",
     "Filter models by group, type, endpoint, and tags.": "グループ、タイプ、エンドポイント、タグでモデルをフィルターします。",
-    "Search model name, endpoint, or tag...": "モデル名、エンドポイント、タグを検索..."
+    "Search model name, endpoint, or tag...": "モデル名、エンドポイント、タグを検索...",
+    "Channel Price Ratio": "チャネル価格倍率",
+    "Channel price ratio must be greater than or equal to 0": "チャネル価格倍率は 0 以上である必要があります",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "モデル価格とグループ倍率の後に適用される、このチャネルの最終課金倍率です。1 は調整なし、0 はこのチャネルを無料課金にします。"
   }
 }

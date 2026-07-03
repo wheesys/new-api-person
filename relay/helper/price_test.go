@@ -95,6 +95,7 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1500, priceData.QuotaToPreConsume)
+	require.Equal(t, 1.0, priceData.ChannelRatio)
 	require.NotNil(t, info.TieredBillingSnapshot)
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
@@ -338,4 +339,71 @@ func TestModelPriceHelperUsesModelBasePriceBeforeGlobalModelPrice(t *testing.T) 
 	require.True(t, priceData.UsePrice)
 	require.Equal(t, basePrice, priceData.ModelPrice)
 	require.Equal(t, int(basePrice*common.QuotaPerUnit), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperAppliesChannelRatioToFixedPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPriceHelperTestDB(t)
+	const modelName = "zz-helper-channel-ratio-fixed-price-model"
+	basePrice := 0.2
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: modelName,
+		Status:    1,
+		BasePrice: &basePrice,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelPriceRatio:    1.5,
+			ChannelPriceRatioSet: true,
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.Equal(t, 1.5, priceData.ChannelRatio)
+	require.Equal(t, int(basePrice*common.QuotaPerUnit*1.5), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperAllowsZeroChannelRatioAsFree(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPriceHelperTestDB(t)
+	const modelName = "zz-helper-zero-channel-ratio-model"
+	basePrice := 0.2
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: modelName,
+		Status:    1,
+		BasePrice: &basePrice,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelPriceRatio:    0,
+			ChannelPriceRatioSet: true,
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.FreeModel)
+	require.Equal(t, 0.0, priceData.ChannelRatio)
+	require.Equal(t, 0, priceData.QuotaToPreConsume)
 }

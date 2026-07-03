@@ -335,6 +335,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.remark?.trim() ||
     values.priority ||
     values.weight ||
+    values.price_ratio !== 1 ||
     values.proxy?.trim() ||
     values.system_prompt?.trim() ||
     values.force_format ||
@@ -3681,6 +3682,38 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                     <FormDescription>
                                       {t(FIELD_DESCRIPTIONS.WEIGHT)}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name='price_ratio'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Channel Price Ratio')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        type='number'
+                                        min='0'
+                                        step='0.01'
+                                        placeholder='1'
+                                        {...field}
+                                        onChange={(e) =>
+                                          field.onChange(
+                                            e.target.value === ''
+                                              ? 1
+                                              : Number(e.target.value)
+                                          )
+                                        }
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(FIELD_DESCRIPTIONS.PRICE_RATIO)}
                                     </FormDescription>
                                     <FormMessage />
                                   </FormItem>

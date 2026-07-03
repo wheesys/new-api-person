@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "Découvrez les modèles les plus utilisés de la plateforme, mis à jour à partir des données d’utilisation en direct.",
     "Refine models by group, type, endpoint, and tags.": "Affiner les modèles par groupe, type, point d’accès et tags.",
     "Filter models by group, type, endpoint, and tags.": "Filtrer les modèles par groupe, type, point d’accès et tags.",
-    "Search model name, endpoint, or tag...": "Rechercher un nom de modèle, un point d’accès ou un tag..."
+    "Search model name, endpoint, or tag...": "Rechercher un nom de modèle, un point d’accès ou un tag...",
+    "Channel Price Ratio": "Multiplicateur de prix du canal",
+    "Channel price ratio must be greater than or equal to 0": "Le multiplicateur de prix du canal doit etre superieur ou egal a 0",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "Multiplicateur final de facturation pour ce canal apres le prix du modele et du groupe. Utilisez 1 pour aucun ajustement, 0 pour une facturation gratuite."
   }
 }

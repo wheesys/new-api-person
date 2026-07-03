@@ -98,11 +98,16 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
 		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
 		common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
+		common.SetContextKey(c, constant.ContextKeyChannelPriceRatio, ch.GetPriceRatio())
 
 		info.ChannelBaseUrl = ch.GetBaseURL()
 		info.ChannelId = originTask.ChannelId
 		info.ChannelType = ch.Type
 		info.ApiKey = key
+		if info.ChannelMeta != nil {
+			info.ChannelMeta.ChannelPriceRatio = ch.GetPriceRatio()
+			info.ChannelMeta.ChannelPriceRatioSet = true
+		}
 	}
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）

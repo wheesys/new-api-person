@@ -81,16 +81,20 @@ func shouldChargeViolationFee(err *types.NewAPIError) bool {
 	return HasCSAMViolationMarker(err)
 }
 
-func calcViolationFeeQuota(amount, groupRatio float64) int {
+func calcViolationFeeQuota(amount, groupRatio, channelRatio float64) int {
 	if amount <= 0 {
 		return 0
 	}
 	if groupRatio <= 0 {
 		return 0
 	}
+	if channelRatio < 0 {
+		channelRatio = 1
+	}
 	quota := decimal.NewFromFloat(amount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
 		Mul(decimal.NewFromFloat(groupRatio)).
+		Mul(decimal.NewFromFloat(channelRatio)).
 		Round(0).
 		IntPart()
 	if quota <= 0 {
@@ -118,7 +122,8 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	}
 
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	feeQuota := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	channelRatio := relayInfo.PriceData.GetChannelRatio()
+	feeQuota := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio, channelRatio)
 	if feeQuota <= 0 {
 		return false
 	}
@@ -141,6 +146,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		"fee_quota":            feeQuota,
 		"base_amount":          settings.ViolationDeductionAmount,
 		"group_ratio":          groupRatio,
+		"channel_ratio":        channelRatio,
 		"status_code":          apiErr.StatusCode,
 		"upstream_error_type":  oai.Type,
 		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),

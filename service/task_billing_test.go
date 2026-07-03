@@ -315,8 +315,8 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 
 	assert.True(t, RefundTaskQuota(ctx, task, "task failed: upstream error"))
 
-	// User quota should increase by preConsumed
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	// User wallet quota is not refunded after wallet removal.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 
 	// Token remain_quota should increase, used_quota should decrease
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
@@ -351,8 +351,8 @@ func TestRefundTaskQuota_Subscription(t *testing.T) {
 
 	assert.True(t, RefundTaskQuota(ctx, task, "subscription task failed"))
 
-	// Subscription used should decrease by preConsumed
-	assert.Equal(t, subUsed-int64(preConsumed), getSubscriptionUsed(t, subID))
+	// Subscription quota is not adjusted after wallet/payment removal.
+	assert.Equal(t, subUsed, getSubscriptionUsed(t, subID))
 
 	// Token should also be refunded
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
@@ -396,8 +396,8 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 
 	assert.True(t, RefundTaskQuota(ctx, task, "no token task failed"))
 
-	// User quota refunded
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	// User wallet quota is not refunded after wallet removal.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 
 	// Log created
 	log := getLastLog(t)
@@ -443,8 +443,8 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
-	// User quota should decrease by the delta (1000 additional charge)
-	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	// User wallet quota is not adjusted after wallet removal.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 
 	// Token should also be charged the delta
 	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
@@ -476,8 +476,8 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
-	// User quota should increase by abs(delta) = 2000 (refund overpayment)
-	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	// User wallet quota is not adjusted after wallet removal.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 
 	// Token should be refunded the difference
 	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
@@ -549,8 +549,8 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "subscription over-charge")
 
-	// Subscription used should decrease by delta (refund 3000)
-	assert.Equal(t, subUsed-int64(preConsumed-actualQuota), getSubscriptionUsed(t, subID))
+	// Subscription quota is not adjusted after wallet/payment removal.
+	assert.Equal(t, subUsed, getSubscriptionUsed(t, subID))
 
 	// Token refunded
 	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
@@ -640,8 +640,8 @@ func TestCASGuardedRefund_Win(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
 	assert.Zero(t, reloaded.Quota)
 
-	// Refund should have happened
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	// Token refund happens, wallet quota remains unchanged.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 
 	log := getLastLog(t)
@@ -705,8 +705,8 @@ func TestCASGuardedSettle_Win(t *testing.T) {
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, reloaded.Status)
 
-	// Settlement should refund the over-charge (5000 - 3000 = 2000 back to user)
-	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	// Settlement only adjusts token quota; wallet quota remains unchanged.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 
 	// task.Quota should be updated to actualQuota
@@ -839,8 +839,8 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
-	// Non-per-call: adaptor adjustment applies (refund 2000)
-	assert.Equal(t, initQuota+(preConsumed-adaptorQuota), getUserQuota(t, userID))
+	// Non-per-call: adaptor adjustment applies to token quota only.
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain+(preConsumed-adaptorQuota), getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, adaptorQuota, task.Quota)
 

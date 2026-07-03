@@ -9,25 +9,8 @@ import (
 )
 
 func GetSubscription(c *gin.Context) {
-	var remainQuota int
-	var usedQuota int
-	var err error
-	var token *model.Token
-	var expiredTime int64
-	if common.DisplayTokenStatEnabled {
-		tokenId := c.GetInt("token_id")
-		token, err = model.GetTokenById(tokenId)
-		expiredTime = token.ExpiredTime
-		remainQuota = token.RemainQuota
-		usedQuota = token.UsedQuota
-	} else {
-		userId := c.GetInt("id")
-		remainQuota, err = model.GetUserQuota(userId, false)
-		usedQuota, err = model.GetUserUsedQuota(userId)
-	}
-	if expiredTime <= 0 {
-		expiredTime = 0
-	}
+	tokenId := c.GetInt("token_id")
+	token, err := model.GetTokenById(tokenId)
 	if err != nil {
 		openAIError := types.OpenAIError{
 			Message: err.Error(),
@@ -38,7 +21,7 @@ func GetSubscription(c *gin.Context) {
 		})
 		return
 	}
-	quota := remainQuota + usedQuota
+	quota := token.RemainQuota + token.UsedQuota
 	amount := float64(quota)
 	// OpenAI 兼容接口中的 *_USD 字段含义保持“额度单位”对应值：
 	// 我们将其解释为以“站点展示类型”为准：
@@ -53,8 +36,12 @@ func GetSubscription(c *gin.Context) {
 	default:
 		amount = amount / common.QuotaPerUnit
 	}
-	if token != nil && token.UnlimitedQuota {
+	if token.UnlimitedQuota {
 		amount = 100000000
+	}
+	expiredTime := token.ExpiredTime
+	if expiredTime <= 0 {
+		expiredTime = 0
 	}
 	subscription := OpenAISubscriptionResponse{
 		Object:             "billing_subscription",
@@ -69,17 +56,8 @@ func GetSubscription(c *gin.Context) {
 }
 
 func GetUsage(c *gin.Context) {
-	var quota int
-	var err error
-	var token *model.Token
-	if common.DisplayTokenStatEnabled {
-		tokenId := c.GetInt("token_id")
-		token, err = model.GetTokenById(tokenId)
-		quota = token.UsedQuota
-	} else {
-		userId := c.GetInt("id")
-		quota, err = model.GetUserUsedQuota(userId)
-	}
+	tokenId := c.GetInt("token_id")
+	token, err := model.GetTokenById(tokenId)
 	if err != nil {
 		openAIError := types.OpenAIError{
 			Message: err.Error(),
@@ -90,6 +68,7 @@ func GetUsage(c *gin.Context) {
 		})
 		return
 	}
+	quota := token.UsedQuota
 	amount := float64(quota)
 	switch operation_setting.GetQuotaDisplayType() {
 	case operation_setting.QuotaDisplayTypeCNY:

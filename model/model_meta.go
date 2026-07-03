@@ -234,3 +234,90 @@ func parseModelSyncFilter(syncOfficial string) (value int, ok bool) {
 		return n, true
 	}
 }
+
+func modelMatchesEnabledAbility(meta *Model, enabledModels map[string]struct{}) bool {
+	if meta == nil || len(enabledModels) == 0 {
+		return false
+	}
+	if meta.NameRule == NameRuleExact {
+		_, ok := enabledModels[meta.ModelName]
+		return ok
+	}
+	for enabledModel := range enabledModels {
+		switch meta.NameRule {
+		case NameRulePrefix:
+			if strings.HasPrefix(enabledModel, meta.ModelName) {
+				return true
+			}
+		case NameRuleContains:
+			if strings.Contains(enabledModel, meta.ModelName) {
+				return true
+			}
+		case NameRuleSuffix:
+			if strings.HasSuffix(enabledModel, meta.ModelName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func paginateConfigurableModels(models []*Model, offset int, limit int) ([]*Model, int64) {
+	total := int64(len(models))
+	if offset >= len(models) {
+		return []*Model{}, total
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(models) {
+		end = len(models)
+	}
+	return models[offset:end], total
+}
+
+func getConfigurableModels(keyword string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
+	enabledModelNames := GetEnabledModels()
+	if len(enabledModelNames) == 0 {
+		return []*Model{}, 0, nil
+	}
+	enabledModels := make(map[string]struct{}, len(enabledModelNames))
+	for _, modelName := range enabledModelNames {
+		enabledModels[modelName] = struct{}{}
+	}
+
+	var candidates []*Model
+	query := DB.Model(&Model{})
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("model_name LIKE ? OR description LIKE ? OR tags LIKE ?", like, like, like)
+	}
+	if statusValue, ok := parseModelStatusFilter(status); ok {
+		query = query.Where("models.status = ?", statusValue)
+	}
+	if syncValue, ok := parseModelSyncFilter(syncOfficial); ok {
+		query = query.Where("models.sync_official = ?", syncValue)
+	}
+	if err := query.Order("models.id DESC").Find(&candidates).Error; err != nil {
+		return nil, 0, err
+	}
+
+	filtered := make([]*Model, 0, len(candidates))
+	for _, item := range candidates {
+		if modelMatchesEnabledAbility(item, enabledModels) {
+			filtered = append(filtered, item)
+		}
+	}
+	items, total := paginateConfigurableModels(filtered, offset, limit)
+	return items, total, nil
+}
+
+func GetConfigurableModels(offset int, limit int) ([]*Model, int64, error) {
+	return getConfigurableModels("", "", "", offset, limit)
+}
+
+func SearchConfigurableModels(keyword string, offset int, limit int) ([]*Model, int64, error) {
+	return getConfigurableModels(strings.TrimSpace(keyword), "", "", offset, limit)
+}
+
+func SearchConfigurableModelsWithFilters(keyword string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
+	return getConfigurableModels(strings.TrimSpace(keyword), status, syncOfficial, offset, limit)
+}

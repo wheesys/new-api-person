@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "Изучайте самые популярные модели платформы на основе актуальных данных использования.",
     "Refine models by group, type, endpoint, and tags.": "Уточняйте модели по группе, типу, endpoint и тегам.",
     "Filter models by group, type, endpoint, and tags.": "Фильтровать модели по группе, типу, endpoint и тегам.",
-    "Search model name, endpoint, or tag...": "Искать имя модели, endpoint или тег..."
+    "Search model name, endpoint, or tag...": "Искать имя модели, endpoint или тег...",
+    "Channel Price Ratio": "Коэффициент цены канала",
+    "Channel price ratio must be greater than or equal to 0": "Коэффициент цены канала должен быть больше или равен 0",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "Итоговый коэффициент списания для этого канала после цены модели и коэффициента группы. 1 - без изменения, 0 - бесплатное списание."
   }
 }

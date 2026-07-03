@@ -242,6 +242,7 @@ export const ERROR_MESSAGES = {
   REQUIRED_MODELS: 'Models are required',
   REQUIRED_GROUP: 'Group is required',
   INVALID_JSON: 'Invalid JSON format',
+  INVALID_PRICE_RATIO: 'Channel price ratio must be greater than or equal to 0',
   INVALID_MODEL_MAPPING: 'Invalid model mapping format',
   INVALID_PROXY:
     'Proxy address must use HTTP, HTTPS, SOCKS5, or SOCKS5H and include a valid host',
@@ -370,6 +371,8 @@ export const FIELD_DESCRIPTIONS = {
     'Map request model names to actual provider model names (JSON format)',
   PRIORITY: 'Higher priority channels are selected first',
   WEIGHT: 'Used for load balancing. Higher weight = more requests',
+  PRICE_RATIO:
+    'Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.',
   TEST_MODEL: 'Model to use when testing channel connectivity',
   AUTO_BAN: 'Automatically disable channel on repeated failures',
   STATUS_CODE_MAPPING: 'Map response status codes (JSON format)',

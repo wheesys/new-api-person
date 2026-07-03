@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "Discover the most-used models on the platform, updated from live usage data.",
     "Refine models by group, type, endpoint, and tags.": "Refine models by group, type, endpoint, and tags.",
     "Filter models by group, type, endpoint, and tags.": "Filter models by group, type, endpoint, and tags.",
-    "Search model name, endpoint, or tag...": "Search model name, endpoint, or tag..."
+    "Search model name, endpoint, or tag...": "Search model name, endpoint, or tag...",
+    "Channel Price Ratio": "Channel Price Ratio",
+    "Channel price ratio must be greater than or equal to 0": "Channel price ratio must be greater than or equal to 0",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing."
   }
 }

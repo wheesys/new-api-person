@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   Box,
-  CreditCard,
   FileText,
   FlaskConical,
   Key,
@@ -29,14 +28,12 @@ import {
   Radio,
   ServerCog,
   Settings,
-  Ticket,
   User,
   Users,
-  Wallet,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { type SidebarData } from '@/components/layout/types'
+import type { SidebarData } from '@/components/layout/types'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -104,11 +101,6 @@ export function useSidebarData(): SidebarData {
         title: t('Personal'),
         items: [
           {
-            title: t('Wallet'),
-            url: '/wallet',
-            icon: Wallet,
-          },
-          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -133,16 +125,6 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
-          },
-          {
-            title: t('Redemption Codes'),
-            url: '/redemption-codes',
-            icon: Ticket,
-          },
-          {
-            title: t('Subscriptions'),
-            url: '/subscriptions',
-            icon: CreditCard,
           },
           {
             title: t('System Info'),

@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "探索平台上使用最多的模型，数据基于实时用量更新。",
     "Refine models by group, type, endpoint, and tags.": "按分组、类型、端点和标签细化模型。",
     "Filter models by group, type, endpoint, and tags.": "按分组、类型、端点和标签筛选模型。",
-    "Search model name, endpoint, or tag...": "搜索模型名称、端点或标签..."
+    "Search model name, endpoint, or tag...": "搜索模型名称、端点或标签...",
+    "Channel Price Ratio": "渠道价格倍率",
+    "Channel price ratio must be greater than or equal to 0": "渠道价格倍率必须大于或等于 0",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "在模型价格和分组倍率之后应用的渠道最终计费倍率。1 表示不调整，0 表示该渠道免费计费。"
   }
 }

@@ -41,15 +41,16 @@ type Channel struct {
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
 	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
-	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
-	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
-	AutoBan           *int    `json:"auto_ban" gorm:"default:1"`
-	OtherInfo         string  `json:"other_info"`
-	Tag               *string `json:"tag" gorm:"index"`
-	Setting           *string `json:"setting" gorm:"type:text"` // 渠道额外设置
-	ParamOverride     *string `json:"param_override" gorm:"type:text"`
-	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
-	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	StatusCodeMapping *string  `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
+	Priority          *int64   `json:"priority" gorm:"bigint;default:0"`
+	AutoBan           *int     `json:"auto_ban" gorm:"default:1"`
+	PriceRatio        *float64 `json:"price_ratio" gorm:"default:1;comment:Channel billing multiplier applied after model and group pricing"`
+	OtherInfo         string   `json:"other_info"`
+	Tag               *string  `json:"tag" gorm:"index"`
+	Setting           *string  `json:"setting" gorm:"type:text"` // 渠道额外设置
+	ParamOverride     *string  `json:"param_override" gorm:"type:text"`
+	HeaderOverride    *string  `json:"header_override" gorm:"type:text"`
+	Remark            *string  `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
@@ -342,6 +343,16 @@ func (channel *Channel) GetAutoBan() bool {
 	return *channel.AutoBan == 1
 }
 
+func (channel *Channel) GetPriceRatio() float64 {
+	if channel == nil || channel.PriceRatio == nil {
+		return 1
+	}
+	if *channel.PriceRatio < 0 {
+		return 1
+	}
+	return *channel.PriceRatio
+}
+
 func (channel *Channel) Save() error {
 	return DB.Save(channel).Error
 }
@@ -443,13 +454,21 @@ func BatchInsertChannels(channels []Channel) error {
 			return err
 		}
 		for _, channel_ := range chunk {
+			if _, err := ensureModelMetadata(tx, channel_.GetModels()); err != nil {
+				tx.Rollback()
+				return err
+			}
 			if err := channel_.AddAbilities(tx); err != nil {
 				tx.Rollback()
 				return err
 			}
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	RefreshPricing()
+	return nil
 }
 
 func BatchDeleteChannels(ids []int) (int64, error) {

@@ -42,12 +42,10 @@ func (w *auditResponseWriter) WriteString(s string) (int, error) {
 // 未命中的写操作回退为 action="generic"，前端展示 "METHOD route"。
 var auditRouteActions = map[string]string{
 	// 用户管理
-	"POST /api/user/topup/complete":                    "user.topup_complete",
 	"DELETE /api/user/:id/reset_passkey":               "user.reset_passkey",
 	"DELETE /api/user/:id/oauth/bindings/:provider_id": "user.oauth_unbind",
 
 	// 系统设置（root）
-	"POST /api/option/payment_compliance":       "option.payment_compliance",
 	"POST /api/option/rest_model_ratio":         "option.reset_ratio",
 	"DELETE /api/option/channel_affinity_cache": "option.clear_affinity_cache",
 
@@ -60,11 +58,6 @@ var auditRouteActions = map[string]string{
 	"DELETE /api/performance/disk_cache": "performance.clear_disk_cache",
 	"POST /api/performance/gc":           "performance.gc",
 	"DELETE /api/performance/logs":       "performance.clear_logs",
-
-	// 兑换码
-	"PUT /api/redemption/":           "redemption.update",
-	"DELETE /api/redemption/:id":     "redemption.delete",
-	"DELETE /api/redemption/invalid": "redemption.delete_invalid",
 
 	// 预填组
 	"POST /api/prefill_group/":      "prefill_group.create",
@@ -86,11 +79,6 @@ var auditRouteActions = map[string]string{
 	"POST /api/deployments/":      "deployment.create",
 	"PUT /api/deployments/:id":    "deployment.update",
 	"DELETE /api/deployments/:id": "deployment.delete",
-
-	// 订阅（管理员）
-	"POST /api/subscription/admin/plans":    "subscription.plan_create",
-	"PUT /api/subscription/admin/plans/:id": "subscription.plan_update",
-	"POST /api/subscription/admin/bind":     "subscription.bind",
 
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",

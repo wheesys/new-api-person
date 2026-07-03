@@ -5204,6 +5204,9 @@
     "Discover the most-used models on the platform, updated from live usage data.": "Khám phá các mô hình được dùng nhiều nhất trên nền tảng, được cập nhật từ dữ liệu sử dụng trực tiếp.",
     "Refine models by group, type, endpoint, and tags.": "Lọc mô hình theo nhóm, loại, endpoint và thẻ.",
     "Filter models by group, type, endpoint, and tags.": "Lọc mô hình theo nhóm, loại, endpoint và thẻ.",
-    "Search model name, endpoint, or tag...": "Tìm tên mô hình, endpoint hoặc thẻ..."
+    "Search model name, endpoint, or tag...": "Tìm tên mô hình, endpoint hoặc thẻ...",
+    "Channel Price Ratio": "He so gia kenh",
+    "Channel price ratio must be greater than or equal to 0": "He so gia kenh phai lon hon hoac bang 0",
+    "Final billing multiplier for this channel after model and group pricing. Use 1 for no adjustment, 0 for free billing.": "He so tinh phi cuoi cung cho kenh nay sau gia mo hinh va he so nhom. Dung 1 neu khong dieu chinh, 0 de mien phi tinh phi cho kenh."
   }
 }

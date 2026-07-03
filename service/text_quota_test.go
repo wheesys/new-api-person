@@ -114,6 +114,36 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 	require.Equal(t, 118, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryAppliesChannelRatioAfterGroupRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-channel-ratio",
+		PriceData: hosttypes.PriceData{
+			ModelRatio:      2,
+			CompletionRatio: 1,
+			ChannelRatio:    1.5,
+			GroupRatioInfo: hosttypes.GroupRatioInfo{
+				GroupRatio: 3,
+			},
+		},
+		StartTime: time.Now(),
+	}
+
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 0,
+		TotalTokens:      100,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 1.5, summary.ChannelRatio)
+	require.Equal(t, 900, summary.Quota)
+}
+
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -600,6 +630,47 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 
 	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 14000, quota)
+}
+
+func TestComposeTieredTextQuotaAppliesChannelRatioToToolCallSurcharges(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Set("image_generation_call", true)
+	ctx.Set("image_generation_call_quality", "low")
+	ctx.Set("image_generation_call_size", "1024x1024")
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "o1",
+		PriceData: hosttypes.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			ChannelRatio:    1.5,
+			GroupRatioInfo:  hosttypes.GroupRatioInfo{GroupRatio: 1},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:               "tiered_expr",
+			GroupRatio:                1,
+			ChannelRatio:              1.5,
+			EstimatedQuotaBeforeGroup: 1000,
+		},
+		StartTime: time.Now(),
+	}
+
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		TotalTokens:      150,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	quota := composeTieredTextQuota(relayInfo, summary, 1500, &billingexpr.TieredResult{
+		ActualQuotaBeforeGroup: 1000,
+		ActualQuotaAfterGroup:  1500,
+	})
+
+	require.Positive(t, summary.ToolCallSurchargeQuota.IntPart())
+	require.Equal(t, 1500+int(summary.ToolCallSurchargeQuota.Mul(decimal.NewFromFloat(1.5)).Round(0).IntPart()), quota)
 }
 
 func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {

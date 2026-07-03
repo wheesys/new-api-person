@@ -70,6 +70,8 @@ type ChannelMeta struct {
 	HeadersOverride      map[string]interface{}
 	ChannelSetting       dto.ChannelSettings
 	ChannelOtherSettings dto.ChannelOtherSettings
+	ChannelPriceRatio    float64
+	ChannelPriceRatioSet bool
 	UpstreamModelName    string
 	IsModelMapped        bool
 	SupportStreamOptions bool // 是否支持流式选项
@@ -197,6 +199,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
 	apiType, _ := common.ChannelType2APIType(channelType)
+	channelPriceRatio, channelPriceRatioSet := getContextChannelPriceRatio(c)
 	channelMeta := &ChannelMeta{
 		ChannelType:          channelType,
 		ChannelId:            common.GetContextKeyInt(c, constant.ContextKeyChannelId),
@@ -210,6 +213,8 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		ChannelCreateTime:    c.GetInt64("channel_create_time"),
 		ParamOverride:        paramOverride,
 		HeadersOverride:      headerOverride,
+		ChannelPriceRatio:    channelPriceRatio,
+		ChannelPriceRatioSet: channelPriceRatioSet,
 		UpstreamModelName:    common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
 		IsModelMapped:        false,
 		SupportStreamOptions: false,
@@ -247,6 +252,30 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if info.Request != nil {
 		info.Request.SetModelName(info.OriginModelName)
 	}
+}
+
+func getContextChannelPriceRatio(c *gin.Context) (float64, bool) {
+	ratio, ok := common.GetContextKeyType[float64](c, constant.ContextKeyChannelPriceRatio)
+	if !ok {
+		return 1, false
+	}
+	if ratio < 0 {
+		return 1, false
+	}
+	return ratio, true
+}
+
+func (info *RelayInfo) GetChannelPriceRatio() float64 {
+	if info == nil || info.ChannelMeta == nil {
+		return 1
+	}
+	if info.ChannelMeta.ChannelPriceRatio < 0 {
+		return 1
+	}
+	if info.ChannelMeta.ChannelPriceRatio == 0 && !info.ChannelMeta.ChannelPriceRatioSet {
+		return 1
+	}
+	return info.ChannelMeta.ChannelPriceRatio
 }
 
 func (info *RelayInfo) ToString() string {

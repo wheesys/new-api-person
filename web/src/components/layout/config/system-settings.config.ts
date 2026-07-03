@@ -16,10 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type TFunction } from 'i18next'
+import type { TFunction } from 'i18next'
 import {
   Box,
-  CreditCard,
   Layout,
   Settings,
   Shield,
@@ -61,8 +60,8 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
           items: getAuthSectionNavItems(t),
         },
         {
-          title: t('Billing & Payment'),
-          icon: CreditCard,
+          title: t('Billing'),
+          icon: Box,
           items: getBillingSectionNavItems(t),
         },
         {
