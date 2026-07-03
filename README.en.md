@@ -14,37 +14,6 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/Calcium-Ion/new-api/main/LICENSE">
-    <img src="https://img.shields.io/github/license/Calcium-Ion/new-api?color=brightgreen" alt="license">
-  </a>
-  <a href="https://github.com/Calcium-Ion/new-api/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
-  </a>
-  <a href="https://github.com/users/Calcium-Ion/packages/container/package/new-api">
-    <img src="https://img.shields.io/badge/docker-ghcr.io-blue" alt="docker">
-  </a>
-  <a href="https://hub.docker.com/r/CalciumIon/new-api">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
-  </a>
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="QuantumNous%2Fnew-api | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/QuantumNous/new-api" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a>
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/new_badge.svg" width="250" height="55" />
-  </a>
-</p>
-
-<p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-key-features">Key Features</a> •
   <a href="#-deployment">Deployment</a> •
@@ -57,7 +26,7 @@
 ## 📝 Project Description
 
 > [!NOTE]  
-> This is an open-source project developed based on [One API](https://github.com/songquanpeng/one-api)
+> This repository is a modified distribution of [QuantumNous/new-api](https://github.com/QuantumNous/new-api). The direct upstream project is itself developed based on [One API](https://github.com/songquanpeng/one-api) (MIT License).
 
 > [!IMPORTANT]  
 > - This project is intended solely for lawful and authorized AI API gateway, organization-level authentication, multi-model management, usage analytics, cost accounting, and private deployment scenarios.
@@ -165,7 +134,7 @@ docker run --name new-api -d --restart always \
 
 <div align="center">
 
-### 📖 [Official Documentation](https://docs.newapi.pro/en/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/QuantumNous/new-api)
+### 📖 [Official Documentation](https://docs.newapi.pro/en/docs)
 
 </div>
 
@@ -434,7 +403,8 @@ See [User authentication and login sessions](./docs/authentication.md) for the t
 
 | Project | Description |
 |------|------|
-| [One API](https://github.com/songquanpeng/one-api) | Original project base |
+| [QuantumNous/new-api](https://github.com/QuantumNous/new-api) | Direct upstream project for this modified distribution |
+| [One API](https://github.com/songquanpeng/one-api) | Original project base inherited through the direct upstream |
 | [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney interface support |
 
 ### Supporting Tools
@@ -468,15 +438,25 @@ Welcome all forms of contribution!
 
 ---
 
-## 🌟 Star History
+## 📜 License
 
-<div align="center">
+License: AGPLv3 © 2026 QuantumNous and contributors; modifications © 2026 wheesys and contributors.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Calcium-Ion/new-api&type=Date)](https://star-history.com/#Calcium-Ion/new-api&Date)
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE). The AGPLv3 license text is preserved unchanged in `LICENSE`; project notices, attribution, and distribution-specific modification records are maintained in `NOTICE`.
 
-</div>
+Additional terms under AGPLv3 Section 7 apply. Modified versions must preserve
+the author attribution notice `Frontend design and development by New API
+contributors.` in the appropriate legal notices and in any prominent about,
+legal, footer, or attribution location presented by the user interface.
 
----
+Modified versions that present a user interface must also preserve a visible
+link to the original project: <https://github.com/QuantumNous/new-api>.
+
+This repository is a modified distribution of [QuantumNous/new-api](https://github.com/QuantumNous/new-api). The direct upstream project is itself developed based on [One API](https://github.com/songquanpeng/one-api) (MIT License).
+
+Docker images and other object-code distributions should be traceable to the corresponding source in this repository through a Git tag, release, or commit. Published image metadata should identify the source repository, revision, and AGPLv3 license when images are built.
+
+If your organization's policies do not permit the use of AGPLv3-licensed software, or if you wish to avoid the open-source obligations of AGPLv3, please contact us at: [support@quantumnous.com](mailto:support@quantumnous.com)
 
 <div align="center">
 
@@ -484,7 +464,7 @@ Welcome all forms of contribution!
 
 If this project is helpful to you, welcome to give us a ⭐️ Star！
 
-**[Official Documentation](https://docs.newapi.pro/en/docs)** • **[Issue Feedback](https://github.com/Calcium-Ion/new-api/issues)** • **[Latest Release](https://github.com/Calcium-Ion/new-api/releases)**
+**[Official Documentation](https://docs.newapi.pro/en/docs)** • **[Issue Feedback](https://github.com/wheesys/new-api-person/issues)** • **[Latest Release](https://github.com/wheesys/new-api-person/releases)**
 
 <sub>Built with ❤️ by QuantumNous</sub>
 

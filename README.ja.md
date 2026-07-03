@@ -15,35 +15,6 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/Calcium-Ion/new-api/main/LICENSE">
-    <img src="https://img.shields.io/github/license/Calcium-Ion/new-api?color=brightgreen" alt="license">
-  </a><!--
-  --><a href="https://github.com/Calcium-Ion/new-api/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
-  </a><!--
-  --><a href="https://hub.docker.com/r/CalciumIon/new-api">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
-  </a>
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="QuantumNous%2Fnew-api | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/QuantumNous/new-api" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a><!--
-  -->
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/new_badge.svg" width="250" height="55" />
-  </a>
-</p>
-
-<p align="center">
   <a href="#-クイックスタート">クイックスタート</a> •
   <a href="#-主な機能">主な機能</a> •
   <a href="#-デプロイ">デプロイ</a> •
@@ -164,7 +135,7 @@ docker run --name new-api -d --restart always \
 
 <div align="center">
 
-### 📖 [公式ドキュメント](https://docs.newapi.pro/ja/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/QuantumNous/new-api)
+### 📖 [公式ドキュメント](https://docs.newapi.pro/ja/docs)
 
 </div>
 
@@ -435,7 +406,8 @@ Token、Origin 検証、PAT の契約については[ユーザー認証とログ
 
 | プロジェクト | 説明 |
 |------|------|
-| [One API](https://github.com/songquanpeng/one-api) | オリジナルプロジェクトベース |
+| [QuantumNous/new-api](https://github.com/QuantumNous/new-api) | この変更配布版の直接の上流プロジェクト |
+| [One API](https://github.com/songquanpeng/one-api) | 直接の上流を通じて継承されたオリジナルプロジェクトベース |
 | [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourneyインターフェースサポート |
 
 ### 補助ツール
@@ -471,23 +443,17 @@ Token、Origin 検証、PAT の契約については[ユーザー認証とログ
 
 ## 📜 ライセンス
 
-このプロジェクトは [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE) の下でライセンスされています。
+ライセンス表示：AGPLv3 © 2026 QuantumNous and contributors；変更部分 © 2026 wheesys and contributors。
 
-本プロジェクトは、[One API](https://github.com/songquanpeng/one-api)（MITライセンス）をベースに開発されたオープンソースプロジェクトです。
+このプロジェクトは [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE) の下でライセンスされています。`LICENSE` には AGPLv3 の本文を変更せずに保持し、プロジェクト通知、上流への帰属、追加条件、この変更配布版の変更説明は `NOTICE` に保持します。
+
+AGPLv3 Section 7 の追加条件が適用されます。変更版は、適切な法的通知、About、フッター、またはユーザーインターフェイス上の目立つ帰属表示の場所に `Frontend design and development by New API contributors.` を保持する必要があります。ユーザーインターフェイスを表示する変更版は、元プロジェクトへの可視リンク <https://github.com/QuantumNous/new-api> も保持する必要があります。
+
+このリポジトリは [QuantumNous/new-api](https://github.com/QuantumNous/new-api) の変更配布版です。直接の上流プロジェクト自体は [One API](https://github.com/songquanpeng/one-api)（MIT ライセンス）をベースに開発されています。
+
+Docker イメージおよびその他のオブジェクトコード配布物は、Git tag、release、または commit を通じて、このリポジトリ内の対応するソースコードへ追跡できる必要があります。公開イメージをビルドする際は、イメージメタデータにソースリポジトリ、ソースリビジョン、AGPLv3 ライセンスを明記する必要があります。
 
 お客様の組織のポリシーがAGPLv3ライセンスのソフトウェアの使用を許可していない場合、またはAGPLv3のオープンソース義務を回避したい場合は、こちらまでお問い合わせください：[support@quantumnous.com](mailto:support@quantumnous.com)
-
----
-
-## 🌟 スター履歴
-
-<div align="center">
-
-[![スター履歴チャート](https://api.star-history.com/svg?repos=Calcium-Ion/new-api&type=Date)](https://star-history.com/#Calcium-Ion/new-api&Date)
-
-</div>
-
----
 
 <div align="center">
 
@@ -495,7 +461,7 @@ Token、Origin 検証、PAT の契約については[ユーザー認証とログ
 
 このプロジェクトがあなたのお役に立てたなら、ぜひ ⭐️ スターをください！
 
-**[公式ドキュメント](https://docs.newapi.pro/ja/docs)** • **[問題フィードバック](https://github.com/Calcium-Ion/new-api/issues)** • **[最新リリース](https://github.com/Calcium-Ion/new-api/releases)**
+**[公式ドキュメント](https://docs.newapi.pro/ja/docs)** • **[問題フィードバック](https://github.com/wheesys/new-api-person/issues)** • **[最新リリース](https://github.com/wheesys/new-api-person/releases)**
 
 <sub>❤️ で構築された QuantumNous</sub>
 

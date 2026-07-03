@@ -15,34 +15,6 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/Calcium-Ion/new-api/main/LICENSE">
-    <img src="https://img.shields.io/github/license/Calcium-Ion/new-api?color=brightgreen" alt="license">
-  </a>
-  <a href="https://github.com/Calcium-Ion/new-api/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
-  </a>
-  <a href="https://hub.docker.com/r/CalciumIon/new-api">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
-  </a>
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="QuantumNous%2Fnew-api | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/QuantumNous/new-api" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a>
-  <a href="https://atomgit.com/QuantumNous/new-api" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/QuantumNous/new-api/star/new_badge.svg" width="250" height="55" />
-  </a>
-</p>
-
-<p align="center">
   <a href="#-快速開始">快速開始</a> •
   <a href="#-主要特性">主要特性</a> •
   <a href="#-部署">部署</a> •
@@ -163,7 +135,7 @@ docker run --name new-api -d --restart always \
 
 <div align="center">
 
-### 📖 [官方文件](https://docs.newapi.pro/zh/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/QuantumNous/new-api)
+### 📖 [官方文件](https://docs.newapi.pro/zh/docs)
 
 </div>
 
@@ -434,7 +406,8 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 | 項目 | 說明 |
 |------|------|
-| [One API](https://github.com/songquanpeng/one-api) | 原版項目基礎 |
+| [QuantumNous/new-api](https://github.com/QuantumNous/new-api) | 本修改分發版的直接上游項目 |
+| [One API](https://github.com/songquanpeng/one-api) | 由直接上游繼承的原版項目基礎 |
 | [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney 接口支援 |
 
 ### 配套工具
@@ -470,23 +443,17 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 ## 📜 許可證
 
-本項目採用 [GNU Affero 通用公共許可證 v3.0 (AGPLv3)](./LICENSE) 授權。
+許可證展示：AGPLv3 © 2026 QuantumNous and contributors；修改部分 © 2026 wheesys and contributors。
 
-本項目為開源項目，在 [One API](https://github.com/songquanpeng/one-api)（MIT 許可證）的基礎上進行二次開發。
+本項目採用 [GNU Affero 通用公共許可證 v3.0 (AGPLv3)](./LICENSE) 授權。`LICENSE` 保留 AGPLv3 許可證正文且不做修改；項目通知、上游歸屬、附加條款和本分發版修改說明維護在 `NOTICE` 中。
+
+AGPLv3 Section 7 附加條款適用。修改版本必須在合適的法律聲明、關於頁、頁腳或其他顯著署名位置保留 `Frontend design and development by New API contributors.`，並在帶使用者介面的修改版本中保留指向原項目的可見連結：<https://github.com/QuantumNous/new-api>。
+
+本倉庫是基於 [QuantumNous/new-api](https://github.com/QuantumNous/new-api) 的修改分發版。直接上游項目本身基於 [One API](https://github.com/songquanpeng/one-api)（MIT 許可證）開發。
+
+Docker 映像和其他目標程式碼發布物應能透過 Git tag、release 或 commit 追溯到本倉庫中的對應原始碼。構建發布映像時，應在映像元資料中標明原始碼倉庫、原始碼修訂版本和 AGPLv3 許可證。
 
 如果您所在的組織政策不允許使用 AGPLv3 許可的軟體，或您希望規避 AGPLv3 的開源義務，請發送郵件至：[support@quantumnous.com](mailto:support@quantumnous.com)
-
----
-
-## 🌟 Star History
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Calcium-Ion/new-api&type=Date)](https://star-history.com/#Calcium-Ion/new-api&Date)
-
-</div>
-
----
 
 <div align="center">
 
@@ -494,7 +461,7 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 如果這個項目對你有幫助，歡迎給我們一個 ⭐️ Star！
 
-**[官方文件](https://docs.newapi.pro/zh/docs)** • **[問題回饋](https://github.com/Calcium-Ion/new-api/issues)** • **[最新發布](https://github.com/Calcium-Ion/new-api/releases)**
+**[官方文件](https://docs.newapi.pro/zh/docs)** • **[問題回饋](https://github.com/wheesys/new-api-person/issues)** • **[最新發布](https://github.com/wheesys/new-api-person/releases)**
 
 <sub>Built with ❤️ by QuantumNous</sub>
 

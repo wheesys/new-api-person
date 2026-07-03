@@ -6,6 +6,28 @@ Copyright (c) QuantumNous and contributors.
 This project is licensed under the GNU Affero General Public License v3.0.
 See LICENSE for the full project license terms.
 
+==== Modified Distribution Notice ====
+
+This repository is a modified distribution of QuantumNous/new-api.
+
+Direct upstream:
+https://github.com/QuantumNous/new-api
+
+This distribution may periodically merge upstream changes, but it is
+independently maintained and may differ significantly from the upstream
+project. Upstream merge points, release bases, and distribution-specific
+changes are tracked through the Git history, release notes, and project
+documentation.
+
+Modifications and maintenance:
+Copyright (c) 2026 wheesys and contributors.
+
+Docker images, frontend bundles, standalone binaries, Electron desktop
+installers, and other object-code distributions should remain traceable to
+the corresponding source code through a Git tag, release, or commit in this
+repository. Published image metadata should identify the source repository,
+source revision, and AGPLv3 license.
+
 ==== Additional Terms under AGPLv3 Section 7 ====
 
 Pursuant to Section 7(b) of the GNU Affero General Public License version 3,
