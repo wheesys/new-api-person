@@ -180,7 +180,7 @@ export function LatencyTrendChart(props: {
             theme: resolvedTheme === 'dark' ? 'dark' : 'light',
             background: 'transparent',
           }}
-          option={VCHART_OPTION}
+          options={VCHART_OPTION}
         />
       )}
     </div>
@@ -308,7 +308,7 @@ export function UptimeTrendChart(props: {
             theme: resolvedTheme === 'dark' ? 'dark' : 'light',
             background: 'transparent',
           }}
-          option={VCHART_OPTION}
+          options={VCHART_OPTION}
         />
       )}
     </div>
@@ -401,7 +401,7 @@ export function ThroughputBarChart(props: {
             theme: resolvedTheme === 'dark' ? 'dark' : 'light',
             background: 'transparent',
           }}
-          option={VCHART_OPTION}
+          options={VCHART_OPTION}
         />
       )}
     </div>

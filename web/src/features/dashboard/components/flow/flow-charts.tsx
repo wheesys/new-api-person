@@ -497,7 +497,7 @@ export function FlowCharts(props: FlowChartsProps) {
         theme: chartTheme,
         background: 'transparent',
       }}
-      option={VCHART_OPTION}
+      options={VCHART_OPTION}
       onReady={(instance: IVChart) => {
         chartInstanceRef.current = instance
       }}

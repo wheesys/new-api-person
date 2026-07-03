@@ -196,7 +196,7 @@ export function ModelsSection(props: ModelsSectionProps) {
                 theme: resolvedTheme === 'dark' ? 'dark' : 'light',
                 background: 'transparent',
               }}
-              option={VCHART_OPTION}
+              options={VCHART_OPTION}
             />
           ) : (
             <div className='text-muted-foreground/80 flex h-full items-center justify-center text-xs'>

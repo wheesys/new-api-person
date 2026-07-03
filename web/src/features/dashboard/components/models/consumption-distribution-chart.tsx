@@ -163,7 +163,7 @@ export function ConsumptionDistributionChart(
               theme: resolvedTheme === 'dark' ? 'dark' : 'light',
               background: 'transparent',
             }}
-            option={VCHART_OPTION}
+            options={VCHART_OPTION}
           />
         )}
       </div>

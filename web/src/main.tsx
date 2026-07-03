@@ -22,6 +22,7 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import { registerBrowserEnv } from '@visactor/vchart'
 import { AxiosError } from 'axios'
 import i18next from 'i18next'
 import { StrictMode } from 'react'
@@ -47,6 +48,7 @@ import './styles/index.css'
 
 // Ensure VChart theme is initialized before any chart mounts (prevents white default theme flash)
 // VChart theme is driven by our ThemeProvider (html.light/html.dark) via per-chart `theme` prop.
+registerBrowserEnv()
 initializeFrontendCache()
 installBuildMetadata()
 
