@@ -39,7 +39,6 @@ export interface Model {
   description?: string
   icon?: string
   tags?: string
-  vendor_id?: number
   endpoints?: string
   status: number
   sync_official: number
@@ -52,19 +51,6 @@ export interface Model {
   quota_types?: number[]
   matched_models?: string[]
   matched_count?: number
-}
-
-/**
- * Vendor entity from API
- */
-export interface Vendor {
-  id: number
-  name: string
-  description?: string
-  icon?: string
-  status: number
-  created_time: number
-  updated_time: number
 }
 
 /**
@@ -88,7 +74,6 @@ export interface PrefillGroup {
 export interface GetModelsParams {
   p?: number
   page_size?: number
-  vendor?: string // vendor ID to filter by
   status?: string // filter by status
   sync_official?: string // filter by sync_official status
 }
@@ -98,7 +83,6 @@ export interface GetModelsParams {
  */
 export interface SearchModelsParams {
   keyword?: string
-  vendor?: string // vendor ID to filter by
   status?: string // filter by status
   sync_official?: string // filter by sync_official status
   p?: number
@@ -116,7 +100,6 @@ export interface GetModelsResponse {
     total: number
     page: number
     page_size: number
-    vendor_counts?: Record<string, number>
   }
 }
 
@@ -130,35 +113,11 @@ export interface GetModelResponse {
 }
 
 /**
- * Get vendors response
- */
-export interface GetVendorsResponse {
-  success: boolean
-  message?: string
-  data?: {
-    items: Vendor[]
-    total: number
-    page: number
-    page_size: number
-  }
-}
-
-/**
- * Get vendor response
- */
-export interface GetVendorResponse {
-  success: boolean
-  message?: string
-  data?: Vendor
-}
-
-/**
  * Sync diff data
  */
 export interface SyncDiffData {
   missing?: Array<{
     model_name: string
-    vendor?: string
     [key: string]: unknown
   }>
   conflicts?: Array<{
@@ -188,7 +147,6 @@ export interface SyncUpstreamResponse {
   data?: {
     created_models?: number
     updated_models?: number
-    created_vendors?: number
     skipped_models?: string[]
   }
 }
@@ -233,7 +191,6 @@ export const modelFormSchema = z.object({
   description: z.string().default(''),
   icon: z.string().default(''),
   tags: z.array(z.string()).default([]),
-  vendor_id: z.number().optional(),
   endpoints: z.string().default(''),
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
@@ -241,19 +198,6 @@ export const modelFormSchema = z.object({
 })
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>
-
-/**
- * Vendor form schema
- */
-export const vendorFormSchema = z.object({
-  id: z.number().optional(),
-  name: z.string().min(1, 'Vendor name is required'),
-  description: z.string().default(''),
-  icon: z.string().default(''),
-  status: z.number().default(1),
-})
-
-export type VendorFormValues = z.infer<typeof vendorFormSchema>
 
 /**
  * Prefill group form schema

@@ -44,7 +44,6 @@ export function Pricing() {
 
   const {
     models,
-    vendors,
     groupRatio,
     usableGroup,
     endpointMap,
@@ -57,7 +56,6 @@ export function Pricing() {
   const {
     searchInput,
     sortBy,
-    vendorFilter,
     groupFilter,
     quotaTypeFilter,
     endpointTypeFilter,
@@ -67,7 +65,6 @@ export function Pricing() {
     showRechargePrice,
     setSearchInput,
     setSortBy,
-    setVendorFilter,
     setGroupFilter,
     setQuotaTypeFilter,
     setEndpointTypeFilter,
@@ -196,7 +193,7 @@ export function Pricing() {
               onChange={setSearchInput}
               onClear={clearSearch}
               placeholder={t(
-                'Search model name, provider, endpoint, or tag...'
+                'Search model name, endpoint, or tag...'
               )}
               className='mx-auto mt-4 max-w-2xl sm:mt-6'
             />
@@ -206,15 +203,12 @@ export function Pricing() {
             <PricingSidebar
               quotaTypeFilter={quotaTypeFilter}
               endpointTypeFilter={endpointTypeFilter}
-              vendorFilter={vendorFilter}
               groupFilter={groupFilter}
               tagFilter={tagFilter}
               onQuotaTypeChange={setQuotaTypeFilter}
               onEndpointTypeChange={setEndpointTypeFilter}
-              onVendorChange={setVendorFilter}
               onGroupChange={setGroupFilter}
               onTagChange={setTagFilter}
-              vendors={vendors || []}
               groups={availableGroups}
               groupRatios={groupRatio}
               tags={availableTags}
@@ -238,15 +232,12 @@ export function Pricing() {
                 onViewModeChange={setViewMode}
                 quotaTypeFilter={quotaTypeFilter}
                 endpointTypeFilter={endpointTypeFilter}
-                vendorFilter={vendorFilter}
                 groupFilter={groupFilter}
                 tagFilter={tagFilter}
                 onQuotaTypeChange={setQuotaTypeFilter}
                 onEndpointTypeChange={setEndpointTypeFilter}
-                onVendorChange={setVendorFilter}
                 onGroupChange={setGroupFilter}
                 onTagChange={setTagFilter}
-                vendors={vendors || []}
                 groups={availableGroups}
                 groupRatios={groupRatio}
                 tags={availableTags}

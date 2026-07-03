@@ -24,7 +24,6 @@ import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import {
-  MarketShareSection,
   ModelsSection,
   PulseSection,
   RankingsHero,
@@ -94,12 +93,6 @@ export function Rankings() {
                 period={period}
               />
 
-              <MarketShareSection
-                history={snapshot.vendor_share_history}
-                rows={snapshot.vendors}
-                period={period}
-              />
-
               <PulseSection
                 movers={snapshot.top_movers}
                 droppers={snapshot.top_droppers}
@@ -116,7 +109,6 @@ function RankingsLoading() {
   return (
     <div className='space-y-6'>
       <Skeleton className='h-[420px] w-full rounded-xl' />
-      <Skeleton className='h-[360px] w-full rounded-xl' />
       <Skeleton className='h-[180px] w-full rounded-xl' />
     </div>
   )

@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export * from './entity-links'
 export * from './growth-text'
-export * from './market-share-section'
 export * from './model-leaderboard'
 export * from './models-section'
 export * from './pulse-section'

@@ -51,7 +51,7 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 
 import { applyUpstreamOverwrite } from '../../api'
-import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
+import { modelsQueryKeys } from '../../lib'
 import type { SyncOverwritePayload } from '../../types'
 import { useModels } from '../models-provider'
 
@@ -59,7 +59,6 @@ const FIELD_LABELS: Record<string, string> = {
   description: 'Description',
   icon: 'Icon',
   tags: 'Tags',
-  vendor: 'Vendor',
   name_rule: 'Name Rule',
   status: 'Status',
   endpoints: 'Endpoints',
@@ -416,7 +415,6 @@ export function UpstreamConflictDialog({
       if (response.success) {
         toast.success(t('Selected conflicts were overwritten successfully.'))
         queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
-        queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
         setUpstreamConflicts([])
         onOpenChange(false)
       } else {

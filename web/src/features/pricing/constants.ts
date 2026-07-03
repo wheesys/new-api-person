@@ -101,7 +101,6 @@ export function getEndpointTypeLabels(
 export const FILTER_SECTIONS = {
   PRICING_TYPE: 'pricingType',
   ENDPOINT_TYPE: 'endpointType',
-  VENDOR: 'vendor',
   GROUP: 'group',
   TAG: 'tag',
 } as const

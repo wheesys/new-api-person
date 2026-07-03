@@ -34,7 +34,6 @@ export const modelFormSchema = z.object({
   description: z.string().default(''),
   icon: z.string().default(''),
   tags: z.array(z.string()).default([]),
-  vendor_id: z.number().optional(),
   endpoints: z.string().default(''),
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
@@ -44,23 +43,6 @@ export const modelFormSchema = z.object({
 })
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>
-
-// ============================================================================
-// Vendor Form Schema
-// ============================================================================
-
-/**
- * Vendor form validation schema
- */
-export const vendorFormSchema = z.object({
-  id: z.number().optional(),
-  name: z.string().min(1, 'Vendor name is required'),
-  description: z.string().default(''),
-  icon: z.string().default(''),
-  status: z.number().default(1),
-})
-
-export type VendorFormValues = z.infer<typeof vendorFormSchema>
 
 // ============================================================================
 // Form Data Transformation
@@ -76,7 +58,6 @@ export function transformModelToFormDefaults(model: Model): ModelFormValues {
     description: model.description || '',
     icon: model.icon || '',
     tags: parseTagsFromUtils(model.tags),
-    vendor_id: model.vendor_id,
     endpoints: model.endpoints || '',
     name_rule: model.name_rule || 0,
     status: model.status === 1,
@@ -98,7 +79,6 @@ export function transformFormDataToModelPayload(
     description: formData.description || '',
     icon: formData.icon || '',
     tags: formatTagsArray(formData.tags),
-    vendor_id: formData.vendor_id,
     endpoints: formData.endpoints || '',
     name_rule: formData.name_rule,
     status: formData.status ? 1 : 0,

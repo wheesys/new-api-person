@@ -53,30 +53,3 @@ export function ModelLink(props: ModelLinkProps) {
     </Link>
   )
 }
-
-type VendorLinkProps = EntityLinkBaseProps & {
-  /** Display name of the vendor (e.g. "Google", "OpenAI"). */
-  vendor: string
-}
-
-/**
- * Link wrapping a vendor name. Navigates to the pricing page filtered by
- * that vendor (`/pricing?vendor={vendor}`). Renders the vendor name
- * itself by default. Uses the same subtle persistent underline as
- * {@link ModelLink}, scaled for the smaller secondary text it usually
- * wraps.
- */
-export function VendorLink(props: VendorLinkProps) {
-  return (
-    <Link
-      to='/pricing'
-      search={{ vendor: props.vendor }}
-      className={cn(
-        'hover:text-foreground underline decoration-current/40 decoration-1 underline-offset-2 transition-colors hover:decoration-current',
-        props.className
-      )}
-    >
-      {props.children ?? props.vendor}
-    </Link>
-  )
-}

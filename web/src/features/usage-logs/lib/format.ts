@@ -428,10 +428,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'prefill_group.create': 'Created a prefill group',
   'prefill_group.update': 'Updated a prefill group',
   'prefill_group.delete': 'Deleted a prefill group',
-  // Vendors
-  'vendor.create': 'Created a vendor',
-  'vendor.update': 'Updated a vendor',
-  'vendor.delete': 'Deleted a vendor',
+  // Legacy catalog source operations
+  'vendor.create': 'Created a catalog source',
+  'vendor.update': 'Updated a catalog source',
+  'vendor.delete': 'Deleted a catalog source',
   // Model metadata
   'model.create': 'Created a model',
   'model.update': 'Updated a model',

@@ -70,7 +70,6 @@ export const STATIC_I18N_KEYS = [
   'Video',
   'Sort',
   'All',
-  'All Vendors',
   'All Groups',
   'All Tags',
   'More...',

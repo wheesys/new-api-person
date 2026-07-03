@@ -3293,7 +3293,7 @@ export function ChannelMutateDrawer({
                                             modelMappingGuardrail.exposedTargetModels
                                           )}{' '}
                                           {t(
-                                            'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
+                                            'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide upstream-specific names.'
                                           )}
                                         </span>
                                         <Button

@@ -22,10 +22,7 @@ import type {
   GetModelsParams,
   GetModelsResponse,
   GetModelResponse,
-  GetVendorsResponse,
-  GetVendorResponse,
   Model,
-  Vendor,
   SearchModelsParams,
   SyncUpstreamResponse,
   PreviewUpstreamDiffResponse,
@@ -108,73 +105,6 @@ export async function deleteModel(
   id: number
 ): Promise<{ success: boolean; message?: string }> {
   const res = await api.delete(`/api/models/${id}`)
-  return res.data
-}
-
-// ============================================================================
-// Vendor Management
-// ============================================================================
-
-/**
- * Get paginated list of vendors
- */
-export async function getVendors(params?: {
-  p?: number
-  page_size?: number
-}): Promise<GetVendorsResponse> {
-  const res = await api.get('/api/vendors/', {
-    params: params || { page_size: 1000 },
-  })
-  return res.data
-}
-
-/**
- * Search vendors
- */
-export async function searchVendors(params: {
-  keyword?: string
-  p?: number
-  page_size?: number
-}): Promise<GetVendorsResponse> {
-  const res = await api.get('/api/vendors/search', { params })
-  return res.data
-}
-
-/**
- * Get single vendor by ID
- */
-export async function getVendor(id: number): Promise<GetVendorResponse> {
-  const res = await api.get(`/api/vendors/${id}`)
-  return res.data
-}
-
-/**
- * Create new vendor
- */
-export async function createVendor(
-  data: Partial<Vendor>
-): Promise<{ success: boolean; message?: string; data?: Vendor }> {
-  const res = await api.post('/api/vendors/', data)
-  return res.data
-}
-
-/**
- * Update existing vendor
- */
-export async function updateVendor(
-  data: Partial<Vendor> & { id: number }
-): Promise<{ success: boolean; message?: string; data?: Vendor }> {
-  const res = await api.put('/api/vendors/', data)
-  return res.data
-}
-
-/**
- * Delete vendor
- */
-export async function deleteVendor(
-  id: number
-): Promise<{ success: boolean; message?: string }> {
-  const res = await api.delete(`/api/vendors/${id}`)
   return res.data
 }
 

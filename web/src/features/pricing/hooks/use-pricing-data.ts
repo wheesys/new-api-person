@@ -43,20 +43,12 @@ export function usePricingData() {
   )
 
   const models = useMemo(() => {
-    if (!data?.data || !data?.vendors) return []
-
-    const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
+    if (!data?.data) return []
 
     return data.data.map((model) => {
-      const vendor = model.vendor_id
-        ? vendorMap.get(model.vendor_id)
-        : undefined
       return {
         ...model,
         key: model.model_name,
-        vendor_name: vendor?.name,
-        vendor_icon: vendor?.icon,
-        vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
       }
     })
@@ -64,7 +56,6 @@ export function usePricingData() {
 
   return {
     models,
-    vendors: data?.vendors ?? [],
     groupRatio: data?.group_ratio ?? {},
     usableGroup: data?.usable_group ?? {},
     endpointMap: data?.supported_endpoint ?? {},

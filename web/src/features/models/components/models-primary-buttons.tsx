@@ -21,7 +21,6 @@ import {
   MoreHorizontal,
   RefreshCw,
   List,
-  Building2,
   AlertCircle,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -57,10 +56,6 @@ export function ModelsPrimaryButtons() {
 
   const handlePrefillGroups = () => {
     setOpen('prefill-groups')
-  }
-
-  const handleManageVendors = () => {
-    setOpen('create-vendor') // Will be a separate vendors management dialog
   }
 
   return (
@@ -100,12 +95,6 @@ export function ModelsPrimaryButtons() {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          <DropdownMenuItem onClick={handleManageVendors}>
-            {t('Manage Vendors')}
-            <DropdownMenuShortcut>
-              <Building2 className='h-4 w-4' />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

@@ -27,7 +27,7 @@ type Model struct {
 	Description  string         `json:"description,omitempty" gorm:"type:text"`
 	Icon         string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
 	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
-	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`
+	VendorID     int            `json:"-" gorm:"index"`
 	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Status       int            `json:"status" gorm:"default:1"`
 	SyncOfficial int            `json:"sync_official" gorm:"default:1"`
@@ -78,7 +78,7 @@ func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
-		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").
+		Select("model_name", "description", "icon", "tags", "endpoints", "status", "sync_official", "name_rule", "updated_time").
 		Updates(mi).Error
 }
 
@@ -86,26 +86,8 @@ func (mi *Model) Delete() error {
 	return DB.Delete(mi).Error
 }
 
-func GetVendorModelCounts() (map[int64]int64, error) {
-	var stats []struct {
-		VendorID int64
-		Count    int64
-	}
-	if err := DB.Model(&Model{}).
-		Select("vendor_id as vendor_id, count(*) as count").
-		Group("vendor_id").
-		Scan(&stats).Error; err != nil {
-		return nil, err
-	}
-	m := make(map[int64]int64, len(stats))
-	for _, s := range stats {
-		m[s.VendorID] = s.Count
-	}
-	return m, nil
-}
-
 func GetAllModels(offset int, limit int) ([]*Model, error) {
-	models, _, err := SearchModels("", "", "", "", offset, limit)
+	models, _, err := SearchModels("", "", "", offset, limit)
 	return models, err
 }
 
@@ -191,19 +173,12 @@ func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (m
 	return result, nil
 }
 
-func SearchModels(keyword string, vendor string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
+func SearchModels(keyword string, status string, syncOfficial string, offset int, limit int) ([]*Model, int64, error) {
 	var models []*Model
 	db := DB.Model(&Model{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		db = db.Where("model_name LIKE ? OR description LIKE ? OR tags LIKE ?", like, like, like)
-	}
-	if vendor != "" {
-		if vid, err := strconv.Atoi(vendor); err == nil {
-			db = db.Where("models.vendor_id = ?", vid)
-		} else {
-			db = db.Joins("JOIN vendors ON vendors.id = models.vendor_id").Where("vendors.name LIKE ?", "%"+vendor+"%")
-		}
 	}
 	if statusValue, ok := parseModelStatusFilter(status); ok {
 		db = db.Where("models.status = ?", statusValue)

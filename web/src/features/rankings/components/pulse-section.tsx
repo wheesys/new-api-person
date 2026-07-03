@@ -24,11 +24,10 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
 import type { RankingMover } from '../types'
-import { ModelLink, VendorLink } from './entity-links'
+import { ModelLink } from './entity-links'
 
 type PulseSectionProps = {
   movers: RankingMover[]
@@ -111,7 +110,6 @@ function PulseEmpty(props: { label: string }) {
 function MoverRow(props: { row: RankingMover; intent: 'up' | 'down' }) {
   return (
     <li className='flex items-center gap-3 px-4 py-2'>
-      <span className='shrink-0'>{getLobeIcon(props.row.vendor_icon, 20)}</span>
       <div className='min-w-0 flex-1'>
         <ModelLink
           modelName={props.row.model_name}
@@ -120,10 +118,7 @@ function MoverRow(props: { row: RankingMover; intent: 'up' | 'down' }) {
           {props.row.model_name}
         </ModelLink>
         <p className='text-muted-foreground/80 truncate text-[11px]'>
-          #{props.row.current_rank} ·{' '}
-          <VendorLink vendor={props.row.vendor}>
-            {props.row.vendor.toLowerCase()}
-          </VendorLink>
+          #{props.row.current_rank}
         </p>
       </div>
       <span

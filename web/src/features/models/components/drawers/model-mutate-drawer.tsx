@@ -81,9 +81,9 @@ import { normalizeJsonString } from '@/features/system-settings/models/utils'
 import type { ModelSettings } from '@/features/system-settings/types'
 import { safeJsonParse } from '@/features/system-settings/utils/json-parser'
 
-import { createModel, updateModel, getModel, getVendors } from '../../api'
+import { createModel, updateModel, getModel } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
-import { modelsQueryKeys, vendorsQueryKeys, parseModelTags } from '../../lib'
+import { modelsQueryKeys, parseModelTags } from '../../lib'
 import type { Model } from '../../types'
 
 // Extended schema for ratio configuration (internal form state only)
@@ -93,7 +93,6 @@ const extendedModelFormSchema = z.object({
   description: z.string(),
   icon: z.string(),
   tags: z.array(z.string()),
-  vendor_id: z.number().optional(),
   endpoints: z.string(),
   name_rule: z.number(),
   status: z.boolean(),
@@ -257,15 +256,6 @@ export function ModelMutateDrawer({
   // refetch, and including it in the deps would reset the form under the user.
   const modelSettingsRef = useRef<ModelSettings | null>(null)
 
-  // Fetch vendors for dropdown
-  const { data: vendorsData } = useQuery({
-    queryKey: vendorsQueryKeys.list(),
-    queryFn: () => getVendors({ page_size: 1000 }),
-    enabled: open,
-  })
-
-  const vendors = vendorsData?.data?.items || []
-
   // Fetch model detail if editing
   const { data: modelData } = useQuery({
     queryKey: modelsQueryKeys.detail(currentModelId || 0),
@@ -363,7 +353,6 @@ export function ModelMutateDrawer({
       description: '',
       icon: '',
       tags: [],
-      vendor_id: undefined,
       endpoints: '',
       name_rule: 0,
       status: true,
@@ -431,7 +420,6 @@ export function ModelMutateDrawer({
         description: model.description || '',
         icon: model.icon || '',
         tags: parseModelTags(model.tags),
-        vendor_id: model.vendor_id,
         endpoints: model.endpoints || '',
         name_rule: model.name_rule || 0,
         status: model.status === 1,
@@ -456,7 +444,6 @@ export function ModelMutateDrawer({
         description: '',
         icon: '',
         tags: [],
-        vendor_id: undefined,
         endpoints: '',
         name_rule: 0,
         status: true,
@@ -807,47 +794,6 @@ export function ModelMutateDrawer({
                     <FormDescription className='text-xs'>
                       {t('@lobehub/icons key')}
                     </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='vendor_id'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Vendor')}</FormLabel>
-                    <Select
-                      items={vendors.map((vendor) => ({
-                        value: String(vendor.id),
-                        label: vendor.name,
-                      }))}
-                      onValueChange={(value) =>
-                        field.onChange(
-                          value ? Number.parseInt(value) : undefined
-                        )
-                      }
-                      value={field.value ? String(field.value) : undefined}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder={t('Select vendor')} />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {vendors.map((vendor) => (
-                            <SelectItem
-                              key={vendor.id}
-                              value={String(vendor.id)}
-                            >
-                              {vendor.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}

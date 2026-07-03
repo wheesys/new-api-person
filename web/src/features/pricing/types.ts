@@ -20,22 +20,11 @@ For commercial licensing, please contact support@quantumnous.com
 // Pricing Types
 // ----------------------------------------------------------------------------
 
-export type PricingVendor = {
-  id: number
-  name: string
-  icon?: string
-  description?: string
-}
-
 export type PricingModel = {
   id: number
   model_name: string
   description?: string
   icon?: string
-  vendor_id?: number
-  vendor_name?: string
-  vendor_icon?: string
-  vendor_description?: string
   quota_type: number
   model_ratio: number
   completion_ratio: number
@@ -92,7 +81,6 @@ export type PricingData = {
   success: boolean
   message?: string
   data: PricingModel[]
-  vendors: PricingVendor[]
   group_ratio: Record<string, number>
   usable_group: Record<string, { desc: string; ratio: number }>
   supported_endpoint: Record<string, string>

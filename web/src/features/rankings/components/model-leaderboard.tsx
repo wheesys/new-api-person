@@ -18,11 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { getLobeIcon } from '@/lib/lobe-icon'
-
 import { formatTokens } from '../lib/format'
 import type { ModelRanking } from '../types'
-import { ModelLink, VendorLink } from './entity-links'
+import { ModelLink } from './entity-links'
 import { GrowthText } from './growth-text'
 
 type ModelLeaderboardProps = {
@@ -35,13 +33,9 @@ type ModelLeaderboardProps = {
 }
 
 /**
- * Two-column model leaderboard list: "rank · model
- * (with vendor below) · tokens (with growth below)" rendering. Splits
- * `rows` evenly between the two columns so the visual rhythm matches a
- * single ranked list rather than two independent lists.
- *
- * Both the model name and vendor name are clickable: model jumps to
- * `/pricing/{modelName}` and vendor jumps to `/pricing?vendor={vendor}`.
+ * Two-column model leaderboard list. Splits `rows` evenly between the two
+ * columns so the visual rhythm matches a single ranked list rather than two
+ * independent lists.
  */
 export function ModelLeaderboard(props: ModelLeaderboardProps) {
   const limited = props.limit ? props.rows.slice(0, props.limit) : props.rows
@@ -82,9 +76,6 @@ function ModelList(props: {
           <span className='text-muted-foreground/80 w-6 shrink-0 text-right font-mono text-xs tabular-nums'>
             {row.rank}.
           </span>
-          <span className='shrink-0'>
-            {getLobeIcon(row.vendor_icon, compact ? 20 : 22)}
-          </span>
           <div className='min-w-0 flex-1'>
             <ModelLink
               modelName={row.model_name}
@@ -96,18 +87,6 @@ function ModelList(props: {
             >
               {row.model_name}
             </ModelLink>
-            <p
-              className={
-                compact
-                  ? 'text-muted-foreground/80 truncate text-[11px] italic'
-                  : 'text-muted-foreground/80 truncate text-xs italic'
-              }
-            >
-              by{' '}
-              <VendorLink vendor={row.vendor}>
-                {row.vendor.toLowerCase()}
-              </VendorLink>
-            </p>
           </div>
           <div className='shrink-0 text-right'>
             <div

@@ -451,14 +451,6 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
 
-  if (model.vendor_name) {
-    cells.push(
-      <CatalogInfoCell key='provider' label={t('Provider')}>
-        <CatalogTextValue>{model.vendor_name}</CatalogTextValue>
-      </CatalogInfoCell>
-    )
-  }
-
   cells.push(
     <CatalogInfoCell key='type' label={t('Type')}>
       <ModelBillingModeBadge model={model} />
@@ -526,9 +518,9 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
-  const modelIconKey = model.icon || model.vendor_icon
+  const modelIconKey = model.icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
-  const description = model.description || model.vendor_description || null
+  const description = model.description || null
 
   return (
     <header className='pb-4'>
@@ -547,10 +539,6 @@ function ModelHeader(props: { model: PricingModel }) {
         />
       </div>
       <div className='mt-1 flex flex-wrap items-center gap-1.5 text-xs'>
-        {model.vendor_name && (
-          <span className='text-muted-foreground'>{model.vendor_name}</span>
-        )}
-        <span className='text-muted-foreground/30'>·</span>
         <ModelBillingModeBadge model={model} />
       </div>
       {description && (

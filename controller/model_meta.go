@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +18,7 @@ func GetAllModelsMeta(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	status := c.Query("status")
 	syncOfficial := c.Query("sync_official")
-	modelsMeta, total, err := model.SearchModels("", "", status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	modelsMeta, total, err := model.SearchModels("", status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -27,17 +26,13 @@ func GetAllModelsMeta(c *gin.Context) {
 	// 批量填充附加字段，提升列表接口性能
 	enrichModels(modelsMeta)
 
-	// 统计供应商计数（全部数据，不受分页影响）
-	vendorCounts, _ := model.GetVendorModelCounts()
-
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(modelsMeta)
 	common.ApiSuccess(c, gin.H{
-		"items":         modelsMeta,
-		"total":         total,
-		"page":          pageInfo.GetPage(),
-		"page_size":     pageInfo.GetPageSize(),
-		"vendor_counts": vendorCounts,
+		"items":     modelsMeta,
+		"total":     total,
+		"page":      pageInfo.GetPage(),
+		"page_size": pageInfo.GetPageSize(),
 	})
 }
 
@@ -45,27 +40,24 @@ func GetAllModelsMeta(c *gin.Context) {
 func SearchModelsMeta(c *gin.Context) {
 
 	keyword := c.Query("keyword")
-	vendor := c.Query("vendor")
 	status := c.Query("status")
 	syncOfficial := c.Query("sync_official")
 	pageInfo := common.GetPageQuery(c)
 
-	modelsMeta, total, err := model.SearchModels(keyword, vendor, status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	modelsMeta, total, err := model.SearchModels(keyword, status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	// 批量填充附加字段，提升列表接口性能
 	enrichModels(modelsMeta)
-	vendorCounts, _ := model.GetVendorModelCounts()
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(modelsMeta)
 	common.ApiSuccess(c, gin.H{
-		"items":         modelsMeta,
-		"total":         total,
-		"page":          pageInfo.GetPage(),
-		"page_size":     pageInfo.GetPageSize(),
-		"vendor_counts": vendorCounts,
+		"items":     modelsMeta,
+		"total":     total,
+		"page":      pageInfo.GetPage(),
+		"page_size": pageInfo.GetPageSize(),
 	})
 }
 
@@ -201,7 +193,7 @@ func enrichModels(models []*model.Model) {
 			mm := models[idx]
 			if mm.Endpoints == "" {
 				eps := model.GetModelSupportEndpointTypes(mm.ModelName)
-				if b, err := json.Marshal(eps); err == nil {
+				if b, err := common.Marshal(eps); err == nil {
 					mm.Endpoints = string(b)
 				}
 			}
@@ -291,7 +283,7 @@ func enrichModels(models []*model.Model) {
 			for et := range es {
 				eps = append(eps, et)
 			}
-			if b, err := json.Marshal(eps); err == nil {
+			if b, err := common.Marshal(eps); err == nil {
 				mm.Endpoints = string(b)
 			}
 		}

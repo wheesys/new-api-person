@@ -20,7 +20,6 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
 import {
-  BadgeCell,
   BadgeListCell,
   DataTableColumnHeader,
 } from '@/components/data-table'
@@ -79,7 +78,7 @@ export function usePricingColumns(
       ),
       cell: ({ row }) => {
         const model = row.original
-        const modelIconKey = model.icon || model.vendor_icon
+        const modelIconKey = model.icon
         const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 14) : null
 
         return (
@@ -312,34 +311,6 @@ export function usePricingColumns(
         )
       },
       size: 110,
-      enableSorting: false,
-    },
-
-    // Vendor column
-    {
-      accessorKey: 'vendor_name',
-      header: t('Vendor'),
-      cell: ({ row }) => {
-        const model = row.original
-        if (!model.vendor_name) {
-          return <span className='text-muted-foreground/50 text-xs'>—</span>
-        }
-        const vendorIcon = model.vendor_icon
-          ? getLobeIcon(model.vendor_icon, 12)
-          : null
-        return (
-          <BadgeCell className='gap-1.5'>
-            {vendorIcon}
-            <StatusBadge
-              label={model.vendor_name}
-              autoColor={model.vendor_name}
-              size='sm'
-              copyable={false}
-            />
-          </BadgeCell>
-        )
-      },
-      size: 130,
       enableSorting: false,
     },
 

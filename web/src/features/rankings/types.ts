@@ -43,8 +43,6 @@ export type ModelRanking = {
   /** Previous rank in the same period; undefined means "new". */
   previous_rank?: number
   model_name: string
-  vendor: string
-  vendor_icon?: string
   category: RankingCategoryId
   /** Total tokens routed through this model in the period. */
   total_tokens: number
@@ -54,23 +52,8 @@ export type ModelRanking = {
   growth_pct: number
 }
 
-export type VendorRanking = {
-  rank: number
-  vendor: string
-  vendor_icon?: string
-  total_tokens: number
-  share: number
-  growth_pct: number
-  /** Number of distinct models from this vendor with traffic. */
-  models_count: number
-  /** Top model from this vendor in the period. */
-  top_model: string
-}
-
 export type RankingMover = {
   model_name: string
-  vendor: string
-  vendor_icon?: string
   /** Positive = climbed, negative = dropped. */
   rank_delta: number
   current_rank: number
@@ -88,7 +71,6 @@ export type ModelHistoryPoint = {
   label: string
   /** Model display name shown in tooltip / legend. */
   model: string
-  vendor: string
   /** Token count routed through the model in this bucket. */
   tokens: number
 }
@@ -97,42 +79,17 @@ export type ModelHistorySeries = {
   /** Flat points ready for VChart, ordered oldest → newest. */
   points: ModelHistoryPoint[]
   /** Models that appear in the series, sorted by total tokens desc. */
-  models: Array<{ name: string; vendor: string; total: number }>
-  /** Bucket count (used for sizing axis ticks). */
-  buckets: number
-}
-
-/**
- * One sample of a vendor's market share at a given timestamp. `share` is
- * normalised within the bucket (sums to 1.0 across all vendors at the same
- * `ts`); `tokens` is preserved for tooltip use.
- */
-export type VendorSharePoint = {
-  ts: string
-  label: string
-  vendor: string
-  share: number
-  tokens: number
-}
-
-export type VendorShareSeries = {
-  /** Flat points ready for VChart, ordered oldest → newest. */
-  points: VendorSharePoint[]
-  /** Vendors that appear in the series, sorted by aggregate tokens desc. */
-  vendors: Array<{ name: string; total: number; share: number }>
+  models: Array<{ name: string; total: number }>
   buckets: number
 }
 
 export type RankingsSnapshot = {
   // Overall (all categories) ------------------------------------------------
   models: ModelRanking[]
-  vendors: VendorRanking[]
   /** Largest rank gainers in this period. */
   top_movers: RankingMover[]
   /** Largest rank losers in this period. */
   top_droppers: RankingMover[]
   /** Stacked-bar history of token usage by model over the period. */
   models_history: ModelHistorySeries
-  /** 100%-stacked area history of token share by vendor over the period. */
-  vendor_share_history: VendorShareSeries
 }

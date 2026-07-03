@@ -19,9 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
-import { BadgeCell, BadgeListCell } from '@/components/data-table'
+import { BadgeListCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
-import { ProviderBadge } from '@/components/provider-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -40,7 +39,7 @@ import {
   getQuotaTypeConfig,
 } from '../constants'
 import { parseModelTags, formatEndpointsDisplay } from '../lib'
-import type { Model, Vendor } from '../types'
+import type { Model } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DescriptionCell } from './description-cell'
 
@@ -53,18 +52,13 @@ function getCompactModelIcon(iconKey: string) {
 /**
  * Generate models columns configuration
  */
-export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
+export function useModelsColumns(): ColumnDef<Model>[] {
   const { t } = useTranslation()
 
   // Get translated configs
   const NAME_RULE_CONFIG = getNameRuleConfig(t)
   const MODEL_STATUS_CONFIG = getModelStatusConfig(t)
   const QUOTA_TYPE_CONFIG = getQuotaTypeConfig(t)
-
-  const vendorMap: Record<number, Vendor> = {}
-  vendors.forEach((v) => {
-    vendorMap[v.id] = v
-  })
 
   return [
     // Checkbox column
@@ -110,11 +104,7 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       cell: ({ row }) => {
         const model = row.original
         const name = row.getValue('model_name') as string
-        const iconKey =
-          model.icon ||
-          vendorMap[model.vendor_id || 0]?.icon ||
-          model.model_name?.[0] ||
-          'N'
+        const iconKey = model.icon || model.model_name?.[0] || 'N'
         const icon = getCompactModelIcon(iconKey)
 
         return (
@@ -232,32 +222,6 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       },
       size: 110,
       minSize: 110,
-      enableSorting: false,
-    },
-
-    // Vendor column
-    {
-      accessorKey: 'vendor_id',
-      header: t('Vendor'),
-      cell: ({ row }) => {
-        const vendorId = row.getValue('vendor_id') as number
-        const vendor = vendorMap[vendorId]
-
-        if (!vendor) {
-          return <span className='text-muted-foreground text-xs'>-</span>
-        }
-
-        return (
-          <BadgeCell>
-            <ProviderBadge iconKey={vendor.icon} label={vendor.name} />
-          </BadgeCell>
-        )
-      },
-      filterFn: (row, id, value) => {
-        if (!value || value.length === 0 || value.includes('all')) return true
-        return value.includes(String(row.getValue(id)))
-      },
-      size: 130,
       enableSorting: false,
     },
 

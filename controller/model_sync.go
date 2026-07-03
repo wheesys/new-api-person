@@ -20,12 +20,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// 上游地址
-const (
-	upstreamModelsURL  = "https://basellm.github.io/llm-metadata/api/newapi/models.json"
-	upstreamVendorsURL = "https://basellm.github.io/llm-metadata/api/newapi/vendors.json"
-)
-
 func normalizeLocale(locale string) (string, bool) {
 	l := strings.ToLower(strings.TrimSpace(locale))
 	switch l {
@@ -40,13 +34,12 @@ func getUpstreamBase() string {
 	return common.GetEnvOrDefaultString("SYNC_UPSTREAM_BASE", "https://basellm.github.io/llm-metadata")
 }
 
-func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
+func getUpstreamModelsURL(locale string) string {
 	base := strings.TrimRight(getUpstreamBase(), "/")
 	if l, ok := normalizeLocale(locale); ok && l != "" {
-		return fmt.Sprintf("%s/api/i18n/%s/newapi/models.json", base, l),
-			fmt.Sprintf("%s/api/i18n/%s/newapi/vendors.json", base, l)
+		return fmt.Sprintf("%s/api/i18n/%s/newapi/models.json", base, l)
 	}
-	return fmt.Sprintf("%s/api/newapi/models.json", base), fmt.Sprintf("%s/api/newapi/vendors.json", base)
+	return fmt.Sprintf("%s/api/newapi/models.json", base)
 }
 
 type upstreamEnvelope[T any] struct {
@@ -63,14 +56,6 @@ type upstreamModel struct {
 	NameRule    int             `json:"name_rule"`
 	Status      int             `json:"status"`
 	Tags        string          `json:"tags"`
-	VendorName  string          `json:"vendor_name"`
-}
-
-type upstreamVendor struct {
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
-	Name        string `json:"name"`
-	Status      int    `json:"status"`
 }
 
 var (
@@ -180,10 +165,10 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 				cacheMutex.Unlock()
 
 				// Try decode as envelope first
-				if err := json.Unmarshal(buf, out); err != nil {
+				if err := common.Unmarshal(buf, out); err != nil {
 					// Try decode as pure array
 					var arr []T
-					if err2 := json.Unmarshal(buf, &arr); err2 != nil {
+					if err2 := common.Unmarshal(buf, &arr); err2 != nil {
 						lastErr = err
 						return
 					}
@@ -205,9 +190,9 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 					lastErr = errors.New("cache miss for 304 response")
 					return
 				}
-				if err := json.Unmarshal(buf, out); err != nil {
+				if err := common.Unmarshal(buf, out); err != nil {
 					var arr []T
-					if err2 := json.Unmarshal(buf, &arr); err2 != nil {
+					if err2 := common.Unmarshal(buf, &arr); err2 != nil {
 						lastErr = err
 						return
 					}
@@ -234,35 +219,7 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 	return lastErr
 }
 
-func ensureVendorID(vendorName string, vendorByName map[string]upstreamVendor, vendorIDCache map[string]int, createdVendors *int) int {
-	if vendorName == "" {
-		return 0
-	}
-	if id, ok := vendorIDCache[vendorName]; ok {
-		return id
-	}
-	var existing model.Vendor
-	if err := model.DB.Where("name = ?", vendorName).First(&existing).Error; err == nil {
-		vendorIDCache[vendorName] = existing.Id
-		return existing.Id
-	}
-	uv := vendorByName[vendorName]
-	v := &model.Vendor{
-		Name:        vendorName,
-		Description: uv.Description,
-		Icon:        coalesce(uv.Icon, ""),
-		Status:      chooseStatus(uv.Status, 1),
-	}
-	if err := v.Insert(); err == nil {
-		*createdVendors++
-		vendorIDCache[vendorName] = v.Id
-		return v.Id
-	}
-	vendorIDCache[vendorName] = 0
-	return 0
-}
-
-// SyncUpstreamModels 同步上游模型与供应商：
+// SyncUpstreamModels 同步上游模型：
 // - 默认仅创建「未配置模型」
 // - 可通过 overwrite 选择性覆盖更新本地已有模型的字段（前提：sync_official <> 0）
 func SyncUpstreamModels(c *gin.Context) {
@@ -279,61 +236,37 @@ func SyncUpstreamModels(c *gin.Context) {
 
 	// 若既无缺失模型需要创建，也未指定覆盖更新字段，则无需请求上游数据，直接返回
 	if len(missing) == 0 && len(req.Overwrite) == 0 {
-		modelsURL, vendorsURL := getUpstreamURLs(req.Locale)
+		modelsURL := getUpstreamModelsURL(req.Locale)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data": gin.H{
-				"created_models":  0,
-				"created_vendors": 0,
-				"updated_models":  0,
-				"skipped_models":  []string{},
-				"created_list":    []string{},
-				"updated_list":    []string{},
+				"created_models": 0,
+				"updated_models": 0,
+				"skipped_models": []string{},
+				"created_list":   []string{},
+				"updated_list":   []string{},
 				"source": gin.H{
-					"locale":      req.Locale,
-					"models_url":  modelsURL,
-					"vendors_url": vendorsURL,
+					"locale":     req.Locale,
+					"models_url": modelsURL,
 				},
 			},
 		})
 		return
 	}
 
-	// 2) 拉取上游 vendors 与 models
+	// 2) 拉取上游 models
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
-	modelsURL, vendorsURL := getUpstreamURLs(req.Locale)
-	var vendorsEnv upstreamEnvelope[upstreamVendor]
+	modelsURL := getUpstreamModelsURL(req.Locale)
 	var modelsEnv upstreamEnvelope[upstreamModel]
-	var fetchErr error
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		// vendor 失败不拦截
-		_ = fetchJSON(ctx, vendorsURL, &vendorsEnv)
-	}()
-	go func() {
-		defer wg.Done()
-		if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
-			fetchErr = err
-		}
-	}()
-	wg.Wait()
-	if fetchErr != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + fetchErr.Error(), "locale": req.Locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
+	if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + err.Error(), "locale": req.Locale, "source_urls": gin.H{"models_url": modelsURL}})
 		return
 	}
 
 	// 建立映射
-	vendorByName := make(map[string]upstreamVendor)
-	for _, v := range vendorsEnv.Data {
-		if v.Name != "" {
-			vendorByName[v.Name] = v
-		}
-	}
 	modelByName := make(map[string]upstreamModel)
 	for _, m := range modelsEnv.Data {
 		if m.ModelName != "" {
@@ -343,14 +276,10 @@ func SyncUpstreamModels(c *gin.Context) {
 
 	// 3) 执行同步：仅创建缺失模型；若上游缺失该模型则跳过
 	createdModels := 0
-	createdVendors := 0
 	updatedModels := 0
 	skipped := make([]string, 0)
 	createdList := make([]string, 0)
 	updatedList := make([]string, 0)
-
-	// 本地缓存：vendorName -> id
-	vendorIDCache := make(map[string]int)
 
 	for _, name := range missing {
 		up, ok := modelByName[name]
@@ -368,16 +297,12 @@ func SyncUpstreamModels(c *gin.Context) {
 			}
 		}
 
-		// 确保 vendor 存在
-		vendorID := ensureVendorID(up.VendorName, vendorByName, vendorIDCache, &createdVendors)
-
 		// 创建模型
 		mi := &model.Model{
 			ModelName:   name,
 			Description: up.Description,
 			Icon:        up.Icon,
 			Tags:        up.Tags,
-			VendorID:    vendorID,
 			Status:      chooseStatus(up.Status, 1),
 			NameRule:    up.NameRule,
 		}
@@ -391,7 +316,6 @@ func SyncUpstreamModels(c *gin.Context) {
 
 	// 4) 处理可选覆盖（更新本地已有模型的差异字段）
 	if len(req.Overwrite) > 0 {
-		// vendorIDCache 已用于创建阶段，可复用
 		for _, ow := range req.Overwrite {
 			up, ok := modelByName[ow.ModelName]
 			if !ok {
@@ -407,9 +331,6 @@ func SyncUpstreamModels(c *gin.Context) {
 				continue
 			}
 
-			// 映射 vendor
-			newVendorID := ensureVendorID(up.VendorName, vendorByName, vendorIDCache, &createdVendors)
-
 			// 应用字段覆盖（事务）
 			_ = model.DB.Transaction(func(tx *gorm.DB) error {
 				needUpdate := false
@@ -423,10 +344,6 @@ func SyncUpstreamModels(c *gin.Context) {
 				}
 				if containsField(ow.Fields, "tags") {
 					local.Tags = up.Tags
-					needUpdate = true
-				}
-				if containsField(ow.Fields, "vendor") {
-					local.VendorID = newVendorID
 					needUpdate = true
 				}
 				if containsField(ow.Fields, "name_rule") {
@@ -453,16 +370,14 @@ func SyncUpstreamModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"created_models":  createdModels,
-			"created_vendors": createdVendors,
-			"updated_models":  updatedModels,
-			"skipped_models":  skipped,
-			"created_list":    createdList,
-			"updated_list":    updatedList,
+			"created_models": createdModels,
+			"updated_models": updatedModels,
+			"skipped_models": skipped,
+			"created_list":   createdList,
+			"updated_list":   updatedList,
 			"source": gin.H{
-				"locale":      req.Locale,
-				"models_url":  modelsURL,
-				"vendors_url": vendorsURL,
+				"locale":     req.Locale,
+				"models_url": modelsURL,
 			},
 		},
 	})
@@ -476,13 +391,6 @@ func containsField(fields []string, key string) bool {
 		}
 	}
 	return false
-}
-
-func coalesce(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
 }
 
 func chooseStatus(primary, fallback int) int {
@@ -503,35 +411,14 @@ func SyncUpstreamPreview(c *gin.Context) {
 	defer cancel()
 
 	locale := c.Query("locale")
-	modelsURL, vendorsURL := getUpstreamURLs(locale)
+	modelsURL := getUpstreamModelsURL(locale)
 
-	var vendorsEnv upstreamEnvelope[upstreamVendor]
 	var modelsEnv upstreamEnvelope[upstreamModel]
-	var fetchErr error
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_ = fetchJSON(ctx, vendorsURL, &vendorsEnv)
-	}()
-	go func() {
-		defer wg.Done()
-		if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
-			fetchErr = err
-		}
-	}()
-	wg.Wait()
-	if fetchErr != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + fetchErr.Error(), "locale": locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
+	if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + err.Error(), "locale": locale, "source_urls": gin.H{"models_url": modelsURL}})
 		return
 	}
 
-	vendorByName := make(map[string]upstreamVendor)
-	for _, v := range vendorsEnv.Data {
-		if v.Name != "" {
-			vendorByName[v.Name] = v
-		}
-	}
 	modelByName := make(map[string]upstreamModel)
 	upstreamNames := make([]string, 0, len(modelsEnv.Data))
 	for _, m := range modelsEnv.Data {
@@ -545,26 +432,6 @@ func SyncUpstreamPreview(c *gin.Context) {
 	var locals []model.Model
 	if len(upstreamNames) > 0 {
 		_ = model.DB.Where("model_name IN ? AND sync_official <> 0", upstreamNames).Find(&locals).Error
-	}
-
-	// 本地 vendor 名称映射
-	vendorIdSet := make(map[int]struct{})
-	for _, m := range locals {
-		if m.VendorID != 0 {
-			vendorIdSet[m.VendorID] = struct{}{}
-		}
-	}
-	vendorIDs := make([]int, 0, len(vendorIdSet))
-	for id := range vendorIdSet {
-		vendorIDs = append(vendorIDs, id)
-	}
-	idToVendorName := make(map[int]string)
-	if len(vendorIDs) > 0 {
-		var dbVendors []model.Vendor
-		_ = model.DB.Where("id IN ?", vendorIDs).Find(&dbVendors).Error
-		for _, v := range dbVendors {
-			idToVendorName[v.Id] = v.Name
-		}
 	}
 
 	// 3) 缺失且上游存在的模型
@@ -593,7 +460,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 		if !ok {
 			continue
 		}
-		fields := make([]conflictField, 0, 6)
+		fields := make([]conflictField, 0, 5)
 		if strings.TrimSpace(local.Description) != strings.TrimSpace(up.Description) {
 			fields = append(fields, conflictField{Field: "description", Local: local.Description, Upstream: up.Description})
 		}
@@ -602,11 +469,6 @@ func SyncUpstreamPreview(c *gin.Context) {
 		}
 		if strings.TrimSpace(local.Tags) != strings.TrimSpace(up.Tags) {
 			fields = append(fields, conflictField{Field: "tags", Local: local.Tags, Upstream: up.Tags})
-		}
-		// vendor 对比使用名称
-		localVendor := idToVendorName[local.VendorID]
-		if strings.TrimSpace(localVendor) != strings.TrimSpace(up.VendorName) {
-			fields = append(fields, conflictField{Field: "vendor", Local: localVendor, Upstream: up.VendorName})
 		}
 		if local.NameRule != up.NameRule {
 			fields = append(fields, conflictField{Field: "name_rule", Local: local.NameRule, Upstream: up.NameRule})
@@ -625,9 +487,8 @@ func SyncUpstreamPreview(c *gin.Context) {
 			"missing":   missing,
 			"conflicts": conflicts,
 			"source": gin.H{
-				"locale":      locale,
-				"models_url":  modelsURL,
-				"vendors_url": vendorsURL,
+				"locale":     locale,
+				"models_url": modelsURL,
 			},
 		},
 	})

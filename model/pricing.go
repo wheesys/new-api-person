@@ -20,7 +20,6 @@ type Pricing struct {
 	Description            string                  `json:"description,omitempty"`
 	Icon                   string                  `json:"icon,omitempty"`
 	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
 	QuotaType              int                     `json:"quota_type"`
 	ModelRatio             float64                 `json:"model_ratio"`
 	ModelPrice             float64                 `json:"model_price"`
@@ -38,16 +37,8 @@ type Pricing struct {
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
 }
 
-type PricingVendor struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon,omitempty"`
-}
-
 var (
 	pricingMap           []Pricing
-	vendorsList          []PricingVendor
 	supportedEndpointMap map[string]common.EndpointInfo
 	lastGetPricingTime   time.Time
 	updatePricingLock    sync.Mutex
@@ -82,17 +73,7 @@ func InvalidatePricingCache() {
 	defer updatePricingLock.Unlock()
 
 	pricingMap = nil
-	vendorsList = nil
 	lastGetPricingTime = time.Time{}
-}
-
-// GetVendors 返回当前定价接口使用到的供应商信息
-func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
-	return vendorsList
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
@@ -184,7 +165,7 @@ func updatePricing() {
 		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
-	// 预加载模型元数据与供应商一次，避免循环查询
+	// 预加载模型元数据一次，避免循环查询
 	var allMeta []Model
 	_ = DB.Find(&allMeta).Error
 	metaMap := make(map[string]*Model)
@@ -236,27 +217,7 @@ func updatePricing() {
 		}
 	}
 
-	// 预加载供应商
-	var vendors []Vendor
-	_ = DB.Find(&vendors).Error
-	vendorMap := make(map[int]*Vendor)
-	for i := range vendors {
-		vendorMap[vendors[i].Id] = &vendors[i]
-	}
-
-	// 初始化默认供应商映射
-	initDefaultVendorMapping(metaMap, vendorMap, enableAbilities)
-
-	// 构建对前端友好的供应商列表
-	vendorsList = make([]PricingVendor, 0, len(vendorMap))
-	for _, v := range vendorMap {
-		vendorsList = append(vendorsList, PricingVendor{
-			ID:          v.Id,
-			Name:        v.Name,
-			Description: v.Description,
-			Icon:        v.Icon,
-		})
-	}
+	initDefaultModelMetadata(metaMap, enableAbilities)
 
 	modelGroupsMap := make(map[string]*types.Set[string])
 
@@ -362,7 +323,7 @@ func updatePricing() {
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
 		}
 
-		// 补充模型元数据（描述、标签、供应商、状态）
+		// 补充模型元数据（描述、标签、状态）
 		if meta, ok := metaMap[model]; ok {
 			// 若模型被禁用(status!=1)，则直接跳过，不返回给前端
 			if meta.Status != 1 {
@@ -371,7 +332,6 @@ func updatePricing() {
 			pricing.Description = meta.Description
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
-			pricing.VendorID = meta.VendorID
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {

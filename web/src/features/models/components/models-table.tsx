@@ -18,29 +18,26 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 
-import { getModels, searchModels, getVendors } from '../api'
+import { getModels, searchModels } from '../api'
 import {
   DEFAULT_PAGE_SIZE,
   getModelStatusOptions,
   getSyncStatusOptions,
 } from '../constants'
-import { modelsQueryKeys, vendorsQueryKeys } from '../lib'
+import { modelsQueryKeys } from '../lib'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useModelsColumns } from './models-columns'
-import { useModels } from './models-provider'
 
 const route = getRouteApi('/_authenticated/models/$section')
 
 export function ModelsTable() {
   const { t } = useTranslation()
-  const { selectedVendor } = useModels()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // URL state management
@@ -62,7 +59,6 @@ export function ModelsTable() {
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [
       { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: 'vendor_id', searchKey: 'vendor', type: 'array' },
       { columnId: 'sync_official', searchKey: 'sync', type: 'array' },
     ],
   })
@@ -70,36 +66,9 @@ export function ModelsTable() {
   // Extract filters from column filters
   const statusFilter =
     (columnFilters.find((f) => f.id === 'status')?.value as string[]) || []
-  const vendorFilter =
-    (columnFilters.find((f) => f.id === 'vendor_id')?.value as string[]) || []
   const syncFilter =
     (columnFilters.find((f) => f.id === 'sync_official')?.value as string[]) ||
     []
-
-  // Fetch vendors for filter
-  const { data: vendorsData } = useQuery({
-    queryKey: vendorsQueryKeys.list(),
-    queryFn: () => getVendors({ page_size: 1000 }),
-  })
-
-  const vendors = useMemo(
-    () => vendorsData?.data?.items || [],
-    [vendorsData?.data?.items]
-  )
-
-  const vendorOptions = useMemo(() => {
-    return vendors.map((v) => ({
-      label: v.name,
-      value: String(v.id),
-    }))
-  }, [vendors])
-
-  // Apply selected vendor from context or filter
-  const activeVendorFilter =
-    selectedVendor ||
-    (vendorFilter.length > 0 && !vendorFilter.includes('all')
-      ? vendorFilter[0]
-      : undefined)
 
   const statusFilterValue =
     statusFilter.length > 0 && !statusFilter.includes('all')
@@ -110,10 +79,9 @@ export function ModelsTable() {
       ? syncFilter[0]
       : undefined
 
-  // Use search API whenever any filter is active so status/sync are applied server-side
+  // Use search API whenever any filter is active so all filters are applied server-side.
   const shouldSearch = Boolean(
     globalFilter?.trim() ||
-    activeVendorFilter ||
     statusFilterValue ||
     syncFilterValue
   )
@@ -123,7 +91,6 @@ export function ModelsTable() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: modelsQueryKeys.list({
       keyword: globalFilter,
-      vendor: activeVendorFilter,
       status: statusFilterValue,
       sync_official: syncFilterValue,
       p: pagination.pageIndex + 1,
@@ -133,26 +100,27 @@ export function ModelsTable() {
       if (shouldSearch) {
         return searchModels({
           keyword: globalFilter,
-          vendor: activeVendorFilter,
+          status: statusFilterValue,
+          sync_official: syncFilterValue,
+          p: pagination.pageIndex + 1,
+          page_size: pagination.pageSize,
+        })
+      } else {
+        return getModels({
           status: statusFilterValue,
           sync_official: syncFilterValue,
           p: pagination.pageIndex + 1,
           page_size: pagination.pageSize,
         })
       }
-      return getModels({
-        p: pagination.pageIndex + 1,
-        page_size: pagination.pageSize,
-      })
     },
   })
 
   const models = data?.data?.items || []
   const totalCount = data?.data?.total || 0
-  const vendorCounts = data?.data?.vendor_counts
 
   // Columns configuration
-  const columns = useModelsColumns(vendors)
+  const columns = useModelsColumns()
 
   // React Table instance
   const { table } = useDataTable({
@@ -176,18 +144,6 @@ export function ModelsTable() {
     ensurePageInRange,
   })
 
-  // Prepare filter options
-  const vendorFilterOptions = [
-    {
-      label: `${t('All Vendors')}${vendorCounts?.all ? ` (${vendorCounts.all})` : ''}`,
-      value: 'all',
-    },
-    ...vendorOptions.map((option) => ({
-      label: `${option.label}${vendorCounts?.[option.value] ? ` (${vendorCounts[option.value]})` : ''}`,
-      value: option.value,
-    })),
-  ]
-
   return (
     <DataTablePage
       table={table}
@@ -207,12 +163,6 @@ export function ModelsTable() {
             columnId: 'status',
             title: t('Status'),
             options: [...getModelStatusOptions(t)],
-            singleSelect: true,
-          },
-          {
-            columnId: 'vendor_id',
-            title: t('Vendor'),
-            options: vendorFilterOptions,
             singleSelect: true,
           },
           {
