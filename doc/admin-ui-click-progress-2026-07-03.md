@@ -1,6 +1,6 @@
 # 后台页面点击验证阶段进度
 
-更新时间：2026-07-03 23:20（Asia/Shanghai）
+更新时间：2026-07-04 23:43（Asia/Shanghai）
 
 ## 背景
 
@@ -36,19 +36,24 @@
   - 模型新增弹窗能打开，未发现供应商字段。
   - 未捕获 `/api/vendors` 请求。
   - 未看到钱包管理、兑换码管理、模型部署等已移除菜单文本。
+- 2026-07-04 使用临时 SQLite 数据库和 Playwright 重新完成管理员登录后的 classic 后台点击验证：
+  - 验证环境：`http://127.0.0.1:18080`，视口 `1440x980`，临时库 `/private/tmp/new-api-admin-click.db`。
+  - 覆盖页面：`/console`、`/console/channel`、`/console/models`、`/pricing`。
+  - `/console` 数据看板未出现 `createCanvas` / `filter` 控制台错误，未捕获 `pageerror`。
+  - 所有覆盖页面均非空白，未出现前端框架错误覆盖层，未出现 HTTP 4xx/5xx 响应。
+  - 渠道新增弹窗打开正常，展开高级设置后可见 `Channel Price Ratio / 渠道倍率` 字段，并成功输入 `0`。
+  - 模型新增弹窗打开正常，可见 `Model Name / 模型名称` 字段，未发现 `Provider / 供应商` 字段。
+  - 全流程未捕获 `/api/vendors` 请求。
+  - 截图证据保存于本机临时目录 `/private/tmp/new-api-admin-click/`。
+- 最终验证命令已重跑通过：
+  - `web/classic` 执行 `bun run build` 通过。
+  - 仓库根目录执行 `GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp go test ./...` 通过。
 
 ## 未完成验证
 
-- VChart alias 修复后的完整 Playwright 登录点击验证尚未完成；最后一次脚本运行被人工中断。
-- Dashboard 在新构建资源下是否仍有 `createCanvas` / `filter` 控制台错误，需要继续复测确认。
-- 渠道编辑弹窗的倍率字段尚未在本地空渠道数据下验证；本地测试库没有渠道行，未创建测试数据。
-- 最终提交前还需要重跑完整前后端验证命令，并按仓库规则执行 commit 后自动 push。
+- 渠道编辑弹窗的倍率字段尚未在本地空渠道数据下验证；本轮遵守不额外修改数据库数据的规则，未创建测试渠道。
 
 ## 下一步建议
 
-1. 保持当前代码不回滚，重新启动本地服务。
-2. 使用 Playwright 登录管理员账号，依次打开 `/console`、`/console/channel`、`/console/models`、`/pricing`。
-3. 检查控制台 `error` / `warning`、`pageerror`、HTTP 4xx/5xx、`/api/vendors` 请求。
-4. 打开渠道新增弹窗并展开高级设置，确认渠道倍率字段可见且允许 `0`。
-5. 打开模型新增弹窗，确认供应商字段不存在。
-6. 如果 Dashboard 不再报错，执行最终构建和后端测试；若仍报错，继续从 VChart/VRender 依赖实例一致性方向排查。
+1. 按仓库规则提交当前文档更新，并在 `git commit` 后立即执行 `git push`。
+2. 如需补齐渠道编辑弹窗验证，需要使用已有渠道数据，或在得到明确允许后向临时库创建测试渠道。
