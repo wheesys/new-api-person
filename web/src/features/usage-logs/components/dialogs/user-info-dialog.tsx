@@ -88,9 +88,6 @@ export function UserInfoDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={t('User Information')}
-      description={t(
-        'View detailed information about this user including balance, usage statistics, and invitation details.'
-      )}
       contentClassName='sm:max-w-lg'
       contentHeight='auto'
       bodyClassName='space-y-4'
@@ -112,12 +109,8 @@ export function UserInfoDialog({
             )}
           </div>
 
-          {/* Balance Info */}
+          {/* Usage Info */}
           <div className='grid grid-cols-2 gap-4'>
-            <InfoItem
-              label={t('Balance')}
-              value={formatQuota(userInfo.quota)}
-            />
             <InfoItem
               label={t('Used Quota')}
               value={formatQuota(userInfo.used_quota)}

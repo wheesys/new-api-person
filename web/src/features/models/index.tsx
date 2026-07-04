@@ -24,7 +24,10 @@ import { SectionPageLayout } from '@/components/layout'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { ModelsDialogs } from './components/models-dialogs'
-import { ModelsPricingSection } from './components/models-pricing-section'
+import {
+  ModelsGroupManagementSection,
+  ModelsPricingSection,
+} from './components/models-pricing-section'
 import { ModelsPrimaryButtons } from './components/models-primary-buttons'
 import { ModelsProvider, useModels } from './components/models-provider'
 import { ModelsTable } from './components/models-table'
@@ -42,6 +45,9 @@ const SECTION_META: Record<ModelsSectionId, { titleKey: string }> = {
   },
   pricing: {
     titleKey: 'Pricing',
+  },
+  'group-management': {
+    titleKey: 'Group Management',
   },
 }
 
@@ -95,6 +101,9 @@ function ModelsContent() {
             <div className='min-h-0 flex-1'>
               {activeSection === 'metadata' && <ModelsTable />}
               {activeSection === 'pricing' && <ModelsPricingSection />}
+              {activeSection === 'group-management' && (
+                <ModelsGroupManagementSection />
+              )}
             </div>
           </div>
         </SectionPageLayout.Content>

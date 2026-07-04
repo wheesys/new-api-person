@@ -118,8 +118,21 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
             icon: Box,
+            items: [
+              {
+                title: t('Metadata'),
+                url: '/models/metadata',
+              },
+              {
+                title: t('Pricing'),
+                url: '/models/pricing',
+              },
+              {
+                title: t('Group Management'),
+                url: '/models/group-management',
+              },
+            ],
           },
           {
             title: t('Users'),

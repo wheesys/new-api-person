@@ -1,6 +1,6 @@
 # 后台页面点击验证阶段进度
 
-更新时间：2026-07-04 23:43（Asia/Shanghai）
+更新时间：2026-07-04 23:59（Asia/Shanghai）
 
 ## 背景
 
@@ -18,6 +18,9 @@
 - classic 模型新增弹窗已移除供应商字段。
 - classic Dashboard 图表初始化已移除 `@visactor/vchart-semi-theme` 监听初始化。
 - classic Rsbuild 已为 VChart 1.8 的运行时依赖增加 scoped alias，将 `@visactor/vrender-*`、`vdataset`、`vscale`、`vutils` 等固定到 `web/classic/node_modules/@visactor/vchart/node_modules/@visactor` 下，避免 classic 的 VChart 1.8 与顶层 web 的 VChart 2.0 / VRender 1.0 混用。
+- classic/default 渠道列表已新增渠道倍率展示列；倍率编辑入口继续保留在渠道高级设置中。
+- classic/default 渠道列表的余额展示已改为已用额度展示，并移除前端余额查询、批量更新余额入口。
+- classic/default 个人资料、仪表盘摘要和用量日志用户信息中的当前余额展示已改为已用额度/历史消耗展示。
 
 ## 已完成验证
 
@@ -48,6 +51,9 @@
 - 最终验证命令已重跑通过：
   - `web/classic` 执行 `bun run build` 通过。
   - 仓库根目录执行 `GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp go test ./...` 通过。
+- 2026-07-04 本轮余额/渠道倍率 UI 调整后验证命令已通过：
+  - `web/default` 执行 `bun run build:check` 通过。
+  - `web/classic` 执行 `bun run build` 通过。
 
 ## 未完成验证
 

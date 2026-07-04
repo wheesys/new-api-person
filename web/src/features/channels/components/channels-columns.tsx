@@ -1085,6 +1085,35 @@ export function useChannelsColumns(
         size: 180,
       },
 
+      // Channel price ratio column
+      {
+        accessorKey: 'price_ratio',
+        header: t('Channel Price Ratio'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => {
+          const ratio = isTagAggregateRow(row.original)
+            ? row.original.price_ratio
+            : (row.original.price_ratio ?? 1)
+          if (ratio === null || ratio === undefined) {
+            return <span className='text-muted-foreground text-xs'>-</span>
+          }
+          return (
+            <StatusBadge
+              label={`${Number(ratio).toLocaleString(undefined, {
+                maximumFractionDigits: 4,
+              })}x`}
+              variant='info'
+              size='sm'
+              copyable={false}
+              showDot={false}
+              className='-ml-1.5'
+            />
+          )
+        },
+        size: 120,
+        enableSorting: false,
+      },
+
       // Response Time column
       {
         accessorKey: 'response_time',

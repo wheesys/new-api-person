@@ -61,6 +61,7 @@ function ChannelCardComponent({
 
   const fieldLabels: Record<string, string> = {
     balance: t('Used / Remaining'),
+    price_ratio: t('Channel Price Ratio'),
     response_time: t('Response'),
     test_time: t('Last Tested'),
   }
@@ -75,6 +76,7 @@ function ChannelCardComponent({
   const priorityCell = renderCell('priority')
   const weightCell = renderCell('weight')
   const balanceCell = renderCell('balance')
+  const priceRatioCell = renderCell('price_ratio')
   const responseCell = renderCell('response_time')
   const testCell = renderCell('test_time')
 
@@ -127,6 +129,14 @@ function ChannelCardComponent({
               </div>
               <div className='min-w-0 overflow-hidden text-sm'>
                 {balanceCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </div>
+              <div className={cn('mt-2 mb-1', labelClass)}>
+                {fieldLabels.price_ratio}
+              </div>
+              <div className='min-w-0 overflow-hidden text-sm'>
+                {priceRatioCell ?? (
                   <span className='text-muted-foreground'>-</span>
                 )}
               </div>

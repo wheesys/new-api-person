@@ -96,6 +96,17 @@ const getModelDefaults = (settings: ModelSettings) => ({
   BillingExpr: settings['billing_setting.billing_expr'],
 })
 
+const getGroupDefaults = (settings: ModelSettings) => ({
+  TopupGroupRatio: settings.TopupGroupRatio,
+  GroupRatio: settings.GroupRatio,
+  UserUsableGroups: settings.UserUsableGroups,
+  GroupGroupRatio: settings.GroupGroupRatio,
+  AutoGroups: settings.AutoGroups,
+  DefaultUseAutoGroup: settings.DefaultUseAutoGroup,
+  GroupSpecialUsableGroup:
+    settings['group_ratio_setting.group_special_usable_group'],
+})
+
 const emptyGroupDefaults = {
   TopupGroupRatio: '{}',
   GroupRatio: '{}',
@@ -119,6 +130,22 @@ export function ModelsPricingSection() {
       visibleTabs={['models', 'tool-prices', 'upstream-sync']}
       includeModelFixedPrice={false}
       inlineTabSwitcher
+    />
+  )
+}
+
+export function ModelsGroupManagementSection() {
+  const { data } = useSystemOptions()
+  const settings = getOptionValue(data?.data, defaultModelPricingSettings)
+
+  return (
+    <RatioSettingsCard
+      titleKey='Group Management'
+      modelDefaults={getModelDefaults(settings)}
+      groupDefaults={getGroupDefaults(settings)}
+      toolPricesDefault={settings['tool_price_setting.prices']}
+      visibleTabs={['groups']}
+      includeModelFixedPrice={false}
     />
   )
 }

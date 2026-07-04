@@ -34,6 +34,11 @@ export const STATIC_I18N_KEYS = [
   'Channel health checks',
   'Request retry',
 
+  // Models management sections
+  'Metadata',
+  'Pricing',
+  'Group Management',
+
   // System settings sidebar
   'System Administration',
   'General',

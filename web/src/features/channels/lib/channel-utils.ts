@@ -654,6 +654,7 @@ export function aggregateChannelsByTag(
         response_time: 0,
         priority: -1 as unknown as number | null,
         weight: -1 as unknown as number | null,
+        price_ratio: -1 as unknown as number | null,
         balance: 0,
         test_time: 0,
         created_time: 0,
@@ -694,6 +695,13 @@ export function aggregateChannelsByTag(
       tagRow.weight = channel.weight
     } else if (tagRow.weight !== channel.weight) {
       tagRow.weight = null
+    }
+
+    // Aggregate price ratio (same value or null if different)
+    if (tagRow.price_ratio === -1) {
+      tagRow.price_ratio = channel.price_ratio ?? 1
+    } else if (tagRow.price_ratio !== (channel.price_ratio ?? 1)) {
+      tagRow.price_ratio = null
     }
 
     // Aggregate group (concatenate and deduplicate)
