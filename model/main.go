@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -53,6 +54,43 @@ func initCol() {
 var DB *gorm.DB
 
 var LOG_DB *gorm.DB
+
+func configureSQLPool(sqlDB *sql.DB, databaseType common.DatabaseType, role string) {
+	maxIdleConns := common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100)
+	maxOpenConns := common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000)
+	if databaseType == common.DatabaseTypeSQLite {
+		if os.Getenv("SQL_MAX_IDLE_CONNS") == "" {
+			maxIdleConns = 1
+		}
+		if os.Getenv("SQL_MAX_OPEN_CONNS") == "" {
+			maxOpenConns = 1
+		}
+	}
+
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+
+	if databaseType != common.DatabaseTypeSQLite {
+		return
+	}
+
+	var journalMode string
+	var synchronous int
+	var busyTimeout int
+	_ = sqlDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	_ = sqlDB.QueryRow("PRAGMA synchronous").Scan(&synchronous)
+	_ = sqlDB.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout)
+	common.SysLog(fmt.Sprintf("SQLite %s database configured: path=%s max_open_conns=%d max_idle_conns=%d journal_mode=%s synchronous=%d busy_timeout=%d",
+		role, sqlitePathForLog(common.SQLitePath), maxOpenConns, maxIdleConns, journalMode, synchronous, busyTimeout))
+}
+
+func sqlitePathForLog(path string) string {
+	if before, _, ok := strings.Cut(path, "?"); ok {
+		return before
+	}
+	return path
+}
 
 func createRootAccountIfNeed() error {
 	var user User
@@ -190,9 +228,7 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLPool(sqlDB, dbType, "main")
 
 		if !common.IsMasterNode {
 			return nil
@@ -234,9 +270,7 @@ func InitLogDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLPool(sqlDB, dbType, "log")
 
 		if !common.IsMasterNode {
 			return nil
@@ -310,6 +344,9 @@ func migrateDB() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := RunDataMigrations(); err != nil {
+		return err
 	}
 	if _, err := EnsureDefaultOptionModels(); err != nil {
 		return err
@@ -394,6 +431,9 @@ func migrateDBFast() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := RunDataMigrations(); err != nil {
+		return err
 	}
 	if _, err := EnsureDefaultOptionModels(); err != nil {
 		return err

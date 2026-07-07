@@ -1,10 +1,15 @@
 .github
 .git
+.env
 *.md
 .vscode
 .gitignore
 Makefile
 docs
+data/
+logs/
+postgres-data/
+clickhouse-data/
 .eslintcache
 .gocache
 /web/node_modules

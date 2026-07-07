@@ -36,10 +36,13 @@
 - [x] 重启本地服务加载修复后的本地代码，并确认 `/api/setup` 状态接口响应正常。
 - [x] 复查新增 `/v1/messages` 消费日志，确认 `channel_ratio=0.25` 且逐条扣费复算差异为 0。
 - [x] 评估当前项目 PostgreSQL 与 SQLite 生产使用差异，并归档 SQLite 生产化建议。
+- [x] 将 Docker Compose 生产部署切换为 SQLite，并落地 SQLite DSN、连接池和启动日志优化。
+- [x] 新增 PostgreSQL Compose override 文件，并补充旧 new-api 数据兼容说明。
+- [x] 新增 `options.DataMigrationVersion` 数据迁移版本机制，并补齐旧渠道模型元数据、能力路由和渠道倍率默认值。
+- [x] 在用户管理页新增 Root 级清空累计用量入口，并将默认前端用户列表额度列改为展示已用额度。
 
 ## 待办
 
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。
 - [ ] 如需继续推进，检查后台页面是否需要增加渠道能力预览说明。
-- [ ] 如需生产使用 SQLite，调整默认 SQLite DSN、连接池和 Compose 示例。

@@ -23,6 +23,7 @@ var auditContentTemplates = map[string]string{
 	"user.quota_add":        "Increased user quota by ${quota}",
 	"user.quota_subtract":   "Decreased user quota by ${quota}",
 	"user.quota_override":   "Overrode user quota from ${from} to ${to}",
+	"user.usage_reset":      "Reset accumulated usage data for all users",
 	"user.binding_clear":    "Cleared ${bindingType} binding for user ${username}",
 	"user.2fa_disable":      "Force-disabled two-factor authentication for the user",
 	"user.passkey_register": "Registered a passkey",

@@ -288,21 +288,11 @@ func (channel *Channel) SaveChannelInfo() error {
 }
 
 func (channel *Channel) GetModels() []string {
-	if channel.Models == "" {
-		return []string{}
-	}
-	return strings.Split(strings.Trim(channel.Models, ","), ",")
+	return splitChannelValues(channel.Models)
 }
 
 func (channel *Channel) GetGroups() []string {
-	if channel.Group == "" {
-		return []string{}
-	}
-	groups := strings.Split(strings.Trim(channel.Group, ","), ",")
-	for i, group := range groups {
-		groups[i] = strings.TrimSpace(group)
-	}
-	return groups
+	return splitChannelValues(channel.Group)
 }
 
 func (channel *Channel) GetOtherInfo() map[string]interface{} {

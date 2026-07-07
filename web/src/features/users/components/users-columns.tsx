@@ -161,12 +161,17 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { mobileBadge: true },
     },
     {
-      id: 'quota',
-      accessorKey: 'quota',
-      header: t('Quota'),
+      accessorKey: 'used_quota',
+      header: t('Used Quota'),
       cell: ({ row }) => {
         const user = row.original
-        return <UserQuotaCell used={user.used_quota} remaining={user.quota} />
+        return (
+          <UserQuotaCell
+            used={user.used_quota}
+            remaining={user.quota}
+            requestCount={user.request_count}
+          />
+        )
       },
       size: 300,
       minSize: 260,

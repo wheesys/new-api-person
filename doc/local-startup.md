@@ -30,7 +30,7 @@ mkdir -p data/local
 
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=3000 \
-SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
+SQLITE_PATH='./data/local/new-api-local.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)' \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go
@@ -43,7 +43,7 @@ mkdir -p data/local
 
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=13000 \
-SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
+SQLITE_PATH='./data/local/new-api-local.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)' \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go
@@ -92,7 +92,7 @@ mkdir -p data/local
 
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=3000 \
-SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
+SQLITE_PATH='./data/local/new-api-local.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)' \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go

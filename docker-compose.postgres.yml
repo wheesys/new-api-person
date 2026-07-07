@@ -1,0 +1,35 @@
+# PostgreSQL override for docker-compose.yml.
+#
+# Usage:
+#   1. Copy .env.example to .env, then set SESSION_SECRET, REDIS_PASSWORD, and POSTGRES_PASSWORD
+#   2. docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+
+services:
+  new-api:
+    environment:
+      SQL_DSN: "postgresql://root:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}@postgres:5432/new-api"
+      SQL_MAX_OPEN_CONNS: "1000"
+      SQL_MAX_IDLE_CONNS: "100"
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15
+    container_name: new-api-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}"
+      POSTGRES_DB: new-api
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    networks:
+      - new-api-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

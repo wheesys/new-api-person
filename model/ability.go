@@ -194,29 +194,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
-	models_ := strings.Split(channel.Models, ",")
-	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
-	abilities := make([]Ability, 0, len(models_))
-	for _, model := range models_ {
-		for _, group := range groups_ {
-			key := group + "|" + model
-			if _, exists := abilitySet[key]; exists {
-				continue
-			}
-			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
-		}
-	}
+	abilities := channel.buildAbilities()
 	if len(abilities) == 0 {
 		return nil
 	}
@@ -266,29 +244,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	// Then add new abilities
-	models_ := strings.Split(channel.Models, ",")
-	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
-	abilities := make([]Ability, 0, len(models_))
-	for _, model := range models_ {
-		for _, group := range groups_ {
-			key := group + "|" + model
-			if _, exists := abilitySet[key]; exists {
-				continue
-			}
-			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
-		}
-	}
+	abilities := channel.buildAbilities()
 
 	if len(abilities) > 0 {
 		for _, chunk := range lo.Chunk(abilities, 50) {
@@ -308,6 +264,52 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	return nil
+}
+
+func splitChannelValues(value string) []string {
+	if value == "" {
+		return []string{}
+	}
+	parts := strings.Split(strings.Trim(value, ","), ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		values = append(values, part)
+	}
+	return values
+}
+
+func (channel *Channel) buildAbilities() []Ability {
+	models := channel.GetModels()
+	groups := channel.GetGroups()
+	if len(models) == 0 || len(groups) == 0 {
+		return nil
+	}
+
+	abilitySet := make(map[string]struct{}, len(models)*len(groups))
+	abilities := make([]Ability, 0, len(models)*len(groups))
+	for _, model := range models {
+		for _, group := range groups {
+			key := group + "|" + model
+			if _, exists := abilitySet[key]; exists {
+				continue
+			}
+			abilitySet[key] = struct{}{}
+			abilities = append(abilities, Ability{
+				Group:     group,
+				Model:     model,
+				ChannelId: channel.Id,
+				Enabled:   channel.Status == common.ChannelStatusEnabled,
+				Priority:  channel.Priority,
+				Weight:    uint(channel.GetWeight()),
+				Tag:       channel.Tag,
+			})
+		}
+	}
+	return abilities
 }
 
 func UpdateAbilityStatus(channelId int, status bool) error {

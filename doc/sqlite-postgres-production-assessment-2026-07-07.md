@@ -122,21 +122,31 @@ PostgreSQL 可以同时承载更多并发写事务；SQLite 会串行化写入�
 
 ## 如果生产改用 SQLite，需要改哪些
 
+当前已按本评估落地的改动：
+
+- `docker-compose.yml` 默认改为 SQLite，不再启动 PostgreSQL。
+- 新增 `docker-compose.postgres.yml`，需要 PostgreSQL 时通过 Compose override 启用。
+- SQLite 文件挂载到 Compose 文件同级目录的 `./data`，服务日志挂载到 `./logs`。
+- `common.SQLitePath` 默认值改为 `_pragma` 写法，并启用 `busy_timeout(30000)`、`journal_mode(WAL)`、`synchronous(NORMAL)`。
+- 主库或日志库为 SQLite 且未显式设置连接池时，默认 `SQL_MAX_OPEN_CONNS=1`、`SQL_MAX_IDLE_CONNS=1`。
+- SQLite 启动时记录数据库路径、连接池、journal mode、synchronous、busy timeout。
+
 ### 必改配置
 
-1. Compose 模式删除或注释 `SQL_DSN=postgresql://...`
-2. Compose 模式删除 `depends_on: postgres`，并可删除 `postgres` 服务和 `pg_data` volume
-3. 保留并确认 `/data` 持久化挂载
-4. 显式设置 `SQLITE_PATH`
-5. 设置 SQLite 连接池：
+1. Compose 模式不设置 `SQL_DSN`，让服务使用 SQLite。
+2. 保留并确认 `/data` 持久化挂载。
+3. 显式设置 `SQLITE_PATH`。
+4. 设置 SQLite 连接池。
+5. 在 `.env` 中设置生产级 `SESSION_SECRET` 和 `REDIS_PASSWORD`。
 
 ```yaml
 environment:
-  - SQLITE_PATH=/data/one-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)
-  - SQL_MAX_OPEN_CONNS=1
-  - SQL_MAX_IDLE_CONNS=1
-  - SESSION_SECRET=<生产随机值>
-  - TZ=Asia/Shanghai
+  SQLITE_PATH: "/data/one-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+  SQL_MAX_OPEN_CONNS: "1"
+  SQL_MAX_IDLE_CONNS: "1"
+  SESSION_SECRET: "${SESSION_SECRET:?set SESSION_SECRET in .env before starting}"
+  REDIS_CONN_STRING: "redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env before starting}@redis:6379"
+  TZ: Asia/Shanghai
 ```
 
 ### 强烈建议
@@ -147,14 +157,18 @@ environment:
 4. 建立日志清理策略，避免 `logs` 表无限增长。
 5. 把数据库文件和备份视为敏感文件处理，因为里面会有用户、渠道配置和运行数据。
 
+### 消费日志写入量说明
+
+“消费日志写入量”指 `LogConsumeEnabled` 开启时，每次模型请求完成后写入 `logs` 表的一条用量明细。它记录用户、Token、渠道、模型、prompt/completion tokens、扣费 quota、请求路径以及 `other` 中的计费倍率等信息。
+
+这些日志用于后台用量查询、排查扣费、统计分析和审计。代价是每个请求都会多一次数据库写入；在 SQLite 上，写入会被单文件写锁串行化，所以高流量时 `logs` 容易成为写入热点。低流量保留开启更方便排查；流量上来后应定期清理历史日志，或把 `LOG_SQL_DSN` 拆到 ClickHouse/PostgreSQL。
+
 ### 可选代码增强
 
 这些不是阻断项，但可以让 SQLite 生产化更稳：
 
-1. 将 `common.SQLitePath` 默认值从 `_busy_timeout=30000` 改成 `_pragma=busy_timeout(30000)`。
-2. 当检测到主库为 SQLite 且未显式设置 `SQL_MAX_OPEN_CONNS` 时，自动把连接池降到 1。
-3. 增加 SQLite 生产启动日志，提示当前数据库文件路径、连接池、journal mode。
-4. 在文档中补一个 SQLite Compose 示例，避免用户误以为当前 `docker-compose.yml` 默认就是 SQLite。
+1. 增加针对 SQLite Compose 配置的 CI 级语法校验。
+2. 如后续确认生产请求量较高，把 `LOG_SQL_DSN` 示例拆成独立 ClickHouse/PostgreSQL 日志库。
 
 ## 建议决策
 
@@ -162,4 +176,20 @@ environment:
 - 如果有多节点、公开服务、高并发计费、支付回调、长期保留大量请求日志：继续用 PostgreSQL。
 - 如果想低运维但又要保留大量请求日志：主库 SQLite 可以考虑，但日志库建议拆到 ClickHouse/PostgreSQL。
 
-当前项目“改成生产 SQLite”的工作量不大：配置层面 1 次 Compose 调整即可跑；代码层面建议做 2 到 4 个小增强，主要是 DSN 默认值、连接池和文档提示。
+当前项目“改成生产 SQLite”的核心改动已经完成。后续主要是按实际流量决定是否拆分日志库，以及是否增加部署级监控和备份脚本。
+
+## 旧 new-api 数据兼容说明
+
+项目 README 标注“完全兼容原版 One API 数据库”。结合当前代码看，启动时会通过 GORM `AutoMigrate` 对主库执行兼容迁移，并保留了若干历史兼容表和字段，例如 `Vendor`、`TopUp`、`Redemption`、`SubscriptionPlan`、`UserSubscription` 等。
+
+实际使用时需要区分两种情况：
+
+- 同一种数据库引擎上的旧库：例如原来就是 PostgreSQL，继续用 `docker-compose.postgres.yml` 指向同一个库，通常可以直接启动；启动前必须先备份，服务会执行自动迁移，可能新增列、索引或调整兼容字段。
+- 跨数据库引擎迁移：例如原来是 PostgreSQL/MySQL，现在想改成默认 SQLite，不能靠启动时直接读取原数据；需要先做数据导出、转换、导入，确认字段类型和自增主键后再启动。
+
+兼容边界：
+
+- 旧数据表和历史字段会尽量保留，未使用的旧模块数据通常不会被删除。
+- 如果旧库来自比当前项目更新的上游版本，新增字段大概率会被保留但不一定被当前业务使用；新增业务语义不能保证自动兼容。
+- 如果旧库来自更老版本，当前迁移会尝试补齐当前项目需要的表和字段。
+- 生产接入旧库前，应在副本库上先跑一次启动迁移和关键页面/API 验证，再切正式库。

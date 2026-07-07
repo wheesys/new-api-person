@@ -1269,6 +1269,25 @@ func ManageUser(c *gin.Context) {
 	return
 }
 
+func ResetAllUsage(c *gin.Context) {
+	result, err := model.ResetUsageAccumulations(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "user.usage_reset", map[string]interface{}{
+		"users_updated":      result.UsersUpdated,
+		"tokens_updated":     result.TokensUpdated,
+		"logs_deleted":       result.LogsDeleted,
+		"quota_data_deleted": result.QuotaDataDeleted,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    result,
+	})
+}
+
 type emailBindRequest struct {
 	Email string `json:"email"`
 	Code  string `json:"code"`

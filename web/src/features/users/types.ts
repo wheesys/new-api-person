@@ -145,6 +145,13 @@ export interface ManageUserQuotaPayload {
   value: number
 }
 
+export interface ResetUsageResult {
+  users_updated: number
+  tokens_updated: number
+  logs_deleted: number
+  quota_data_deleted: number
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

@@ -27,6 +27,7 @@ import type {
   UserFormData,
   ManageUserAction,
   ManageUserQuotaPayload,
+  ResetUsageResult,
   ApiResponse,
 } from './types'
 
@@ -135,6 +136,14 @@ export async function adjustUserQuota(
   payload: ManageUserQuotaPayload
 ): Promise<ApiResponse<Partial<User>>> {
   const res = await api.post('/api/user/manage', payload)
+  return res.data
+}
+
+/**
+ * Reset accumulated usage data for all users (root only).
+ */
+export async function resetAllUsage(): Promise<ApiResponse<ResetUsageResult>> {
+  const res = await api.post('/api/user/reset_usage')
   return res.data
 }
 
