@@ -1,6 +1,6 @@
 # 本地启动方案
 
-更新时间：2026-07-05
+更新时间：2026-07-07
 
 ## 默认约定
 
@@ -26,9 +26,11 @@ http://127.0.0.1:3000/
 启动命令：
 
 ```bash
+mkdir -p data/local
+
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=3000 \
-SQLITE_PATH=/private/tmp/new-api-local-test.db?_busy_timeout=30000 \
+SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go
@@ -37,9 +39,11 @@ go run main.go
 如果需要使用 `13000` 端口，必须显式指定：
 
 ```bash
+mkdir -p data/local
+
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=13000 \
-SQLITE_PATH=/private/tmp/new-api-local-test.db?_busy_timeout=30000 \
+SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go
@@ -49,7 +53,8 @@ go run main.go
 
 - 单端口模式由 Go 后端直接服务 `web/default/dist` 静态资源。
 - 如果修改了前端源码，需要先重新构建 `web/default/dist`，再重启后端。
-- 本地 SQLite 示例路径放在 `/private/tmp`，避免在仓库根目录生成测试数据库。
+- 本地 SQLite 示例路径放在项目内 `data/local/`，用于保留初始化用户和本地配置。
+- `data/` 已在 `.gitignore` 中忽略，本地数据库、WAL、journal 等持久化文件不会随提交泄露。
 
 前端重新构建命令：
 
@@ -83,9 +88,11 @@ http://127.0.0.1:3000/
 终端一：启动本地后端。
 
 ```bash
+mkdir -p data/local
+
 GOCACHE=/private/tmp/new-api-go-cache GOTMPDIR=/private/tmp \
 PORT=3000 \
-SQLITE_PATH=/private/tmp/new-api-local-test.db?_busy_timeout=30000 \
+SQLITE_PATH=./data/local/new-api-local.db?_busy_timeout=30000 \
 SESSION_SECRET=local-test-session-secret \
 GIN_MODE=debug \
 go run main.go

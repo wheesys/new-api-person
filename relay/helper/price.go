@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -70,11 +71,26 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 	return groupRatioInfo
 }
 
+func channelPriceRatioForBilling(c *gin.Context, info *relaycommon.RelayInfo) float64 {
+	if info != nil && info.ChannelMeta != nil && info.ChannelMeta.ChannelPriceRatioSet {
+		return info.GetChannelPriceRatio()
+	}
+	if c != nil {
+		if ratio, ok := common.GetContextKeyType[float64](c, constant.ContextKeyChannelPriceRatio); ok && ratio >= 0 {
+			return ratio
+		}
+	}
+	if info != nil {
+		return info.GetChannelPriceRatio()
+	}
+	return 1
+}
+
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
 	modelPrice, usePrice := model.GetModelFixedPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
-	channelRatio := info.GetChannelPriceRatio()
+	channelRatio := channelPriceRatioForBilling(c, info)
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {

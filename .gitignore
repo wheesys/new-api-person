@@ -24,9 +24,15 @@ plans
 .claude
 .cursor
 
+# Local persistent runtime data. Keep SQLite state and secrets out of commits.
+data/
+data/**/*.db
+data/**/*.db-*
+data/**/*.sqlite
+data/**/*.sqlite3
+
 electron/node_modules
 electron/dist
-/data/
 .gomodcache/
 .gocache-temp
 .gopath

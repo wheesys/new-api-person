@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -372,6 +373,36 @@ func TestModelPriceHelperAppliesChannelRatioToFixedPrice(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1.5, priceData.ChannelRatio)
 	require.Equal(t, int(basePrice*common.QuotaPerUnit*1.5), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperUsesContextChannelRatioBeforeChannelMetaInit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPriceHelperTestDB(t)
+	const modelName = "zz-helper-context-channel-ratio-model"
+	basePrice := 0.2
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: modelName,
+		Status:    1,
+		BasePrice: &basePrice,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ctx.Set("group", "default")
+	common.SetContextKey(ctx, constant.ContextKeyChannelPriceRatio, 0.25)
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.Equal(t, 0.25, priceData.ChannelRatio)
+	require.Equal(t, int(basePrice*common.QuotaPerUnit*0.25), priceData.QuotaToPreConsume)
 }
 
 func TestModelPriceHelperAllowsZeroChannelRatioAsFree(t *testing.T) {
