@@ -60,6 +60,10 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 			continue
 		}
 		capabilities := InferModelCapabilities(item.ModelName, item.SupportedEndpointTypes)
+		profile, hasProfile := GetModelRoutingProfile(item.ModelName)
+		if hasProfile {
+			capabilities = mergeModelCapabilitiesWithProfile(capabilities, profile)
+		}
 		for _, channel := range channels {
 			if !channelMatchesRequest(channel, item.ModelName, request) {
 				continue
@@ -83,12 +87,37 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 				Reliability:        1,
 				LatencyScore:       latencyScore,
 				ThroughputScore:    channelWeightScore(channel.Weight),
-				QualityScore:       qualityScore(capabilities.QualityTier),
+				QualityScore:       candidateQualityScore(capabilities.QualityTier, profile, hasProfile),
+				CodingScore:        profile.CodingScore,
+				ReasoningScore:     profile.ReasoningScore,
+				SpeedScore:         profile.SpeedScore,
+				ContextScore:       profile.ContextScore,
+				PreferenceScore:    profile.PreferenceScore,
 				AffinityScore:      0,
 			})
 		}
 	}
 	return candidates
+}
+
+func mergeModelCapabilitiesWithProfile(capabilities ModelCapabilities, profile ModelRoutingProfile) ModelCapabilities {
+	if profile.MaxContextTokens > 0 {
+		capabilities.MaxContextTokens = profile.MaxContextTokens
+	}
+	capabilities.SupportsTools = capabilities.SupportsTools || profile.SupportsTools
+	capabilities.SupportsJSONSchema = capabilities.SupportsJSONSchema || profile.SupportsJSONSchema
+	capabilities.SupportsVision = capabilities.SupportsVision || profile.SupportsVision
+	capabilities.SupportsAudio = capabilities.SupportsAudio || profile.SupportsAudio
+	capabilities.SupportsReasoning = capabilities.SupportsReasoning || profile.SupportsReasoning
+	capabilities.SupportsStream = capabilities.SupportsStream || profile.SupportsStream
+	return capabilities
+}
+
+func candidateQualityScore(tier ModelQualityTier, profile ModelRoutingProfile, hasProfile bool) float64 {
+	if hasProfile && profile.QualityScore > 0 {
+		return normalizeScore(profile.QualityScore)
+	}
+	return qualityScore(tier)
 }
 
 func InferModelCapabilities(modelName string, endpoints []constant.EndpointType) ModelCapabilities {

@@ -204,3 +204,157 @@ func TestDistributeKeepsExplicitModelAndScoresChannels(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 }
+
+func TestDistributeStoresSameModelSmartRoutingRetryCandidates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+
+	selectedRatio := 0.1
+	retryRatio := 0.2
+	otherModelRatio := 10.0
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id:           3001,
+			Type:         1,
+			Key:          "selected-key",
+			Status:       common.ChannelStatusEnabled,
+			Name:         "selected-gpt-5-channel",
+			Models:       "gpt-5",
+			Group:        "default",
+			ResponseTime: 50,
+			PriceRatio:   &selectedRatio,
+		},
+		{
+			Id:           3002,
+			Type:         1,
+			Key:          "retry-key",
+			Status:       common.ChannelStatusEnabled,
+			Name:         "retry-gpt-5-channel",
+			Models:       "gpt-5",
+			Group:        "default",
+			ResponseTime: 120,
+			PriceRatio:   &retryRatio,
+		},
+		{
+			Id:           3003,
+			Type:         1,
+			Key:          "other-model-key",
+			Status:       common.ChannelStatusEnabled,
+			Name:         "other-model-channel",
+			Models:       "gpt-5-mini",
+			Group:        "default",
+			ResponseTime: 900,
+			PriceRatio:   &otherModelRatio,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "gpt-5", ChannelId: 3001, Enabled: true},
+		{Group: "default", Model: "gpt-5", ChannelId: 3002, Enabled: true},
+		{Group: "default", Model: "gpt-5-mini", ChannelId: 3003, Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Model{
+		{ModelName: "gpt-5", Status: 1, NameRule: model.NameRuleExact},
+		{ModelName: "gpt-5-mini", Status: 1, NameRule: model.NameRuleExact},
+	}).Error)
+	model.InitChannelCache()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		assert.Equal(t, "gpt-5", common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+		assert.Equal(t, 3001, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+
+		rawCandidates, ok := common.GetContextKey(c, constant.ContextKeySmartRoutingRetryCandidates)
+		require.True(t, ok)
+		retryCandidates, ok := rawCandidates.([]smartrouting.SmartRouteCandidate)
+		require.True(t, ok)
+		require.Len(t, retryCandidates, 2)
+		assert.Equal(t, 3001, retryCandidates[0].ChannelID)
+		assert.Equal(t, 3002, retryCandidates[1].ChannelID)
+		for _, candidate := range retryCandidates {
+			assert.Equal(t, "gpt-5", candidate.ModelName)
+		}
+
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"auto:quality","messages":[{"role":"user","content":"设计一个迁移方案"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestDistributeDoesNotStoreRetryCandidatesWhenExplicitModelSelectionFallsBack(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           3100,
+		Type:         1,
+		Key:          "fallback-key",
+		Status:       common.ChannelStatusEnabled,
+		Name:         "fallback-channel",
+		Models:       "gpt-fixed",
+		Group:        "default",
+		ResponseTime: 900,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-fixed",
+		ChannelId: 3100,
+		Enabled:   true,
+	}).Error)
+	model.InitChannelCache()
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           3101,
+		Type:         1,
+		Key:          "stale-cache-key",
+		Status:       common.ChannelStatusEnabled,
+		Name:         "stale-cache-channel",
+		Models:       "gpt-fixed",
+		Group:        "default",
+		ResponseTime: 50,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-fixed",
+		ChannelId: 3101,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "gpt-fixed",
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		_, ok := common.GetContextKey(c, constant.ContextKeySmartRoutingRetryCandidates)
+		assert.False(t, ok)
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"gpt-fixed","messages":[{"role":"user","content":"hello"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+}

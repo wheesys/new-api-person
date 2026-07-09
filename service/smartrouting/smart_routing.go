@@ -112,6 +112,11 @@ type SmartRouteCandidate struct {
 	LatencyScore       float64
 	ThroughputScore    float64
 	QualityScore       float64
+	CodingScore        float64
+	ReasoningScore     float64
+	SpeedScore         float64
+	ContextScore       float64
+	PreferenceScore    float64
 	AffinityScore      float64
 	FinalScore         float64
 	ScoreFactors       ScoreFactors
@@ -234,6 +239,9 @@ var routePolicyWeights = map[RoutePolicy]policyWeights{
 
 func ResolveVirtualModel(modelName string) (VirtualModelProfile, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	if normalized == "auto" || normalized == "smart" {
+		normalized = "auto:balanced"
+	}
 	if strings.HasPrefix(normalized, "smart:") {
 		normalized = "auto:" + strings.TrimPrefix(normalized, "smart:")
 	}
@@ -272,7 +280,7 @@ func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate,
 			continue
 		}
 		scored := candidate
-		scored.ScoreFactors = buildScoreFactors(candidate, maxQuota)
+		scored.ScoreFactors = buildScoreFactors(request, candidate, maxQuota)
 		scored.FinalScore = weightedScore(scored.ScoreFactors, policy)
 		accepted = append(accepted, scored)
 	}
@@ -500,15 +508,40 @@ func maxEstimatedQuota(candidates []SmartRouteCandidate) int {
 	return maxQuota
 }
 
-func buildScoreFactors(candidate SmartRouteCandidate, maxQuota int) ScoreFactors {
+func buildScoreFactors(request SmartRouteRequest, candidate SmartRouteCandidate, maxQuota int) ScoreFactors {
 	return ScoreFactors{
 		Cost:        costScore(candidate.EstimatedQuota, maxQuota),
 		Reliability: normalizeScore(candidate.Reliability),
-		Latency:     normalizeScore(candidate.LatencyScore),
+		Latency:     candidateLatencyFactor(candidate),
 		Throughput:  normalizeScore(candidate.ThroughputScore),
-		Quality:     normalizeScore(candidate.QualityScore),
+		Quality:     candidateQualityFactor(request, candidate),
 		Affinity:    normalizeScore(candidate.AffinityScore),
 	}
+}
+
+func candidateLatencyFactor(candidate SmartRouteCandidate) float64 {
+	if candidate.SpeedScore > 0 {
+		return normalizeScore(candidate.SpeedScore)
+	}
+	return normalizeScore(candidate.LatencyScore)
+}
+
+func candidateQualityFactor(request SmartRouteRequest, candidate SmartRouteCandidate) float64 {
+	quality := candidate.QualityScore
+	text := normalizedCombinedText(request.TokenMeta)
+	if isCodingTaskText(text) && candidate.CodingScore > 0 {
+		quality = candidate.CodingScore
+	}
+	if (request.ReasoningRequested || strings.Contains(text, "reasoning") || strings.Contains(text, "推理")) && candidate.ReasoningScore > 0 {
+		quality = candidate.ReasoningScore
+	}
+	if candidate.ContextScore > 0 && (request.ContextTokensRequired >= 32000 || request.ContextTokensRequired > candidate.MaxContextTokens/2) {
+		quality = (quality*0.75 + candidate.ContextScore*0.25)
+	}
+	if candidate.PreferenceScore > 0 && quality == 0 {
+		quality = candidate.PreferenceScore
+	}
+	return normalizeScore(quality)
 }
 
 func weightedScore(factors ScoreFactors, policy RoutePolicy) float64 {
@@ -581,6 +614,10 @@ func isSimpleRewriteOrTranslation(text string) bool {
 		"格式调整",
 		"format",
 	})
+}
+
+func isCodingTaskText(text string) bool {
+	return containsAny(text, []string{"代码", "code", "debug", "调试", "迁移", "migration", "架构", "schema"})
 }
 
 func containsAny(text string, terms []string) bool {

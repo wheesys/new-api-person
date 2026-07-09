@@ -69,6 +69,7 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	if err := rewriteJSONRequestModel(c, selected.ModelName); err != nil {
 		return nil, true, err
 	}
+	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName)
 
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, smartrouting.Decision{
 		Enabled:            true,
@@ -127,6 +128,7 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
 		return nil, false, nil
 	}
+	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName)
 
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, smartrouting.Decision{
 		Enabled:            true,
@@ -293,6 +295,21 @@ func filterSmartRoutingCandidatesByRequestedModel(candidates []smartrouting.Smar
 		}
 	}
 	return filtered
+}
+
+func setSmartRoutingRetryCandidates(c *gin.Context, candidates []smartrouting.SmartRouteCandidate, selectedModel string) {
+	if c == nil || selectedModel == "" || len(candidates) == 0 {
+		return
+	}
+	retryCandidates := make([]smartrouting.SmartRouteCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ModelName == selectedModel {
+			retryCandidates = append(retryCandidates, candidate)
+		}
+	}
+	if len(retryCandidates) > 0 {
+		common.SetContextKey(c, constant.ContextKeySmartRoutingRetryCandidates, retryCandidates)
+	}
 }
 
 func getSmartRoutingChannel(channelID int) (*model.Channel, error) {

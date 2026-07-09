@@ -23,8 +23,10 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
@@ -311,6 +313,16 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
+	if channel, selectGroup, handled, newAPIError := getSmartRoutingRetryChannel(c, info, retryParam); handled {
+		if newAPIError != nil {
+			return nil, newAPIError
+		}
+		if selectGroup != "" && retryParam.TokenGroup == "auto" {
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
+		}
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		return channel, nil
+	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -326,6 +338,61 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+func getSmartRoutingRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, string, bool, *types.NewAPIError) {
+	candidates, ok := common.GetContextKeyType[[]smartrouting.SmartRouteCandidate](c, constant.ContextKeySmartRoutingRetryCandidates)
+	if !ok || len(candidates) == 0 {
+		return nil, "", false, nil
+	}
+
+	retryIndex := retryParam.GetRetry()
+	if retryIndex >= len(candidates) {
+		err := fmt.Errorf("智能路由候选序列已耗尽：分组 %s 模型 %s retry %d", retryParam.TokenGroup, info.OriginModelName, retryIndex)
+		return nil, "", true, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	candidate := candidates[retryIndex]
+	if !smartRoutingRetryCandidateMatchesModel(candidate.ModelName, info.OriginModelName) {
+		err := fmt.Errorf("智能路由候选模型 %s 与当前模型 %s 不一致", candidate.ModelName, info.OriginModelName)
+		return nil, candidate.Group, true, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	channel, err := model.GetChannelById(candidate.ChannelID, true)
+	if err != nil {
+		return nil, candidate.Group, true, types.NewError(fmt.Errorf("智能路由候选渠道 %d 不存在: %w", candidate.ChannelID, err), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if channel == nil {
+		return nil, candidate.Group, true, types.NewError(fmt.Errorf("智能路由候选渠道 %d 不存在", candidate.ChannelID), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		return nil, candidate.Group, true, types.NewError(fmt.Errorf("智能路由候选渠道 %d 已禁用", candidate.ChannelID), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+	if newAPIError != nil {
+		return nil, candidate.Group, true, newAPIError
+	}
+	updateSmartRoutingDecisionForRetry(c, candidate, retryIndex)
+	return channel, candidate.Group, true, nil
+}
+
+func smartRoutingRetryCandidateMatchesModel(candidateModel string, originModel string) bool {
+	if candidateModel == originModel {
+		return true
+	}
+	return candidateModel == ratio_setting.FormatMatchingModelName(originModel)
+}
+
+func updateSmartRoutingDecisionForRetry(c *gin.Context, candidate smartrouting.SmartRouteCandidate, retryIndex int) {
+	decision, ok := common.GetContextKeyType[smartrouting.Decision](c, constant.ContextKeySmartRoutingDecision)
+	if !ok {
+		return
+	}
+	decision.SelectedChannelID = candidate.ChannelID
+	decision.FallbackIndex = retryIndex
+	decision.ScoreFactors = candidate.ScoreFactors
+	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, decision)
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {

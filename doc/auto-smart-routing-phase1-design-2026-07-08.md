@@ -137,10 +137,15 @@ final_score =
 - 分发阶段已将选中的真实模型写入 `ContextKeyOriginalModel`，并将 JSON 请求体中的 `model` 字段同步改为真实模型，避免 pass-through 渠道把虚拟模型发送给上游。
 - 客户端明确指定普通模型时，分发阶段不会更换模型，只会在同模型候选渠道中按综合分数选择渠道，并在审计决策中记录 `original_model == selected_model`。
 - 智能路由决策已写入 `ContextKeySmartRoutingDecision`，后续消费日志会落到 `other.smart_routing`。
+- 失败重试会优先消费本次智能路由生成的同一真实模型候选渠道序列；候选耗尽后不会回落到普通随机渠道，避免重试阶段跨模型或绕过排序结果。
+- `auto` 已作为 `auto:balanced` 的别名；客户端只传 `model: "auto"` 时默认使用均衡策略。
+- 新增模型路由画像缓存，画像维度包含综合质量、编码、推理、速度、成本、上下文、偏好和可靠性；候选评分优先读取画像缓存，缓存缺失时回退保守模型名推断。
+- 新增智能路由画像系统任务：外部榜单数据默认 10 天刷新一次，内部模型画像默认 1 天重算一次。首版支持 Aider 榜单 JSON/CSV/Markdown 表格解析，并将编码通过率、成本和耗时归一化为多维评分。
+- 新增 SWE-bench、Artificial Analysis 和 Arena 榜单适配器，统一输出 `ExternalBenchmarkRecord`；外部榜单刷新任务支持按环境变量配置多来源地址并合并缓存。
+- 模型画像生成改为先按来源归一化，再按模型名聚合，避免 Arena Elo、Artificial Analysis 指数和 Aider/SWE-bench 通过率的量纲互相污染；`Sources` 与 `SourceScores` 会保留来源审计信息。
 
 ## 下一步
 
-1. 为智能路由补充失败后的候选序列消费机制，让重试优先沿用本次路由的候选列表。
-2. 设计虚拟模型的管理员可配置模型池，替换当前内置保守画像。
-3. 设计跨模型 `ContextConsensus` 会话共识、自动压缩和工具状态保持方案。
-4. 设计智能路由日志指标聚合和后台配置页面。
+1. 按 `doc/auto-smart-routing-configurable-model-pool-2026-07-09.md` 实现虚拟模型的管理员可配置模型池。
+2. 设计跨模型 `ContextConsensus` 会话共识、自动压缩和工具状态保持方案。
+3. 设计智能路由日志指标聚合和后台配置页面。

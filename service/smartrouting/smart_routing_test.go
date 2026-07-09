@@ -9,7 +9,12 @@ import (
 )
 
 func TestResolveVirtualModel(t *testing.T) {
-	profile, ok := ResolveVirtualModel("auto:cheap")
+	profile, ok := ResolveVirtualModel("auto")
+	require.True(t, ok)
+	assert.Equal(t, "auto:balanced", profile.Name)
+	assert.Equal(t, PolicyBalanced, profile.Policy)
+
+	profile, ok = ResolveVirtualModel("auto:cheap")
 	require.True(t, ok)
 	assert.Equal(t, "auto:cheap", profile.Name)
 	assert.Equal(t, PolicyCostFirst, profile.Policy)
