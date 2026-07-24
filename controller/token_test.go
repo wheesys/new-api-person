@@ -474,15 +474,16 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	token := seedToken(t, db, 1, "editable-token", "yzab1234cdef5678")
 
 	body := map[string]any{
-		"id":                   token.Id,
-		"name":                 "updated-token",
-		"expired_time":         -1,
-		"remain_quota":         100,
-		"unlimited_quota":      true,
-		"model_limits_enabled": false,
-		"model_limits":         "",
-		"group":                "default",
-		"cross_group_retry":    false,
+		"id":                       token.Id,
+		"name":                     "updated-token",
+		"expired_time":             -1,
+		"remain_quota":             100,
+		"unlimited_quota":          true,
+		"model_limits_enabled":     false,
+		"model_limits":             "",
+		"group":                    "default",
+		"cross_group_retry":        false,
+		"allow_context_compaction": true,
 	}
 
 	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
@@ -502,6 +503,14 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
+	}
+
+	var updatedToken model.Token
+	if err := db.First(&updatedToken, token.Id).Error; err != nil {
+		t.Fatalf("failed to load updated token: %v", err)
+	}
+	if !updatedToken.AllowContextCompaction {
+		t.Fatal("expected context compaction policy to be persisted")
 	}
 }
 

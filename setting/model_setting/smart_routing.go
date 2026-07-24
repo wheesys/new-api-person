@@ -10,11 +10,28 @@ import (
 )
 
 type SmartRoutingSettings struct {
-	VirtualModelPools map[string][]string `json:"virtual_model_pools"`
+	VirtualModelPools            map[string][]string `json:"virtual_model_pools"`
+	ContextConsensusEnabled      bool                `json:"context_consensus_enabled"`
+	AutoCompactionEnabled        bool                `json:"auto_compaction_enabled"`
+	CompactionModelPool          []string            `json:"compaction_model_pool"`
+	ContextSafetyMarginTokens    int                 `json:"context_safety_margin_tokens"`
+	PreservedRecentTurns         int                 `json:"preserved_recent_turns"`
+	MaxSummaryTokens             int                 `json:"max_summary_tokens"`
+	MaxCompactionInputTokens     int                 `json:"max_compaction_input_tokens"`
+	MaxCompactionCallsPerRequest int                 `json:"max_compaction_calls_per_request"`
+	MaxCompactionQuota           int                 `json:"max_compaction_quota"`
+	CompactionTimeoutSeconds     int                 `json:"compaction_timeout_seconds"`
 }
 
 var smartRoutingSettings = SmartRoutingSettings{
-	VirtualModelPools: map[string][]string{},
+	VirtualModelPools:            map[string][]string{},
+	CompactionModelPool:          []string{},
+	ContextSafetyMarginTokens:    1024,
+	PreservedRecentTurns:         3,
+	MaxSummaryTokens:             2048,
+	MaxCompactionInputTokens:     128000,
+	MaxCompactionCallsPerRequest: 1,
+	CompactionTimeoutSeconds:     30,
 }
 
 var smartRoutingSettingsSnapshot atomic.Pointer[SmartRoutingSettings]
@@ -90,14 +107,46 @@ func ValidateSmartRoutingVirtualModelPools(value string) error {
 	return nil
 }
 
+func ValidateSmartRoutingCompactionModelPool(value string) error {
+	var pool []string
+	if err := common.UnmarshalJsonStr(value, &pool); err != nil {
+		return fmt.Errorf("invalid smart routing compaction model pool: %w", err)
+	}
+	if pool == nil {
+		return fmt.Errorf("smart routing compaction model pool must be an array")
+	}
+	for _, modelName := range pool {
+		normalizedModel := strings.ToLower(strings.TrimSpace(modelName))
+		if normalizedModel == "" {
+			return fmt.Errorf("smart routing compaction model pool contains an empty model name")
+		}
+		if normalizedModel == "auto" || normalizedModel == "smart" || strings.HasPrefix(normalizedModel, "auto:") || strings.HasPrefix(normalizedModel, "smart:") {
+			return fmt.Errorf("smart routing compaction model pool must contain explicit real models")
+		}
+	}
+	return nil
+}
+
 func cloneSmartRoutingSettings(settings *SmartRoutingSettings) *SmartRoutingSettings {
-	cloned := &SmartRoutingSettings{VirtualModelPools: map[string][]string{}}
+	cloned := &SmartRoutingSettings{
+		VirtualModelPools:            map[string][]string{},
+		CompactionModelPool:          []string{},
+		ContextSafetyMarginTokens:    1024,
+		PreservedRecentTurns:         3,
+		MaxSummaryTokens:             2048,
+		MaxCompactionInputTokens:     128000,
+		MaxCompactionCallsPerRequest: 1,
+		CompactionTimeoutSeconds:     30,
+	}
 	if settings == nil {
 		return cloned
 	}
+	*cloned = *settings
+	cloned.VirtualModelPools = make(map[string][]string, len(settings.VirtualModelPools))
 	for virtualModel, pool := range settings.VirtualModelPools {
 		cloned.VirtualModelPools[virtualModel] = append([]string(nil), pool...)
 	}
+	cloned.CompactionModelPool = append([]string(nil), settings.CompactionModelPool...)
 	return cloned
 }
 

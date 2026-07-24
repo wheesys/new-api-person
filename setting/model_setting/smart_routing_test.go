@@ -105,3 +105,66 @@ func TestValidateSmartRoutingVirtualModelPools(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSmartRoutingCompactionModelPool(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError string
+	}{
+		{name: "explicit models", value: `["gpt-5-mini","claude-haiku-4"]`},
+		{name: "empty pool", value: `[]`},
+		{name: "invalid json", value: `{`, wantError: "invalid smart routing compaction model pool"},
+		{name: "null", value: `null`, wantError: "must be an array"},
+		{name: "blank model", value: `[" "]`, wantError: "empty model name"},
+		{name: "auto alias", value: `["auto"]`, wantError: "explicit real models"},
+		{name: "smart virtual model", value: `["smart:quality"]`, wantError: "explicit real models"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSmartRoutingCompactionModelPool(test.value)
+			if test.wantError == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
+	original := GetSmartRoutingSettings()
+	t.Cleanup(func() {
+		smartRoutingSettings = *cloneSmartRoutingSettings(original)
+		smartRoutingSettings.OnConfigUpdated()
+	})
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"smart_routing.context_consensus_enabled":        "true",
+		"smart_routing.auto_compaction_enabled":          "true",
+		"smart_routing.compaction_model_pool":            `["gpt-5-mini"]`,
+		"smart_routing.context_safety_margin_tokens":     "2048",
+		"smart_routing.preserved_recent_turns":           "4",
+		"smart_routing.max_summary_tokens":               "1024",
+		"smart_routing.max_compaction_input_tokens":      "64000",
+		"smart_routing.max_compaction_calls_per_request": "1",
+		"smart_routing.max_compaction_quota":             "5000",
+		"smart_routing.compaction_timeout_seconds":       "15",
+	}))
+
+	snapshot := GetSmartRoutingSettings()
+	require.True(t, snapshot.ContextConsensusEnabled)
+	require.True(t, snapshot.AutoCompactionEnabled)
+	assert.Equal(t, []string{"gpt-5-mini"}, snapshot.CompactionModelPool)
+	assert.Equal(t, 2048, snapshot.ContextSafetyMarginTokens)
+	assert.Equal(t, 4, snapshot.PreservedRecentTurns)
+	assert.Equal(t, 1024, snapshot.MaxSummaryTokens)
+	assert.Equal(t, 64000, snapshot.MaxCompactionInputTokens)
+	assert.Equal(t, 1, snapshot.MaxCompactionCallsPerRequest)
+	assert.Equal(t, 5000, snapshot.MaxCompactionQuota)
+	assert.Equal(t, 15, snapshot.CompactionTimeoutSeconds)
+
+	snapshot.CompactionModelPool[0] = "mutated"
+	assert.Equal(t, []string{"gpt-5-mini"}, GetSmartRoutingSettings().CompactionModelPool)
+}

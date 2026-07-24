@@ -11,8 +11,6 @@ import (
 )
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -34,8 +32,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -58,8 +54,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testin
 }
 
 func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -81,8 +75,6 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 }
 
 func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -112,8 +104,6 @@ func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -139,8 +129,6 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -190,4 +178,60 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
+	tests := []struct {
+		name     string
+		override map[string]any
+	}{
+		{name: "wildcard", override: map[string]any{"*": ""}},
+		{name: "regex", override: map[string]any{"regex:^x-new-api-context": ""}},
+		{name: "explicit override", override: map[string]any{"X-New-Api-Context-Mode": "auto_compact"}},
+		{name: "client header placeholder", override: map[string]any{"X-Context-Alias": "{client_header:X-New-Api-Context-Mode}"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Request.Header.Set("X-New-Api-Context-Id", "context-sensitive")
+			ctx.Request.Header.Set("X-New-Api-Context-Mode", "auto_compact")
+			ctx.Request.Header.Set("X-New-Api-Context-Revision", "7")
+
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: test.override}}
+			headers, err := processHeaderOverride(info, ctx)
+			require.NoError(t, err)
+			require.NotContains(t, headers, "x-new-api-context-id")
+			require.NotContains(t, headers, "x-new-api-context-mode")
+			require.NotContains(t, headers, "x-new-api-context-revision")
+			require.NotContains(t, headers, "x-context-alias")
+		})
+	}
+
+	upstreamRequest := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
+	upstreamRequest.Header.Set("X-New-Api-Context-Id", "context-sensitive")
+	upstreamRequest.Header.Set("X-New-Api-Context-Mode", "auto_compact")
+	upstreamRequest.Header.Set("X-New-Api-Context-Revision", "7")
+	applyHeaderOverrideToRequest(upstreamRequest, map[string]string{
+		"X-New-Api-Context-Mode": "forced",
+		"X-Trace-Id":             "trace-123",
+	})
+	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Id"))
+	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Mode"))
+	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Revision"))
+	require.Equal(t, "trace-123", upstreamRequest.Header.Get("X-Trace-Id"))
+
+	websocketHeader := http.Header{
+		"X-New-Api-Context-Id":       []string{"context-sensitive"},
+		"X-New-Api-Context-Mode":     []string{"auto_compact"},
+		"X-New-Api-Context-Revision": []string{"7"},
+		"X-Trace-Id":                 []string{"trace-123"},
+	}
+	removeGatewayContextHeaders(websocketHeader)
+	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Id"))
+	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Mode"))
+	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Revision"))
+	require.Equal(t, "trace-123", websocketHeader.Get("X-Trace-Id"))
 }

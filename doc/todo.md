@@ -52,10 +52,10 @@
 - [x] 在默认前端模型设置页新增 `Smart Routing` 配置入口，支持编辑 `smart_routing.virtual_model_pools` 并补齐六语言 i18n，实施报告见 `doc/auto-smart-routing-configurable-model-pool-implementation-2026-07-10.md`。
 - [x] 完成跨模型 `ContextConsensus`、自动压缩和工具状态保持技术设计，明确 provider-bound 状态、工具原子段、独立计费、加密存储和分阶段实施方案，见 `doc/auto-smart-routing-context-consensus-design-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 A：四协议 `ContextEnvelope`、provider-bound 状态检测、工具图验证、精确预算接口和 `validate_only` 安全审计，见 `doc/auto-smart-routing-context-consensus-stage-a-implementation-2026-07-24.md`。
+- [x] 完成 `ContextConsensus` 阶段 B-1：三重授权快照、压缩配置边界、完整 turn 纯计划、严格共识摘要校验、四协议安全重写和网关请求头隔离，见 `doc/auto-smart-routing-context-consensus-stage-b1-implementation-2026-07-24.md`。
 
 ## 待办
 
-<<<<<<< HEAD
 ### 上游同步重启接续
 
 - [x] 创建专用分支 `sync/upstream-full-20260801`，以上游 `upstream/main` 的 `cfaba1dd6754d4238e1360247c198a64a313e96c` 为基线，采用“上游最新版作为底座，再重放本项目定制提交”的方式同步，避免每次完整拉取后反复删除模块。
@@ -69,7 +69,7 @@
 - [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
-- [ ] 实现 `ContextConsensus` 阶段 B：接入最终目标模型/协议的精确 token 终检，并完成请求内显式压缩、结构化共识摘要、协议安全重写和独立压缩计费。
+- [ ] 实现 `ContextConsensus` 阶段 B-2：抽取最终上游请求准备边界，接入生产级精确 `TokenCounter`，实现进程内压缩执行器、请求正文原子替换、独立 `BillingSession`、父子审计和压缩后终检。
 - [ ] 阶段 B 完成后，实现阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL 和 provider state 绑定映射。
 - [ ] 如需继续推进，设计智能路由日志、指标聚合和后台配置页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
