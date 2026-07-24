@@ -274,11 +274,11 @@ type StreamOptions struct {
 }
 
 func (r *GeneralOpenAIRequest) GetMaxTokens() uint {
-	maxCompletionTokens := lo.FromPtrOr(r.MaxCompletionTokens, uint(0))
-	if maxCompletionTokens != 0 {
-		return maxCompletionTokens
+	maxTokens := r.GetMaxTokensPointer()
+	if maxTokens == nil {
+		return 0
 	}
-	return lo.FromPtrOr(r.MaxTokens, uint(0))
+	return *maxTokens
 }
 
 func (r *GeneralOpenAIRequest) ParseInput() []string {

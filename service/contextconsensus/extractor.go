@@ -3,7 +3,7 @@ package contextconsensus
 import (
 	"fmt"
 
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 func Extract(request ExtractionRequest) (*ContextEnvelope, error) {

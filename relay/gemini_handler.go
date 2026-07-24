@@ -53,6 +53,7 @@ func trimModelThinking(modelName string) string {
 
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	info.ResetPreparedRelayRequest()
 
 	geminiReq, ok := info.Request.(*dto.GeminiChatRequest)
 	if !ok {
@@ -135,13 +136,16 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
-	var requestBody io.Reader
+	var preparedRequest *relaycommon.PreparedRelayRequest
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = common.ReaderOnly(storage)
+		preparedRequest, err = relaycommon.PrepareFinalPassThroughRelayRequest(info, storage)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
 	} else {
 		// 使用 ConvertGeminiRequest 转换请求格式
 		convertedRequest, err := adaptor.ConvertGeminiRequest(c, info, request)
@@ -164,14 +168,16 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 		logger.LogDebug(c, "Gemini request body: %s", jsonData)
 
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		preparedRequest, err = relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
+	}
+	defer preparedRequest.Close()
+	requestBody, err := preparedRequest.Reader()
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	resp, err := adaptor.DoRequest(c, info, requestBody)

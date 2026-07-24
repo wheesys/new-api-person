@@ -57,6 +57,19 @@ func TestResponseOpenAI2ClaudeToolUseInputIsObject(t *testing.T) {
 	}
 }
 
+func TestRequestOpenAI2ClaudeMessagePreservesExplicitZeroMaxCompletionTokens(t *testing.T) {
+	zero := uint(0)
+	legacy := uint(7)
+	request, err := RequestOpenAI2ClaudeMessage(nil, dto.GeneralOpenAIRequest{
+		Model:               "claude-sonnet-4",
+		MaxTokens:           &legacy,
+		MaxCompletionTokens: &zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, request.MaxTokens)
+	assert.Zero(t, *request.MaxTokens)
+}
+
 func TestFormatClaudeResponseInfo_MessageStart(t *testing.T) {
 	claudeInfo := &ClaudeResponseInfo{
 		Usage: &dto.Usage{},

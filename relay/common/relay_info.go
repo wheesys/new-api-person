@@ -156,7 +156,11 @@ type RelayInfo struct {
 	// relay/common/outbound_body.go), so that DoApiRequest can populate
 	// http.Request.ContentLength manually (net/http only auto-detects it for
 	// *bytes.Reader/Buffer/strings.Reader). 0 means "let net/http decide".
-	UpstreamRequestBodySize int64
+	UpstreamRequestBodySize        int64
+	FinalRequestModel              string
+	FinalRequestBodyDigest         string
+	FinalRequestBodySize           int64
+	FinalRequestRequestedMaxOutput *uint
 
 	PriceData hosttypes.PriceData
 
@@ -678,6 +682,32 @@ func (info *RelayInfo) GetFinalRequestRelayFormat() types.RelayFormat {
 		return info.RequestConversionChain[n-1]
 	}
 	return info.RelayFormat
+}
+
+func (info *RelayInfo) RecordPreparedRelayRequest(request *PreparedRelayRequest) {
+	if info == nil || request == nil {
+		return
+	}
+	info.FinalRequestModel = request.Model()
+	info.FinalRequestRelayFormat = request.Protocol()
+	info.FinalRequestBodyDigest = request.BodyDigest()
+	info.FinalRequestBodySize = request.Size()
+	info.FinalRequestRequestedMaxOutput = request.RequestedMaxOutput()
+	info.UpstreamRequestBodySize = request.Size()
+}
+
+func (info *RelayInfo) ResetPreparedRelayRequest() {
+	if info == nil {
+		return
+	}
+	info.FinalRequestRelayFormat = ""
+	info.FinalRequestModel = ""
+	info.FinalRequestBodyDigest = ""
+	info.FinalRequestBodySize = 0
+	info.FinalRequestRequestedMaxOutput = nil
+	info.UpstreamRequestBodySize = 0
+	info.RequestConversionChain = nil
+	info.InitRequestConversionChain()
 }
 
 func GenRelayInfoResponsesCompaction(c *gin.Context, request *dto.OpenAIResponsesCompactionRequest) *RelayInfo {

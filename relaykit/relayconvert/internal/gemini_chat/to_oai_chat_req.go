@@ -101,7 +101,7 @@ func GeminiGenerateContentRequestToOpenAIChat(geminiRequest *dto.GeminiChatReque
 	if geminiRequest.GenerationConfig.TopK != nil && *geminiRequest.GenerationConfig.TopK > 0 {
 		openaiRequest.TopK = kitutil.GetPointer(int(*geminiRequest.GenerationConfig.TopK))
 	}
-	if geminiRequest.GenerationConfig.MaxOutputTokens != nil && *geminiRequest.GenerationConfig.MaxOutputTokens > 0 {
+	if geminiRequest.GenerationConfig.MaxOutputTokens != nil {
 		openaiRequest.MaxTokens = kitutil.GetPointer(*geminiRequest.GenerationConfig.MaxOutputTokens)
 	}
 	if len(geminiRequest.GenerationConfig.StopSequences) > 0 {

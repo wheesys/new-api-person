@@ -2,7 +2,6 @@ package relay
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -24,6 +23,7 @@ import (
 
 func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	info.ResetPreparedRelayRequest()
 
 	textReq, ok := info.Request.(*dto.GeneralOpenAIRequest)
 	if !ok {
@@ -92,7 +92,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		return nil
 	}
 
-	var requestBody io.Reader
+	var preparedRequest *relaycommon.PreparedRelayRequest
 
 	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
@@ -104,7 +104,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				logger.LogDebug(c, "requestBody: %s", debugBytes)
 			}
 		}
-		requestBody = common.ReaderOnly(storage)
+		preparedRequest, err = relaycommon.PrepareFinalPassThroughRelayRequest(info, storage)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {
@@ -175,14 +178,16 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 		logger.LogDebug(c, "text request body: %s", jsonData)
 
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		preparedRequest, err = relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
+	}
+	defer preparedRequest.Close()
+	requestBody, err := preparedRequest.Reader()
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	var httpResp *http.Response

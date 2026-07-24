@@ -103,8 +103,8 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		Temperature:   textRequest.Temperature,
 		Tools:         claudeTools,
 	}
-	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
-		claudeRequest.MaxTokens = kitutil.GetPointer(maxTokens)
+	if maxTokens := textRequest.GetMaxTokensPointer(); maxTokens != nil {
+		claudeRequest.MaxTokens = kitutil.GetPointer(*maxTokens)
 	}
 	if textRequest.TopP != nil {
 		claudeRequest.TopP = kitutil.GetPointer(*textRequest.TopP)
@@ -123,7 +123,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens == 0 {
+	if claudeRequest.MaxTokens == nil {
 		if defaultMaxTokens, configured := opts.Claude.DefaultMaxTokensFor(textRequest.Model); configured {
 			value := uint(defaultMaxTokens)
 			claudeRequest.MaxTokens = &value

@@ -25,8 +25,8 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 	if textRequest.TopP != nil && *textRequest.TopP > 0 {
 		geminiRequest.GenerationConfig.TopP = kitutil.GetPointer(*textRequest.TopP)
 	}
-	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
-		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(maxTokens)
+	if maxTokens := textRequest.GetMaxTokensPointer(); maxTokens != nil {
+		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(*maxTokens)
 	}
 	if textRequest.Seed != nil && *textRequest.Seed != 0 {
 		geminiRequest.GenerationConfig.Seed = kitutil.GetPointer(int64(*textRequest.Seed))

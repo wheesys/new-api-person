@@ -561,6 +561,12 @@ allow_tool_result_compaction=false
 - 工具、多模态、provider state 首批保持不可压缩。
 - 压缩子请求接入独立计费和父子审计。
 
+实施拆分：
+
+- B-2a：统一最终请求不可变快照，使最终计数和实际发送能够消费同一模型、协议及正文；覆盖 pass-through 和 Chat-to-Responses，并隔离候选重试状态。
+- B-2b：提供不写客户端响应的内部子请求执行器，以及独立 request ID、`RelayInfo`、`BillingSession` 和父子审计。
+- B-2c：接入带权威性标记的 tokenizer 与上下文上限来源，完成单次压缩编排、正文和 DTO 原子提交、逐候选终检与失败关闭。
+
 ### 阶段 C：托管共识
 
 - 增加网关会话头、owner 隔离、revision/CAS、lease、TTL 和加密存储。

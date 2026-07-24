@@ -31,7 +31,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
-	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -328,8 +327,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	isOModel := dto.IsOpenAIReasoningOModel(info.UpstreamModelName)
 	isGPT5Model := dto.IsOpenAIGPT5Model(info.UpstreamModelName)
 	if isOModel || isGPT5Model {
-		if lo.FromPtrOr(request.MaxCompletionTokens, uint(0)) == 0 && lo.FromPtrOr(request.MaxTokens, uint(0)) != 0 {
+		if request.MaxCompletionTokens == nil && request.MaxTokens != nil {
 			request.MaxCompletionTokens = request.MaxTokens
+		}
+		if request.MaxCompletionTokens != nil {
 			request.MaxTokens = nil
 		}
 

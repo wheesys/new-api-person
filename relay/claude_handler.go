@@ -3,7 +3,6 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -24,6 +23,7 @@ import (
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
+	info.ResetPreparedRelayRequest()
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
 
@@ -47,7 +47,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
-	if request.MaxTokens == nil || *request.MaxTokens == 0 {
+	if request.MaxTokens == nil {
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 		request.MaxTokens = &defaultMaxTokens
 	}
@@ -153,14 +153,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return nil
 	}
 
-	var requestBody io.Reader
+	var preparedRequest *relaycommon.PreparedRelayRequest
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		info.UpstreamRequestBodySize = storage.Size()
-		requestBody = common.ReaderOnly(storage)
+		preparedRequest, err = relaycommon.PrepareFinalPassThroughRelayRequest(info, storage)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
 		if err != nil {
@@ -187,14 +189,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		preparedRequest, err = relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
+	}
+	defer preparedRequest.Close()
+	requestBody, err := preparedRequest.Reader()
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")

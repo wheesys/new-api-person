@@ -98,3 +98,16 @@ func assistantMessageWithTool(content string, id string, name string, args strin
 	})
 	return msg
 }
+
+func TestChatCompletionsRequestToResponsesRequestPreservesExplicitZeroMaxCompletionTokens(t *testing.T) {
+	zero := uint(0)
+	legacy := uint(7)
+	request, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:               "gpt-5",
+		MaxTokens:           &legacy,
+		MaxCompletionTokens: &zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, request.MaxOutputTokens)
+	assert.Zero(t, *request.MaxOutputTokens)
+}

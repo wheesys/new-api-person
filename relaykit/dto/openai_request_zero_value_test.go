@@ -202,3 +202,31 @@ func TestGeneralOpenAIRequestGetSystemRoleName(t *testing.T) {
 		})
 	}
 }
+
+func TestGeneralOpenAIRequestGetMaxTokensPointerPreservesPresenceAndPrecedence(t *testing.T) {
+	zero := uint(0)
+	legacy := uint(7)
+
+	tests := []struct {
+		name     string
+		request  *GeneralOpenAIRequest
+		expected *uint
+	}{
+		{name: "nil request"},
+		{name: "absent", request: &GeneralOpenAIRequest{}},
+		{name: "legacy", request: &GeneralOpenAIRequest{MaxTokens: &legacy}, expected: &legacy},
+		{name: "completion explicit zero wins", request: &GeneralOpenAIRequest{MaxTokens: &legacy, MaxCompletionTokens: &zero}, expected: &zero},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual := test.request.GetMaxTokensPointer()
+			if test.expected == nil {
+				require.Nil(t, actual)
+				return
+			}
+			require.NotNil(t, actual)
+			require.Equal(t, *test.expected, *actual)
+			require.Equal(t, *test.expected, test.request.GetMaxTokens())
+		})
+	}
+}

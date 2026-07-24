@@ -2,7 +2,6 @@ package relay
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -21,6 +20,7 @@ import (
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	info.ResetPreparedRelayRequest()
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
 		!common.IsResponsesCompactAPIType(info.ApiType) {
 		return types.NewErrorWithStatusCode(
@@ -76,13 +76,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
-	var requestBody io.Reader
+	var preparedRequest *relaycommon.PreparedRelayRequest
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = common.ReaderOnly(storage)
+		preparedRequest, err = relaycommon.PrepareFinalPassThroughRelayRequest(info, storage)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
@@ -109,14 +112,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		preparedRequest, err = relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
+	}
+	defer preparedRequest.Close()
+	requestBody, err := preparedRequest.Reader()
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	var httpResp *http.Response
