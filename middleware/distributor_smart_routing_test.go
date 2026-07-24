@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/smartrouting"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -52,6 +54,23 @@ func setupDistributorSmartRoutingTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func setSmartRoutingVirtualModelPoolsForTest(t *testing.T, pools map[string][]string) {
+	t.Helper()
+
+	originalPools := model_setting.GetSmartRoutingSettings().VirtualModelPools
+	loadPools := func(poolsToLoad map[string][]string) {
+		encodedPools, err := common.Marshal(poolsToLoad)
+		require.NoError(t, err)
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+			"smart_routing.virtual_model_pools": string(encodedPools),
+		}))
+	}
+	loadPools(pools)
+	t.Cleanup(func() {
+		loadPools(originalPools)
+	})
 }
 
 func TestDistributeResolvesVirtualModelBeforeChannelSelection(t *testing.T) {
@@ -117,6 +136,184 @@ func TestDistributeResolvesVirtualModelBeforeChannelSelection(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestDistributeFiltersVirtualModelCandidatesByConfiguredPool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+	setSmartRoutingVirtualModelPoolsForTest(t, map[string][]string{
+		"auto:quality": {"gpt-5-mini"},
+	})
+
+	cheapRatio := 0.1
+	expensiveRatio := 5.0
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id:           1101,
+			Type:         1,
+			Key:          "premium-key",
+			Status:       common.ChannelStatusEnabled,
+			Name:         "premium-channel",
+			Models:       "gpt-5",
+			Group:        "default",
+			ResponseTime: 50,
+			PriceRatio:   &cheapRatio,
+		},
+		{
+			Id:           1102,
+			Type:         1,
+			Key:          "pool-key",
+			Status:       common.ChannelStatusEnabled,
+			Name:         "pool-channel",
+			Models:       "gpt-5-mini",
+			Group:        "default",
+			ResponseTime: 900,
+			PriceRatio:   &expensiveRatio,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "gpt-5", ChannelId: 1101, Enabled: true},
+		{Group: "default", Model: "gpt-5-mini", ChannelId: 1102, Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Model{
+		{ModelName: "gpt-5", Status: 1, NameRule: model.NameRuleExact},
+		{ModelName: "gpt-5-mini", Status: 1, NameRule: model.NameRuleExact},
+	}).Error)
+	model.InitChannelCache()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		assert.Equal(t, "gpt-5-mini", common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+		assert.Equal(t, 1102, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+
+		decision, ok := common.GetContextKeyType[smartrouting.Decision](c, constant.ContextKeySmartRoutingDecision)
+		require.True(t, ok)
+		assert.Equal(t, "auto:quality", decision.OriginalModel)
+		assert.Equal(t, "gpt-5-mini", decision.SelectedModel)
+		assert.Equal(t, 1, decision.CandidateCount)
+
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"auto:quality","messages":[{"role":"user","content":"设计一个迁移方案"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestDistributeUsesAutoPoolForSmartAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+	setSmartRoutingVirtualModelPoolsForTest(t, map[string][]string{
+		"auto:quality": {"gpt-5-mini"},
+	})
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           1201,
+		Type:         1,
+		Key:          "pool-key",
+		Status:       common.ChannelStatusEnabled,
+		Name:         "pool-channel",
+		Models:       "gpt-5-mini",
+		Group:        "default",
+		ResponseTime: 100,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5-mini",
+		ChannelId: 1201,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "gpt-5-mini",
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+	model.InitChannelCache()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		assert.Equal(t, "gpt-5-mini", common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+		assert.Equal(t, 1201, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"smart:quality","messages":[{"role":"user","content":"设计一个迁移方案"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestDistributeRejectsVirtualModelWhenConfiguredPoolHasNoCandidate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+	setSmartRoutingVirtualModelPoolsForTest(t, map[string][]string{
+		"auto:quality": {"missing-model"},
+	})
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           1301,
+		Type:         1,
+		Key:          "quality-key",
+		Status:       common.ChannelStatusEnabled,
+		Name:         "quality-channel",
+		Models:       "gpt-5",
+		Group:        "default",
+		ResponseTime: 50,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5",
+		ChannelId: 1301,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "gpt-5",
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+	model.InitChannelCache()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"auto:quality","messages":[{"role":"user","content":"设计一个迁移方案"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.NotEqual(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "configured model pool")
 }
 
 func TestDistributeKeepsExplicitModelAndScoresChannels(t *testing.T) {
@@ -192,6 +389,59 @@ func TestDistributeKeepsExplicitModelAndScoresChannels(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, string(bodyBytes), `"model":"gpt-fixed"`)
 
+		c.Status(http.StatusOK)
+	})
+
+	body := strings.NewReader(`{"model":"gpt-fixed","messages":[{"role":"user","content":"hello"}],"max_tokens":1024}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestDistributeExplicitModelIgnoresVirtualModelPool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	db := setupDistributorSmartRoutingTestDB(t)
+	setSmartRoutingVirtualModelPoolsForTest(t, map[string][]string{
+		"auto:quality": {"gpt-5-mini"},
+	})
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           2101,
+		Type:         1,
+		Key:          "explicit-key",
+		Status:       common.ChannelStatusEnabled,
+		Name:         "explicit-channel",
+		Models:       "gpt-fixed",
+		Group:        "default",
+		ResponseTime: 50,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-fixed",
+		ChannelId: 2101,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "gpt-fixed",
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+	model.InitChannelCache()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		c.Next()
+	})
+	router.POST("/v1/chat/completions", Distribute(), func(c *gin.Context) {
+		assert.Equal(t, "gpt-fixed", common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+		assert.Equal(t, 2101, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 		c.Status(http.StatusOK)
 	})
 

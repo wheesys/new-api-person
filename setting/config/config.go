@@ -269,6 +269,10 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error 
 		}
 	}
 
+	if listener, ok := config.(interface{ OnConfigUpdated() }); ok {
+		listener.OnConfigUpdated()
+	}
+
 	return nil
 }
 

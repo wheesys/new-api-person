@@ -24,6 +24,7 @@ import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
 import { RoutingReliabilitySection } from './routing-reliability-section'
+import { SmartRoutingSettingsSection } from './smart-routing-settings-section'
 
 function formatJsonForEditor(value: string, fallback: string) {
   const raw = (value ?? '').toString().trim()
@@ -84,6 +85,20 @@ const MODELS_SECTIONS = [
             settings['monitor_setting.auto_test_channel_minutes'],
           'monitor_setting.channel_test_mode':
             settings['monitor_setting.channel_test_mode'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'smart-routing',
+    titleKey: 'Smart Routing',
+    build: (settings: ModelSettings) => (
+      <SmartRoutingSettingsSection
+        defaultValues={{
+          'smart_routing.virtual_model_pools': formatJsonForEditor(
+            settings['smart_routing.virtual_model_pools'],
+            '{}'
+          ),
         }}
       />
     ),

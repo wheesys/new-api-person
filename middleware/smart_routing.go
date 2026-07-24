@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartrouting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -45,6 +46,10 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	candidates, err := buildSmartRouteCandidates(c, routeRequest, usingGroup)
 	if err != nil {
 		return nil, true, err
+	}
+	candidates, configuredPoolApplied := filterSmartRoutingCandidatesByConfiguredModelPool(candidates, profile.Name)
+	if configuredPoolApplied && len(candidates) == 0 {
+		return nil, true, fmt.Errorf("no smart routing candidate for virtual model %s after applying configured model pool", modelRequest.Model)
 	}
 	ranked, _ := smartrouting.RankCandidates(routeRequest, candidates, profile.Policy)
 	ranked = filterSmartRoutingCandidatesByTokenLimit(c, ranked)
@@ -281,6 +286,32 @@ func filterSmartRoutingCandidatesByTokenLimit(c *gin.Context, candidates []smart
 		}
 	}
 	return filtered
+}
+
+func filterSmartRoutingCandidatesByConfiguredModelPool(candidates []smartrouting.SmartRouteCandidate, virtualModel string) ([]smartrouting.SmartRouteCandidate, bool) {
+	pool, configured := model_setting.GetSmartRoutingVirtualModelPool(virtualModel)
+	if !configured {
+		return candidates, false
+	}
+
+	allowedModels := make(map[string]struct{}, len(pool))
+	for _, modelName := range pool {
+		modelName = strings.TrimSpace(modelName)
+		if modelName != "" {
+			allowedModels[modelName] = struct{}{}
+		}
+	}
+	if len(allowedModels) == 0 {
+		return nil, true
+	}
+
+	filtered := make([]smartrouting.SmartRouteCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := allowedModels[candidate.ModelName]; ok {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered, true
 }
 
 func filterSmartRoutingCandidatesByRequestedModel(candidates []smartrouting.SmartRouteCandidate, requestedModel string) []smartrouting.SmartRouteCandidate {

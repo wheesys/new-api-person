@@ -48,6 +48,8 @@
 - [x] 为智能路由补充失败后的同模型候选序列消费机制，让重试沿用本次路由排序结果且不回落到随机渠道。
 - [x] 新增智能路由模型画像缓存、`auto` 默认均衡策略、外部榜单 10 天刷新任务、内部模型评分 1 天重算任务，并将画像评分接入候选排序。
 - [x] 接入 SWE-bench、Artificial Analysis 和 Arena 榜单适配器，支持通过环境变量配置外部榜单地址，并按来源归一化后合并到模型画像缓存。
+- [x] 完成虚拟模型管理员可配置模型池后端闭环：新增 `smart_routing.virtual_model_pools` 配置、`auto:*` / `smart:*` 候选池过滤和回归测试，并归档到 `doc/auto-smart-routing-configurable-model-pool-implementation-2026-07-10.md`。
+- [x] 在默认前端模型设置页新增 `Smart Routing` 配置入口，支持编辑 `smart_routing.virtual_model_pools` 并补齐六语言 i18n，实施报告见 `doc/auto-smart-routing-configurable-model-pool-implementation-2026-07-10.md`。
 
 ## 待办
 
@@ -57,17 +59,13 @@
 - [x] 已完成前端目录从 `web/default` 迁移到扁平化 `web/`，删除 classic 前端，并排除 vendor、用户钱包、充值、支付、兑换码和订阅购买模块。
 - [x] 已确认并恢复上游渠道账户余额查询；该功能属于渠道运维，不属于用户钱包模块。保留渠道余额列、单渠道查询、批量更新和 Codex 用量弹窗，同时叠加渠道价格倍率列。
 - [x] 已重放并验证模型定价、渠道倍率计费、SQLite 数据迁移、累计用量重置和智能路由第一阶段选择。相关前端类型检查、i18n 同步、Compose 配置检查及定向 Go 测试已通过。
-- [ ] 当前处于提交 `51193a87`（智能路由模型画像刷新）的 cherry-pick 中。`controller/relay.go` 的导入冲突已在工作区解决，但尚未执行 `git add` 和 `git cherry-pick --continue`；重启后先检查 `git status` 和冲突标记，再运行智能路由相关测试并继续。当前已完成的最新提交是 `3313a72c0cad71805534800e6e835c026879d536`。
-- [ ] 当前 cherry-pick 序列完成 `51193a87` 后会继续应用 `6ffd30d7`（可配置模型池）。如发生冲突，保留上游 `relaykit/types` 类型迁移、高级自定义渠道按“请求路径 + 模型”匹配逻辑，以及本项目智能路由行为。
+- [x] 已完成提交 `51193a87`（智能路由模型画像刷新）的重放，cherry-pick 结果为 `8f51426c`；`controller/relay.go` 导入冲突按上游 `relaykit/types` 迁移和本项目智能路由行为合并，智能路由相关测试已通过。
+- [x] 已重放 `6ffd30d7`（可配置模型池）：落地 `smart_routing.virtual_model_pools` 后端配置、`auto:*` / `smart:*` 候选池过滤、前端 `Smart Routing` 入口与六语言 i18n；冲突保留上游 `relaykit/types` 迁移和本项目智能路由行为。
 - [ ] 随后按顺序继续重放上下文共识和文件能力提交：`d9287816 33f2ccf1 40097959 d48a9f5c 9f56e5da 6a1498b9 0e8bfeac f512e49a 0ede84bf a36df420 13785e7f 0cbcabd8 9f522b2a 7bfb37be 38ae39f6 549d39ac 44fb418b ad105847 69881574 f7cbb392 761834e0 c627a5b3 49f3c7cd 6516aa23 d09b95b5 5bae9bd3 3e83b42e eb88752c 732894e3 2d1c6466 86453b91 4b25be32 3a3569cd ba1f0329 c1aee3ae 574b3934 1c0bd4a5 67fe50b5`。
 - [ ] 完成重放后统一审计：不得恢复 classic、vendor、用户钱包、充值、支付、兑换码、订阅购买及上游发布宣传模块；其他上游前后端更新均应保留，特别是由前端改动引发的后端接口和类型调整。
 - [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
-- [ ] 按 `doc/auto-smart-routing-configurable-model-pool-2026-07-09.md` 实现虚拟模型管理员可配置模型池后端配置模块，复用 `Option` / `setting/config` 体系。
-- [ ] 为 `auto:*` / `smart:*` 虚拟模型候选排序增加模型池过滤；未配置或空数组时保持现有行为，普通模型请求不受影响。
-- [ ] 补充智能路由模型池测试：池内过滤、`smart:*` 映射、空配置兼容、过滤为空的拒绝原因、普通模型不受影响。
-- [ ] 后端闭环后，在默认前端模型设置页设计 `Smart Routing` 配置入口，并补齐 i18n。
 - [ ] 如需继续推进，设计跨模型 `ContextConsensus` 会话共识、自动压缩和工具状态保持方案。
 - [ ] 如需继续推进，设计智能路由日志、指标聚合和后台配置页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。

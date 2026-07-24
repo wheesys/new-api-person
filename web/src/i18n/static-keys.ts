@@ -48,6 +48,8 @@ export const STATIC_I18N_KEYS = [
   'Integrations',
   'Models',
   'Routing Reliability',
+  'Smart Routing',
+  'Unsupported virtual model key',
   'Maintenance',
 
   // System info

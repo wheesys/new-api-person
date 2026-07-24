@@ -362,6 +362,12 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "smart_routing.virtual_model_pools":
+		err = model_setting.ValidateSmartRoutingVirtualModelPools(option.Value.(string))
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

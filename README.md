@@ -192,6 +192,7 @@ docker run --name new-api -d --restart always \
 **Intelligent Routing:**
 - ⚖️ Channel weighted random
 - 🔄 Automatic retry on failure
+- 🧭 Explicit `auto:*` / `smart:*` virtual models with administrator-configurable real-model pools
 - 🚦 User-level model rate limiting
 
 **Format Conversion:**
