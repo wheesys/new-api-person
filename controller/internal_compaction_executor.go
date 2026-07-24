@@ -13,7 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
@@ -23,7 +23,8 @@ import (
 	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -82,7 +83,7 @@ type internalCompactionDependencies struct {
 	selectChannel  func(*gin.Context, string, string) (*model.Channel, string, error)
 	setupChannel   func(*gin.Context, *model.Channel, string) *types.NewAPIError
 	estimateTokens func(*gin.Context, *types.TokenCountMeta, *relaycommon.RelayInfo) (int, error)
-	priceRequest   func(*gin.Context, *relaycommon.RelayInfo, int, *types.TokenCountMeta) (types.PriceData, error)
+	priceRequest   func(*gin.Context, *relaycommon.RelayInfo, int, *types.TokenCountMeta) (hosttypes.PriceData, error)
 	preconsume     func(*gin.Context, int, *relaycommon.RelayInfo) (internalCompactionBillingSession, *types.NewAPIError)
 	executeAttempt func(*gin.Context, *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError)
 	postConsume    func(*gin.Context, *relaycommon.RelayInfo, *dto.Usage) (service.TextConsumeResult, error)

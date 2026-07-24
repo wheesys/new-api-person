@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -70,6 +71,15 @@ func applySystemPromptIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, requ
 }
 
 func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NewAPIError) {
+	attempt, newAPIError := prepareChatCompletionsViaResponsesAttempt(c, info, adaptor, request)
+	if newAPIError != nil {
+		return nil, newAPIError
+	}
+	defer attempt.Close()
+	return ExecutePreparedTextRelayAttempt(c, info, attempt)
+}
+
+func prepareChatCompletionsViaResponsesAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	chatJSON, err := common.Marshal(request)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -103,9 +113,12 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 
 	savedRelayMode := info.RelayMode
 	savedRequestURLPath := info.RequestURLPath
+	protocolModeCommitted := false
 	defer func() {
-		info.RelayMode = savedRelayMode
-		info.RequestURLPath = savedRequestURLPath
+		if !protocolModeCommitted {
+			info.RelayMode = savedRelayMode
+			info.RequestURLPath = savedRequestURLPath
+		}
 	}()
 
 	info.RelayMode = relayconstant.RelayModeResponses
@@ -131,13 +144,19 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
-	defer preparedRequest.Close()
-	jsonData = nil
-	requestBody, err := preparedRequest.Reader()
-	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-	}
+	protocolModeCommitted = true
+	return &PreparedTextRelayAttempt{
+		info:                info,
+		adaptor:             adaptor,
+		preparedRequest:     preparedRequest,
+		responseMode:        preparedTextResponseModeChatViaResponses,
+		restoreProtocolMode: true,
+		savedRelayMode:      savedRelayMode,
+		savedRequestURLPath: savedRequestURLPath,
+	}, nil
+}
 
+func executePreparedChatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, requestBody io.Reader) (*dto.Usage, *types.NewAPIError) {
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
