@@ -374,6 +374,18 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, err.Error())
 			return
 		}
+	case "smart_routing.compaction_channel_ids":
+		err = model_setting.ValidateSmartRoutingCompactionChannelIDs(option.Value.(string))
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+	case "smart_routing.authoritative_context_limits":
+		err = model_setting.ValidateSmartRoutingAuthoritativeContextLimits(option.Value.(string))
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

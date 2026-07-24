@@ -200,12 +200,44 @@ func (validationError *ValidationError) Error() string {
 type TokenCountRequest struct {
 	Protocol    types.RelayFormat
 	Model       string
+	ChannelID   int
 	RequestBody []byte
 	Envelope    *ContextEnvelope
 }
 
+type TokenCountResult struct {
+	Breakdown     TokenBreakdown    `json:"breakdown"`
+	Authoritative bool              `json:"authoritative"`
+	Model         string            `json:"model"`
+	ChannelID     int               `json:"channel_id"`
+	Protocol      types.RelayFormat `json:"protocol"`
+	BodyDigest    string            `json:"body_digest"`
+	Source        string            `json:"source"`
+	Version       string            `json:"version"`
+}
+
 type TokenCounter interface {
-	CountPromptTokens(ctx context.Context, request TokenCountRequest) (TokenBreakdown, error)
+	CountPromptTokens(ctx context.Context, request TokenCountRequest) (TokenCountResult, error)
+}
+
+type ContextLimitRequest struct {
+	Model     string
+	ChannelID int
+	Protocol  types.RelayFormat
+}
+
+type ContextLimitResult struct {
+	ContextLimitTokens int               `json:"context_limit_tokens"`
+	Authoritative      bool              `json:"authoritative"`
+	Model              string            `json:"model"`
+	ChannelID          int               `json:"channel_id"`
+	Protocol           types.RelayFormat `json:"protocol"`
+	Source             string            `json:"source"`
+	Version            string            `json:"version"`
+}
+
+type ContextLimitResolver interface {
+	ResolveContextLimit(ctx context.Context, request ContextLimitRequest) (ContextLimitResult, error)
 }
 
 type TokenBudgetRequest struct {
@@ -216,15 +248,17 @@ type TokenBudgetRequest struct {
 }
 
 type TokenBudget struct {
-	Breakdown          TokenBreakdown `json:"breakdown"`
-	PromptTokens       int            `json:"prompt_tokens"`
-	OutputTokens       int            `json:"output_tokens"`
-	SafetyMarginTokens int            `json:"safety_margin_tokens"`
-	RequiredTokens     int            `json:"required_tokens"`
-	ContextLimitTokens int            `json:"context_limit_tokens"`
-	RemainingTokens    int            `json:"remaining_tokens"`
-	Fits               bool           `json:"fits"`
-	ExplicitZeroOutput bool           `json:"explicit_zero_output"`
+	Breakdown          TokenBreakdown      `json:"breakdown"`
+	TokenCount         TokenCountResult    `json:"token_count"`
+	ContextLimit       *ContextLimitResult `json:"context_limit,omitempty"`
+	PromptTokens       int                 `json:"prompt_tokens"`
+	OutputTokens       int                 `json:"output_tokens"`
+	SafetyMarginTokens int                 `json:"safety_margin_tokens"`
+	RequiredTokens     int                 `json:"required_tokens"`
+	ContextLimitTokens int                 `json:"context_limit_tokens"`
+	RemainingTokens    int                 `json:"remaining_tokens"`
+	Fits               bool                `json:"fits"`
+	ExplicitZeroOutput bool                `json:"explicit_zero_output"`
 }
 
 func validateNonNegative(name string, value int) error {

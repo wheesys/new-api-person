@@ -51,29 +51,36 @@ func RewriteRequestWithConsensus(request RewriteCompactedRequest) ([]byte, error
 }
 
 func validateCompactionPlanForRewrite(request RewriteCompactedRequest) error {
-	if request.Plan.integrityDigest == "" || request.Plan.integrityDigest != digestValue(request.Plan) {
+	return validateCompactionPlanAgainstBody(request.Protocol, request.Body, request.Plan)
+}
+
+func validateCompactionPlanAgainstBody(protocol types.RelayFormat, body []byte, plan CompactionPlan) error {
+	if protocol != plan.Protocol {
+		return fmt.Errorf("compaction plan protocol does not match request")
+	}
+	if plan.integrityDigest == "" || plan.integrityDigest != digestValue(plan) {
 		return fmt.Errorf("compaction plan integrity check failed")
 	}
-	envelope, err := Extract(ExtractionRequest{Protocol: request.Protocol, Body: request.Body})
+	envelope, err := Extract(ExtractionRequest{Protocol: protocol, Body: body})
 	if err != nil {
-		return fmt.Errorf("rebuild context envelope before rewrite: %w", err)
+		return fmt.Errorf("rebuild context envelope for compaction plan: %w", err)
 	}
 	expectedPlan, err := BuildCompactionPlan(CompactionPlanRequest{
-		Protocol: request.Protocol,
-		Body:     request.Body,
+		Protocol: protocol,
+		Body:     body,
 		Envelope: envelope,
 		Policy: CompactionPolicy{
 			SystemEnabled:        true,
-			PolicyVersion:        request.Plan.PolicyVersion,
-			PreservedRecentTurns: request.Plan.preservedRecentTurns,
-			TargetInputTokens:    request.Plan.TargetInputTokens,
-			MaxSummaryTokens:     request.Plan.MaxSummaryTokens,
+			PolicyVersion:        plan.PolicyVersion,
+			PreservedRecentTurns: plan.preservedRecentTurns,
+			TargetInputTokens:    plan.TargetInputTokens,
+			MaxSummaryTokens:     plan.MaxSummaryTokens,
 		}.Snapshot(true, true),
 	})
 	if err != nil {
-		return fmt.Errorf("validate compaction plan before rewrite: %w", err)
+		return fmt.Errorf("validate compaction plan against request: %w", err)
 	}
-	if !reflect.DeepEqual(expectedPlan, request.Plan) {
+	if !reflect.DeepEqual(expectedPlan, plan) {
 		return fmt.Errorf("compaction plan does not match the request safety policy")
 	}
 	return nil

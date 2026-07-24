@@ -10,22 +10,33 @@ import (
 )
 
 type SmartRoutingSettings struct {
-	VirtualModelPools            map[string][]string `json:"virtual_model_pools"`
-	ContextConsensusEnabled      bool                `json:"context_consensus_enabled"`
-	AutoCompactionEnabled        bool                `json:"auto_compaction_enabled"`
-	CompactionModelPool          []string            `json:"compaction_model_pool"`
-	ContextSafetyMarginTokens    int                 `json:"context_safety_margin_tokens"`
-	PreservedRecentTurns         int                 `json:"preserved_recent_turns"`
-	MaxSummaryTokens             int                 `json:"max_summary_tokens"`
-	MaxCompactionInputTokens     int                 `json:"max_compaction_input_tokens"`
-	MaxCompactionCallsPerRequest int                 `json:"max_compaction_calls_per_request"`
-	MaxCompactionQuota           int                 `json:"max_compaction_quota"`
-	CompactionTimeoutSeconds     int                 `json:"compaction_timeout_seconds"`
+	VirtualModelPools            map[string][]string                        `json:"virtual_model_pools"`
+	ContextConsensusEnabled      bool                                       `json:"context_consensus_enabled"`
+	AutoCompactionEnabled        bool                                       `json:"auto_compaction_enabled"`
+	CompactionModelPool          []string                                   `json:"compaction_model_pool"`
+	CompactionChannelIDs         []int                                      `json:"compaction_channel_ids"`
+	AuthoritativeContextLimits   map[string]AuthoritativeContextLimitConfig `json:"authoritative_context_limits"`
+	ContextSafetyMarginTokens    int                                        `json:"context_safety_margin_tokens"`
+	PreservedRecentTurns         int                                        `json:"preserved_recent_turns"`
+	MaxSummaryTokens             int                                        `json:"max_summary_tokens"`
+	MaxCompactionInputTokens     int                                        `json:"max_compaction_input_tokens"`
+	MaxCompactionCallsPerRequest int                                        `json:"max_compaction_calls_per_request"`
+	MaxCompactionQuota           int                                        `json:"max_compaction_quota"`
+	CompactionTimeoutSeconds     int                                        `json:"compaction_timeout_seconds"`
+}
+
+type AuthoritativeContextLimitConfig struct {
+	MaxContextTokens int      `json:"max_context_tokens"`
+	Version          string   `json:"version"`
+	ChannelIDs       []int    `json:"channel_ids"`
+	RelayFormats     []string `json:"relay_formats"`
 }
 
 var smartRoutingSettings = SmartRoutingSettings{
 	VirtualModelPools:            map[string][]string{},
 	CompactionModelPool:          []string{},
+	CompactionChannelIDs:         []int{},
+	AuthoritativeContextLimits:   map[string]AuthoritativeContextLimitConfig{},
 	ContextSafetyMarginTokens:    1024,
 	PreservedRecentTurns:         3,
 	MaxSummaryTokens:             2048,
@@ -127,10 +138,88 @@ func ValidateSmartRoutingCompactionModelPool(value string) error {
 	return nil
 }
 
+func ValidateSmartRoutingCompactionChannelIDs(value string) error {
+	var channelIDs []int
+	if err := common.UnmarshalJsonStr(value, &channelIDs); err != nil {
+		return fmt.Errorf("invalid smart routing compaction channel IDs: %w", err)
+	}
+	if channelIDs == nil {
+		return fmt.Errorf("smart routing compaction channel IDs must be an array")
+	}
+	seen := make(map[int]struct{}, len(channelIDs))
+	for _, channelID := range channelIDs {
+		if channelID <= 0 {
+			return fmt.Errorf("smart routing compaction channel ID must be positive")
+		}
+		if _, duplicate := seen[channelID]; duplicate {
+			return fmt.Errorf("smart routing compaction channel ID %d is duplicated", channelID)
+		}
+		seen[channelID] = struct{}{}
+	}
+	return nil
+}
+
+func ValidateSmartRoutingAuthoritativeContextLimits(value string) error {
+	var limits map[string]AuthoritativeContextLimitConfig
+	if err := common.UnmarshalJsonStr(value, &limits); err != nil {
+		return fmt.Errorf("invalid smart routing authoritative context limits: %w", err)
+	}
+	if limits == nil {
+		return fmt.Errorf("smart routing authoritative context limits must be a JSON object")
+	}
+	supportedRelayFormats := map[string]struct{}{
+		"openai":           {},
+		"openai_responses": {},
+		"claude":           {},
+		"gemini":           {},
+	}
+	for modelName, limit := range limits {
+		if strings.TrimSpace(modelName) == "" {
+			return fmt.Errorf("smart routing authoritative context limits contain an empty model name")
+		}
+		if limit.MaxContextTokens <= 0 {
+			return fmt.Errorf("smart routing authoritative context limit for %q must be positive", modelName)
+		}
+		if strings.TrimSpace(limit.Version) == "" {
+			return fmt.Errorf("smart routing authoritative context limit for %q requires a version", modelName)
+		}
+		if len(limit.ChannelIDs) == 0 {
+			return fmt.Errorf("smart routing authoritative context limit for %q requires channel IDs", modelName)
+		}
+		seenChannelIDs := make(map[int]struct{}, len(limit.ChannelIDs))
+		for _, channelID := range limit.ChannelIDs {
+			if channelID <= 0 {
+				return fmt.Errorf("smart routing authoritative context limit for %q contains a non-positive channel ID", modelName)
+			}
+			if _, duplicate := seenChannelIDs[channelID]; duplicate {
+				return fmt.Errorf("smart routing authoritative context limit for %q contains duplicate channel ID %d", modelName, channelID)
+			}
+			seenChannelIDs[channelID] = struct{}{}
+		}
+		if len(limit.RelayFormats) == 0 {
+			return fmt.Errorf("smart routing authoritative context limit for %q requires relay formats", modelName)
+		}
+		seenRelayFormats := make(map[string]struct{}, len(limit.RelayFormats))
+		for _, relayFormat := range limit.RelayFormats {
+			relayFormat = strings.TrimSpace(relayFormat)
+			if _, supported := supportedRelayFormats[relayFormat]; !supported {
+				return fmt.Errorf("smart routing authoritative context limit for %q contains unsupported relay format %q", modelName, relayFormat)
+			}
+			if _, duplicate := seenRelayFormats[relayFormat]; duplicate {
+				return fmt.Errorf("smart routing authoritative context limit for %q contains duplicate relay format %q", modelName, relayFormat)
+			}
+			seenRelayFormats[relayFormat] = struct{}{}
+		}
+	}
+	return nil
+}
+
 func cloneSmartRoutingSettings(settings *SmartRoutingSettings) *SmartRoutingSettings {
 	cloned := &SmartRoutingSettings{
 		VirtualModelPools:            map[string][]string{},
 		CompactionModelPool:          []string{},
+		CompactionChannelIDs:         []int{},
+		AuthoritativeContextLimits:   map[string]AuthoritativeContextLimitConfig{},
 		ContextSafetyMarginTokens:    1024,
 		PreservedRecentTurns:         3,
 		MaxSummaryTokens:             2048,
@@ -147,6 +236,13 @@ func cloneSmartRoutingSettings(settings *SmartRoutingSettings) *SmartRoutingSett
 		cloned.VirtualModelPools[virtualModel] = append([]string(nil), pool...)
 	}
 	cloned.CompactionModelPool = append([]string(nil), settings.CompactionModelPool...)
+	cloned.CompactionChannelIDs = append([]int(nil), settings.CompactionChannelIDs...)
+	cloned.AuthoritativeContextLimits = make(map[string]AuthoritativeContextLimitConfig, len(settings.AuthoritativeContextLimits))
+	for modelName, limit := range settings.AuthoritativeContextLimits {
+		limit.ChannelIDs = append([]int(nil), limit.ChannelIDs...)
+		limit.RelayFormats = append([]string(nil), limit.RelayFormats...)
+		cloned.AuthoritativeContextLimits[modelName] = limit
+	}
 	return cloned
 }
 

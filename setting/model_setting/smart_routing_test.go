@@ -133,6 +133,65 @@ func TestValidateSmartRoutingCompactionModelPool(t *testing.T) {
 	}
 }
 
+func TestValidateSmartRoutingCompactionChannelIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantError string
+	}{
+		{name: "explicit channels", value: `[3,7]`},
+		{name: "empty whitelist", value: `[]`},
+		{name: "invalid json", value: `{`, wantError: "invalid smart routing compaction channel IDs"},
+		{name: "null", value: `null`, wantError: "must be an array"},
+		{name: "non-positive", value: `[0]`, wantError: "must be positive"},
+		{name: "duplicate", value: `[3,3]`, wantError: "is duplicated"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSmartRoutingCompactionChannelIDs(test.value)
+			if test.wantError == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+func TestValidateSmartRoutingAuthoritativeContextLimits(t *testing.T) {
+	valid := `{"gpt-5":{"max_context_tokens":128000,"version":"2026-07","channel_ids":[3],"relay_formats":["openai","openai_responses"]}}`
+	tests := []struct {
+		name      string
+		value     string
+		wantError string
+	}{
+		{name: "explicit authoritative limit", value: valid},
+		{name: "empty map", value: `{}`},
+		{name: "invalid json", value: `{`, wantError: "invalid smart routing authoritative context limits"},
+		{name: "null", value: `null`, wantError: "must be a JSON object"},
+		{name: "blank model", value: `{" ":{"max_context_tokens":1,"version":"v1","channel_ids":[1],"relay_formats":["openai"]}}`, wantError: "empty model name"},
+		{name: "non-positive limit", value: `{"gpt-5":{"max_context_tokens":0,"version":"v1","channel_ids":[1],"relay_formats":["openai"]}}`, wantError: "must be positive"},
+		{name: "missing version", value: `{"gpt-5":{"max_context_tokens":1,"channel_ids":[1],"relay_formats":["openai"]}}`, wantError: "requires a version"},
+		{name: "missing channel", value: `{"gpt-5":{"max_context_tokens":1,"version":"v1","relay_formats":["openai"]}}`, wantError: "requires channel IDs"},
+		{name: "duplicate channel", value: `{"gpt-5":{"max_context_tokens":1,"version":"v1","channel_ids":[1,1],"relay_formats":["openai"]}}`, wantError: "duplicate channel ID"},
+		{name: "missing protocol", value: `{"gpt-5":{"max_context_tokens":1,"version":"v1","channel_ids":[1]}}`, wantError: "requires relay formats"},
+		{name: "unsupported protocol", value: `{"gpt-5":{"max_context_tokens":1,"version":"v1","channel_ids":[1],"relay_formats":["openai_realtime"]}}`, wantError: "unsupported relay format"},
+		{name: "duplicate protocol", value: `{"gpt-5":{"max_context_tokens":1,"version":"v1","channel_ids":[1],"relay_formats":["openai","openai"]}}`, wantError: "duplicate relay format"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateSmartRoutingAuthoritativeContextLimits(test.value)
+			if test.wantError == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
 func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	original := GetSmartRoutingSettings()
 	t.Cleanup(func() {
@@ -144,6 +203,8 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 		"smart_routing.context_consensus_enabled":        "true",
 		"smart_routing.auto_compaction_enabled":          "true",
 		"smart_routing.compaction_model_pool":            `["gpt-5-mini"]`,
+		"smart_routing.compaction_channel_ids":           `[3,7]`,
+		"smart_routing.authoritative_context_limits":     `{"gpt-5-mini":{"max_context_tokens":128000,"version":"2026-07","channel_ids":[3],"relay_formats":["openai"]}}`,
 		"smart_routing.context_safety_margin_tokens":     "2048",
 		"smart_routing.preserved_recent_turns":           "4",
 		"smart_routing.max_summary_tokens":               "1024",
@@ -157,6 +218,8 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	require.True(t, snapshot.ContextConsensusEnabled)
 	require.True(t, snapshot.AutoCompactionEnabled)
 	assert.Equal(t, []string{"gpt-5-mini"}, snapshot.CompactionModelPool)
+	assert.Equal(t, []int{3, 7}, snapshot.CompactionChannelIDs)
+	assert.Equal(t, 128000, snapshot.AuthoritativeContextLimits["gpt-5-mini"].MaxContextTokens)
 	assert.Equal(t, 2048, snapshot.ContextSafetyMarginTokens)
 	assert.Equal(t, 4, snapshot.PreservedRecentTurns)
 	assert.Equal(t, 1024, snapshot.MaxSummaryTokens)
@@ -166,5 +229,11 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, 15, snapshot.CompactionTimeoutSeconds)
 
 	snapshot.CompactionModelPool[0] = "mutated"
+	snapshot.CompactionChannelIDs[0] = 99
+	limit := snapshot.AuthoritativeContextLimits["gpt-5-mini"]
+	limit.ChannelIDs[0] = 99
+	snapshot.AuthoritativeContextLimits["gpt-5-mini"] = limit
 	assert.Equal(t, []string{"gpt-5-mini"}, GetSmartRoutingSettings().CompactionModelPool)
+	assert.Equal(t, []int{3, 7}, GetSmartRoutingSettings().CompactionChannelIDs)
+	assert.Equal(t, []int{3}, GetSmartRoutingSettings().AuthoritativeContextLimits["gpt-5-mini"].ChannelIDs)
 }
