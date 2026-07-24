@@ -54,10 +54,10 @@
 - [x] 完成 `ContextConsensus` 阶段 A：四协议 `ContextEnvelope`、provider-bound 状态检测、工具图验证、精确预算接口和 `validate_only` 安全审计，见 `doc/auto-smart-routing-context-consensus-stage-a-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-1：三重授权快照、压缩配置边界、完整 turn 纯计划、严格共识摘要校验、四协议安全重写和网关请求头隔离，见 `doc/auto-smart-routing-context-consensus-stage-b1-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-2a：统一最终请求不可变快照，覆盖四协议、pass-through 和 Chat-to-Responses，隔离跨候选重试元数据并保留显式零输出上限，见 `doc/auto-smart-routing-context-consensus-stage-b2a-implementation-2026-07-24.md`。
+- [x] 完成 `ContextConsensus` 阶段 B-2b1：建立无 Gin/网络/数据库依赖的压缩子请求执行契约，提供独立 request ID、一次性状态机、结构化计费结果、失败退款语义和父子审计，见 `doc/auto-smart-routing-context-consensus-stage-b2b1-implementation-2026-07-24.md`。
 
 ## 待办
 
-<<<<<<< HEAD
 ### 上游同步重启接续
 
 - [x] 创建专用分支 `sync/upstream-full-20260801`，以上游 `upstream/main` 的 `cfaba1dd6754d4238e1360247c198a64a313e96c` 为基线，采用“上游最新版作为底座，再重放本项目定制提交”的方式同步，避免每次完整拉取后反复删除模块。
@@ -71,7 +71,7 @@
 - [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
-- [ ] 实现 `ContextConsensus` 阶段 B-2b：抽取不写客户端响应的进程内压缩子请求执行器，并提供独立 request ID、`RelayInfo`、`BillingSession`、计费快照、请求输入和父子审计。
+- [ ] 实现 `ContextConsensus` 阶段 B-2b2：在 controller 层接入不写客户端响应的真实非流式压缩子请求执行器，并创建独立 `RelayInfo`、`BillingSession`、`BillingSnapshot`、`BillingRequestInput` 和消费日志。
 - [ ] 实现 `ContextConsensus` 阶段 B-2c：接入具备权威性标记的生产 `TokenCounter` 与上下文上限来源，完成压缩编排、请求正文和 DTO 原子替换、逐候选终检及失败关闭。
 - [ ] 修复全包 `go test -race` 已暴露的既有竞态：流扫描结束信号、Gemini 测试并发修改 Gin 全局模式、任务轮询日志时间状态及异步任务对象读取。
 - [ ] 审计并迁移仍使用非指针输出上限字段的旧渠道适配器（Baidu、Cloudflare、Cohere、Ollama、Xunfei 等），统一保留字段缺失与显式 `0` 的差异。

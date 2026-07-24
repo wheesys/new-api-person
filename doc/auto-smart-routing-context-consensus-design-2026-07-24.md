@@ -564,7 +564,8 @@ allow_tool_result_compaction=false
 实施拆分：
 
 - B-2a：统一最终请求不可变快照，使最终计数和实际发送能够消费同一模型、协议及正文；覆盖 pass-through 和 Chat-to-Responses，并隔离候选重试状态。
-- B-2b：提供不写客户端响应的内部子请求执行器，以及独立 request ID、`RelayInfo`、`BillingSession` 和父子审计。
+- B-2b1：先建立不依赖 Gin、网络和数据库的内部子请求执行契约，固定独立 request ID、一次性生命周期、结构化计费结果、失败退款语义和父子审计字段。
+- B-2b2：在 controller 层实现真实非流式子请求执行器，创建独立 `RelayInfo`、`BillingSession`、`BillingSnapshot` 和 `BillingRequestInput`，并接入渠道选择、上游响应解析及消费日志。
 - B-2c：接入带权威性标记的 tokenizer 与上下文上限来源，完成单次压缩编排、正文和 DTO 原子提交、逐候选终检与失败关闭。
 
 ### 阶段 C：托管共识
