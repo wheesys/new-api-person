@@ -165,6 +165,7 @@ type RelayInfo struct {
 	FinalRequestBodyDigest         string
 	FinalRequestBodySize           int64
 	FinalRequestRequestedMaxOutput *uint
+	authoritativeTextTargetSeal    *authoritativeTextTargetSeal
 
 	PriceData hosttypes.PriceData
 
@@ -710,6 +711,7 @@ func (info *RelayInfo) ResetPreparedRelayRequest() {
 	info.FinalRequestBodySize = 0
 	info.FinalRequestRequestedMaxOutput = nil
 	info.UpstreamRequestBodySize = 0
+	info.authoritativeTextTargetSeal = nil
 	info.RequestConversionChain = nil
 	info.InitRequestConversionChain()
 }

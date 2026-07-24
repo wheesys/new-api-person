@@ -42,6 +42,7 @@ type PreparedTextRelayAttempt struct {
 	responseMode        preparedTextResponseMode
 	detectEventStream   bool
 	requestErrorPrefix  string
+	authoritativeTarget *channel.TextRelayTarget
 	restoreProtocolMode bool
 	savedRelayMode      int
 	savedRequestURLPath string
@@ -52,6 +53,99 @@ type PreparedTextRelayAttempt struct {
 	closeErr            error
 }
 
+type textAttemptPreparationPolicy struct {
+	authoritative bool
+}
+
+var (
+	compatibleTextAttemptPolicy    = textAttemptPreparationPolicy{}
+	authoritativeTextAttemptPolicy = textAttemptPreparationPolicy{authoritative: true}
+)
+
+func textRelayTargetInput(info *relaycommon.RelayInfo) (channel.TextRelayTargetInput, error) {
+	requestPath, err := relaycommon.AuthoritativeTextRequestPath(info.RequestURLPath)
+	if err != nil {
+		return channel.TextRelayTargetInput{}, err
+	}
+	return channel.TextRelayTargetInput{
+		ChannelType:                  info.ChannelType,
+		OriginModel:                  info.OriginModelName,
+		UpstreamModel:                info.UpstreamModelName,
+		SourceProtocol:               info.RelayFormat,
+		FinalProtocol:                info.GetFinalRequestRelayFormat(),
+		RelayMode:                    info.RelayMode,
+		RequestURLPath:               requestPath,
+		GeminiThinkingAdapterEnabled: model_setting.GetGeminiSettings().ThinkingAdapterEnabled,
+		PreserveThinkingSuffix:       model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName),
+	}, nil
+}
+
+func validateAuthoritativeTextPreparation(info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) *types.NewAPIError {
+	if !policy.authoritative {
+		return nil
+	}
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		return types.NewErrorWithStatusCode(fmt.Errorf("pass-through requests cannot produce authoritative text evidence"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	authoritativeAdaptor, ok := adaptor.(channel.AuthoritativeTextRelayAdaptor)
+	if !ok {
+		return types.NewErrorWithStatusCode(fmt.Errorf("adaptor does not declare authoritative text preparation capabilities"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	input, err := textRelayTargetInput(info)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	capabilities := authoritativeAdaptor.TextRelayPreparationCapabilities(input)
+	if !capabilities.OfflineConversion || !capabilities.PureTargetResolution {
+		return types.NewErrorWithStatusCode(fmt.Errorf("adaptor does not support authoritative offline conversion and pure target resolution"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	return nil
+}
+
+func resolveAuthoritativeTextTarget(info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*channel.TextRelayTarget, *types.NewAPIError) {
+	if !policy.authoritative {
+		return nil, nil
+	}
+	authoritativeAdaptor, ok := adaptor.(channel.AuthoritativeTextRelayAdaptor)
+	if !ok {
+		return nil, types.NewErrorWithStatusCode(fmt.Errorf("adaptor does not declare authoritative text preparation capabilities"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	input, inputErr := textRelayTargetInput(info)
+	if inputErr != nil {
+		return nil, types.NewError(inputErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	target, err := authoritativeAdaptor.ResolveTextRelayTarget(input)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if target.Model == "" || target.Protocol == "" {
+		return nil, types.NewError(fmt.Errorf("resolved authoritative text target is incomplete"), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if target.Protocol != input.FinalProtocol || target.RelayMode != input.RelayMode || target.RequestURLPath != input.RequestURLPath {
+		return nil, types.NewError(fmt.Errorf("resolved authoritative text target changed protocol, mode, or path"), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	info.UpstreamModelName = target.Model
+	return &target, nil
+}
+
+func sealAuthoritativeTextTarget(info *relaycommon.RelayInfo, request *relaycommon.PreparedRelayRequest, target *channel.TextRelayTarget) *types.NewAPIError {
+	if target == nil {
+		return nil
+	}
+	err := info.SealAuthoritativeTextTarget(relaycommon.AuthoritativeTextTarget{
+		Model:          target.Model,
+		Protocol:       target.Protocol,
+		RelayMode:      target.RelayMode,
+		RequestURLPath: target.RequestURLPath,
+	}, request)
+	if err == nil {
+		return nil
+	}
+	_ = request.Close()
+	info.ResetPreparedRelayRequest()
+	return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+}
+
 // PreparedRequest returns the immutable upstream request snapshot that will be
 // consumed by ExecutePreparedTextRelayAttempt.
 func (attempt *PreparedTextRelayAttempt) PreparedRequest() *relaycommon.PreparedRelayRequest {
@@ -59,6 +153,14 @@ func (attempt *PreparedTextRelayAttempt) PreparedRequest() *relaycommon.Prepared
 		return nil
 	}
 	return attempt.preparedRequest
+}
+
+// AuthoritativeTarget returns a copy so callers cannot mutate the target seal.
+func (attempt *PreparedTextRelayAttempt) AuthoritativeTarget() (channel.TextRelayTarget, bool) {
+	if attempt == nil || attempt.authoritativeTarget == nil {
+		return channel.TextRelayTarget{}, false
+	}
+	return *attempt.authoritativeTarget, true
 }
 
 // Close is idempotent. For Chat-to-Responses it also restores the caller's
@@ -71,6 +173,9 @@ func (attempt *PreparedTextRelayAttempt) Close() error {
 		attempt.lifecycleMutex.Lock()
 		defer attempt.lifecycleMutex.Unlock()
 		attempt.closed = true
+		if attempt.authoritativeTarget != nil && attempt.info != nil {
+			attempt.info.ClearAuthoritativeTextTarget()
+		}
 		if attempt.preparedRequest != nil {
 			attempt.closeErr = attempt.preparedRequest.Close()
 		}
@@ -85,6 +190,16 @@ func (attempt *PreparedTextRelayAttempt) Close() error {
 // PrepareTextRelayAttempt prepares one supported text attempt without
 // performing network I/O or response handling.
 func PrepareTextRelayAttempt(c *gin.Context, info *relaycommon.RelayInfo) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareTextRelayAttempt(c, info, compatibleTextAttemptPolicy)
+}
+
+// PrepareAuthoritativeTextRelayAttempt requires explicit adaptor opt-in and
+// seals the final model, protocol, mode, path, and request snapshot.
+func PrepareAuthoritativeTextRelayAttempt(c *gin.Context, info *relaycommon.RelayInfo) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareTextRelayAttempt(c, info, authoritativeTextAttemptPolicy)
+}
+
+func prepareTextRelayAttempt(c *gin.Context, info *relaycommon.RelayInfo, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	if info == nil {
 		return nil, types.NewErrorWithStatusCode(fmt.Errorf("relay info is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -103,19 +218,23 @@ func PrepareTextRelayAttempt(c *gin.Context, info *relaycommon.RelayInfo) (*Prep
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		return prepareOpenAITextAttemptWithAdaptor(c, info, nil)
+		return prepareOpenAITextAttemptWithAdaptorPolicy(c, info, nil, policy)
 	case types.RelayFormatOpenAIResponses, types.RelayFormatOpenAIResponsesCompaction:
-		return prepareResponsesTextAttemptWithAdaptor(c, info, nil)
+		return prepareResponsesTextAttemptWithAdaptorPolicy(c, info, nil, policy)
 	case types.RelayFormatClaude:
-		return prepareClaudeTextAttemptWithAdaptor(c, info, nil)
+		return prepareClaudeTextAttemptWithAdaptorPolicy(c, info, nil, policy)
 	case types.RelayFormatGemini:
-		return prepareGeminiTextAttemptWithAdaptor(c, info, nil)
+		return prepareGeminiTextAttemptWithAdaptorPolicy(c, info, nil, policy)
 	default:
 		panic("validated text relay format was not dispatched")
 	}
 }
 
 func prepareOpenAITextAttemptWithAdaptor(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareOpenAITextAttemptWithAdaptorPolicy(c, info, adaptor, compatibleTextAttemptPolicy)
+}
+
+func prepareOpenAITextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	textRequest, ok := info.Request.(*dto.GeneralOpenAIRequest)
 	if !ok {
 		return nil, types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected dto.GeneralOpenAIRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -152,6 +271,9 @@ func prepareOpenAITextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		}
 	}
 	adaptor.Init(info)
+	if newAPIError := validateAuthoritativeTextPreparation(info, adaptor, policy); newAPIError != nil {
+		return nil, newAPIError
+	}
 
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
@@ -159,7 +281,7 @@ func prepareOpenAITextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
 		applySystemPromptIfNeeded(c, info, request)
-		return prepareChatCompletionsViaResponsesAttempt(c, info, adaptor, request)
+		return prepareChatCompletionsViaResponsesAttemptPolicy(c, info, adaptor, request, policy)
 	}
 
 	var preparedRequest *relaycommon.PreparedRelayRequest
@@ -183,6 +305,10 @@ func prepareOpenAITextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 			return nil, types.NewError(convertErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+		authoritativeTarget, targetErr := resolveAuthoritativeTextTarget(info, adaptor, policy)
+		if targetErr != nil {
+			return nil, targetErr
+		}
 
 		if convertedOpenAIRequest, isOpenAIRequest := convertedRequest.(*dto.GeneralOpenAIRequest); isOpenAIRequest {
 			applySystemPromptIfNeeded(c, info, convertedOpenAIRequest)
@@ -209,6 +335,17 @@ func prepareOpenAITextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
+		if targetErr = sealAuthoritativeTextTarget(info, preparedRequest, authoritativeTarget); targetErr != nil {
+			return nil, targetErr
+		}
+		return &PreparedTextRelayAttempt{
+			info:                info,
+			adaptor:             adaptor,
+			preparedRequest:     preparedRequest,
+			responseMode:        preparedTextResponseModeAdaptor,
+			detectEventStream:   true,
+			authoritativeTarget: authoritativeTarget,
+		}, nil
 	}
 
 	return &PreparedTextRelayAttempt{
@@ -228,8 +365,12 @@ type convertedTextAttemptOptions struct {
 	requestErrorPrefix   string
 }
 
-func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, convertedRequest any, options convertedTextAttemptOptions) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, convertedRequest any, options convertedTextAttemptOptions, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+	authoritativeTarget, newAPIError := resolveAuthoritativeTextTarget(info, adaptor, policy)
+	if newAPIError != nil {
+		return nil, newAPIError
+	}
 	jsonData, err := common.Marshal(convertedRequest)
 	if err != nil {
 		return nil, types.NewError(err, options.marshalErrorCode, types.ErrOptionWithSkipRetry())
@@ -252,13 +393,17 @@ func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	if newAPIError = sealAuthoritativeTextTarget(info, preparedRequest, authoritativeTarget); newAPIError != nil {
+		return nil, newAPIError
+	}
 	return &PreparedTextRelayAttempt{
-		info:               info,
-		adaptor:            adaptor,
-		preparedRequest:    preparedRequest,
-		responseMode:       preparedTextResponseModeAdaptor,
-		detectEventStream:  options.detectEventStream,
-		requestErrorPrefix: options.requestErrorPrefix,
+		info:                info,
+		adaptor:             adaptor,
+		preparedRequest:     preparedRequest,
+		responseMode:        preparedTextResponseModeAdaptor,
+		detectEventStream:   options.detectEventStream,
+		requestErrorPrefix:  options.requestErrorPrefix,
+		authoritativeTarget: authoritativeTarget,
 	}, nil
 }
 
@@ -274,6 +419,10 @@ func resolveTextAttemptAdaptor(info *relaycommon.RelayInfo, adaptor channel.Adap
 }
 
 func prepareResponsesTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareResponsesTextAttemptWithAdaptorPolicy(c, info, adaptor, compatibleTextAttemptPolicy)
+}
+
+func prepareResponsesTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
 		!common.IsResponsesCompactAPIType(info.ApiType) {
 		return nil, types.NewErrorWithStatusCode(
@@ -321,6 +470,9 @@ func prepareResponsesTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Re
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
+	if newAPIError = validateAuthoritativeTextPreparation(info, adaptor, policy); newAPIError != nil {
+		return nil, newAPIError
+	}
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, storageErr := common.GetBodyStorage(c)
 		if storageErr != nil {
@@ -347,10 +499,14 @@ func prepareResponsesTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Re
 		marshalErrorCode:     types.ErrorCodeConvertRequestFailed,
 		logMessage:           "requestBody: %s",
 		detectEventStream:    false,
-	})
+	}, policy)
 }
 
 func prepareClaudeTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareClaudeTextAttemptWithAdaptorPolicy(c, info, adaptor, compatibleTextAttemptPolicy)
+}
+
+func prepareClaudeTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	claudeRequest, ok := info.Request.(*dto.ClaudeRequest)
 	if !ok {
 		return nil, types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.ClaudeRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -365,6 +521,9 @@ func prepareClaudeTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 
 	adaptor, newAPIError := resolveTextAttemptAdaptor(info, adaptor)
 	if newAPIError != nil {
+		return nil, newAPIError
+	}
+	if newAPIError = validateAuthoritativeTextPreparation(info, adaptor, policy); newAPIError != nil {
 		return nil, newAPIError
 	}
 	if request.MaxTokens == nil {
@@ -446,7 +605,7 @@ func prepareClaudeTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		if convertErr != nil {
 			return nil, types.NewError(convertErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		return prepareChatCompletionsViaResponsesAttempt(c, info, adaptor, openAIRequest)
+		return prepareChatCompletionsViaResponsesAttemptPolicy(c, info, adaptor, openAIRequest, policy)
 	}
 
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
@@ -476,7 +635,7 @@ func prepareClaudeTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		marshalErrorCode:     types.ErrorCodeConvertRequestFailed,
 		logMessage:           "requestBody: %s",
 		detectEventStream:    true,
-	})
+	}, policy)
 }
 
 func isNoThinkingGeminiRequest(request *dto.GeminiChatRequest) bool {
@@ -487,6 +646,10 @@ func isNoThinkingGeminiRequest(request *dto.GeminiChatRequest) bool {
 }
 
 func prepareGeminiTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareGeminiTextAttemptWithAdaptorPolicy(c, info, adaptor, compatibleTextAttemptPolicy)
+}
+
+func prepareGeminiTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	geminiRequest, ok := info.Request.(*dto.GeminiChatRequest)
 	if !ok {
 		return nil, types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.GeminiChatRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -514,6 +677,9 @@ func prepareGeminiTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 
 	adaptor, newAPIError := resolveTextAttemptAdaptor(info, adaptor)
 	if newAPIError != nil {
+		return nil, newAPIError
+	}
+	if newAPIError = validateAuthoritativeTextPreparation(info, adaptor, policy); newAPIError != nil {
 		return nil, newAPIError
 	}
 	if info.ChannelSetting.SystemPrompt != "" {
@@ -579,7 +745,7 @@ func prepareGeminiTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Relay
 		logMessage:           "Gemini request body: %s",
 		detectEventStream:    true,
 		requestErrorPrefix:   "Do gemini request failed: ",
-	})
+	}, policy)
 }
 
 // ExecutePreparedTextRelayAttempt sends the exact snapshot created during

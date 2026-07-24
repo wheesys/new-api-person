@@ -80,6 +80,10 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 }
 
 func prepareChatCompletionsViaResponsesAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	return prepareChatCompletionsViaResponsesAttemptPolicy(c, info, adaptor, request, compatibleTextAttemptPolicy)
+}
+
+func prepareChatCompletionsViaResponsesAttemptPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	chatJSON, err := common.Marshal(request)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -129,6 +133,10 @@ func prepareChatCompletionsViaResponsesAttempt(c *gin.Context, info *relaycommon
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+	authoritativeTarget, newAPIError := resolveAuthoritativeTextTarget(info, adaptor, policy)
+	if newAPIError != nil {
+		return nil, newAPIError
+	}
 
 	jsonData, err := common.Marshal(convertedRequest)
 	if err != nil {
@@ -144,6 +152,9 @@ func prepareChatCompletionsViaResponsesAttempt(c *gin.Context, info *relaycommon
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	if newAPIError = sealAuthoritativeTextTarget(info, preparedRequest, authoritativeTarget); newAPIError != nil {
+		return nil, newAPIError
+	}
 	protocolModeCommitted = true
 	return &PreparedTextRelayAttempt{
 		info:                info,
@@ -153,6 +164,7 @@ func prepareChatCompletionsViaResponsesAttempt(c *gin.Context, info *relaycommon
 		restoreProtocolMode: true,
 		savedRelayMode:      savedRelayMode,
 		savedRequestURLPath: savedRequestURLPath,
+		authoritativeTarget: authoritativeTarget,
 	}, nil
 }
 

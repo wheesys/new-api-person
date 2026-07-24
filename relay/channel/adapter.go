@@ -32,6 +32,40 @@ type Adaptor interface {
 	ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error)
 }
 
+// TextRelayTargetInput contains only non-credential values needed to resolve
+// the final upstream target for an already-converted text request.
+type TextRelayTargetInput struct {
+	ChannelType                  int
+	OriginModel                  string
+	UpstreamModel                string
+	SourceProtocol               types.RelayFormat
+	FinalProtocol                types.RelayFormat
+	RelayMode                    int
+	RequestURLPath               string
+	GeminiThinkingAdapterEnabled bool
+	PreserveThinkingSuffix       bool
+}
+
+type TextRelayTarget struct {
+	Model          string
+	Protocol       types.RelayFormat
+	RelayMode      int
+	RequestURLPath string
+}
+
+type TextRelayPreparationCapabilities struct {
+	OfflineConversion    bool
+	PureTargetResolution bool
+}
+
+// AuthoritativeTextRelayAdaptor is an explicit opt-in for offline conversion
+// and credential-free target resolution. Adaptors not implementing it are
+// rejected by the authoritative preparation entry point.
+type AuthoritativeTextRelayAdaptor interface {
+	TextRelayPreparationCapabilities(input TextRelayTargetInput) TextRelayPreparationCapabilities
+	ResolveTextRelayTarget(input TextRelayTargetInput) (TextRelayTarget, error)
+}
+
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 

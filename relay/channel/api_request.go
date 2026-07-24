@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +42,64 @@ func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
 	if info.UpstreamRequestBodySize > 0 && req.ContentLength <= 0 {
 		req.ContentLength = info.UpstreamRequestBodySize
 	}
+}
+
+func validateAuthoritativeTextTarget(info *common.RelayInfo, stage string) error {
+	if err := info.ValidateAuthoritativeTextTarget(); err != nil {
+		return fmt.Errorf("authoritative text target validation failed %s: %w", stage, err)
+	}
+	return nil
+}
+
+func maskRequestURL(requestURL string) string {
+	queryIndex := strings.IndexByte(requestURL, '?')
+	if queryIndex >= 0 {
+		query := requestURL[queryIndex+1:]
+		if fragmentIndex := strings.IndexByte(query, '#'); fragmentIndex >= 0 {
+			query = query[:fragmentIndex]
+		}
+		values, err := url.ParseQuery(query)
+		if err != nil {
+			requestURL = requestURL[:queryIndex] + "?***"
+		} else {
+			keys := make([]string, 0, len(values))
+			for key := range values {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			maskedQuery := make([]string, 0, len(keys))
+			for _, key := range keys {
+				maskedQuery = append(maskedQuery, url.QueryEscape(key)+"=***")
+			}
+			requestURL = requestURL[:queryIndex]
+			if len(maskedQuery) > 0 {
+				requestURL += "?" + strings.Join(maskedQuery, "&")
+			}
+		}
+	} else if fragmentIndex := strings.IndexByte(requestURL, '#'); fragmentIndex >= 0 {
+		requestURL = requestURL[:fragmentIndex]
+	}
+	switch {
+	case strings.HasPrefix(requestURL, "wss://"):
+		masked := common2.MaskSensitiveInfo("https://" + strings.TrimPrefix(requestURL, "wss://"))
+		return "wss://" + strings.TrimPrefix(masked, "https://")
+	case strings.HasPrefix(requestURL, "ws://"):
+		masked := common2.MaskSensitiveInfo("http://" + strings.TrimPrefix(requestURL, "ws://"))
+		return "ws://" + strings.TrimPrefix(masked, "http://")
+	default:
+		return common2.MaskSensitiveInfo(requestURL)
+	}
+}
+
+func maskRequestError(err error, requestURL string) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if requestURL != "" {
+		message = strings.ReplaceAll(message, requestURL, maskRequestURL(requestURL))
+	}
+	return errors.New(common2.MaskSensitiveInfo(message))
 }
 
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
@@ -332,20 +392,29 @@ func removeGatewayContextHeaders(header http.Header) {
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	if err := validateAuthoritativeTextTarget(info, "before request URL resolution"); err != nil {
+		return nil, err
+	}
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
-		return nil, fmt.Errorf("get request url failed: %w", err)
+		return nil, fmt.Errorf("get request url failed: %w", maskRequestError(err, ""))
 	}
-	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
+	if err := validateAuthoritativeTextTarget(info, "after request URL resolution"); err != nil {
+		return nil, err
+	}
+	logger.LogDebug(c, "fullRequestURL: %s", maskRequestURL(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
+		return nil, fmt.Errorf("new request failed: %w", maskRequestError(err, fullRequestURL))
 	}
 	applyUpstreamContentLength(req, info)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+	if err := validateAuthoritativeTextTarget(info, "after request header setup"); err != nil {
+		return nil, err
 	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
@@ -354,6 +423,9 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if err := validateAuthoritativeTextTarget(info, "before network request"); err != nil {
+		return nil, err
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -362,14 +434,20 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 }
 
 func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	if err := validateAuthoritativeTextTarget(info, "before request URL resolution"); err != nil {
+		return nil, err
+	}
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
-		return nil, fmt.Errorf("get request url failed: %w", err)
+		return nil, fmt.Errorf("get request url failed: %w", maskRequestError(err, ""))
 	}
-	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
+	if err := validateAuthoritativeTextTarget(info, "after request URL resolution"); err != nil {
+		return nil, err
+	}
+	logger.LogDebug(c, "fullRequestURL: %s", maskRequestURL(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
+		return nil, fmt.Errorf("new request failed: %w", maskRequestError(err, fullRequestURL))
 	}
 	applyUpstreamContentLength(req, info)
 	// set form data
@@ -379,6 +457,9 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	if err := validateAuthoritativeTextTarget(info, "after request header setup"); err != nil {
+		return nil, err
+	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -386,6 +467,9 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if err := validateAuthoritativeTextTarget(info, "before network request"); err != nil {
+		return nil, err
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -394,14 +478,23 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 }
 
 func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*websocket.Conn, error) {
+	if err := validateAuthoritativeTextTarget(info, "before request URL resolution"); err != nil {
+		return nil, err
+	}
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
-		return nil, fmt.Errorf("get request url failed: %w", err)
+		return nil, fmt.Errorf("get request url failed: %w", maskRequestError(err, ""))
+	}
+	if err := validateAuthoritativeTextTarget(info, "after request URL resolution"); err != nil {
+		return nil, err
 	}
 	targetHeader := http.Header{}
 	err = a.SetupRequestHeader(c, &targetHeader, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
+	}
+	if err := validateAuthoritativeTextTarget(info, "after request header setup"); err != nil {
+		return nil, err
 	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
@@ -414,9 +507,12 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	removeGatewayContextHeaders(targetHeader)
+	if err := validateAuthoritativeTextTarget(info, "before network request"); err != nil {
+		return nil, err
+	}
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
-		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+		return nil, fmt.Errorf("dial failed to %s: %w", maskRequestURL(fullRequestURL), maskRequestError(err, fullRequestURL))
 	}
 	// send request body
 	//all, err := io.ReadAll(requestBody)
@@ -505,7 +601,7 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
-		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+		return nil, fmt.Errorf("new proxy http client failed: %w", maskRequestError(err, info.ChannelSetting.Proxy))
 	}
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
@@ -540,8 +636,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.LogError(c, "do request failed: "+err.Error())
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		requestURL := ""
+		if req.URL != nil {
+			requestURL = req.URL.String()
+		}
+		maskedErr := maskRequestError(err, requestURL)
+		logger.LogError(c, "do request failed: "+maskedErr.Error())
+		return nil, types.NewError(maskedErr, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
@@ -570,11 +671,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
-		return nil, err
+		return nil, maskRequestError(err, "")
 	}
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
+		return nil, fmt.Errorf("new request failed: %w", maskRequestError(err, fullRequestURL))
 	}
 	applyUpstreamContentLength(req, info)
 	req.GetBody = func() (io.ReadCloser, error) {

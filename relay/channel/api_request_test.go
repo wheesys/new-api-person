@@ -1,14 +1,52 @@
 package channel
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMaskRequestErrorRemovesHTTPQuerySecrets(t *testing.T) {
+	const (
+		apiKey      = "http-query-api-key"
+		accessToken = "http-query-access-token"
+		fragment    = "http-fragment-secret"
+	)
+	requestURL := "https://api.example.com/v1/models?access_token=" + accessToken + "&key=" + apiKey + "#" + fragment
+	requestErr := errors.New("Post \"" + requestURL + "\": dial tcp failed")
+
+	maskedErr := maskRequestError(requestErr, requestURL)
+	require.NotContains(t, maskedErr.Error(), apiKey)
+	require.NotContains(t, maskedErr.Error(), accessToken)
+	require.NotContains(t, maskedErr.Error(), fragment)
+	require.Contains(t, maskedErr.Error(), "access_token=***")
+	require.Contains(t, maskedErr.Error(), "key=***")
+}
+
+func TestDoRequestReturnsMaskedHTTPNetworkError(t *testing.T) {
+	const secret = "http-network-query-secret"
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	requestURL := server.URL + "/v1/models?key=" + secret
+	server.Close()
+
+	request, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	_, err = doRequest(context, request, info)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), secret)
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)

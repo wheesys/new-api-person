@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	appcommon "github.com/QuantumNous/new-api/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,6 +104,55 @@ func TestPreparePassThroughRelayRequestDoesNotCloseSharedStorage(t *testing.T) {
 	retryRead, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.Equal(t, body, retryRead)
+}
+
+func TestAuthoritativeTextTargetRequiresBodyModelExceptGemini(t *testing.T) {
+	openAIRequest, err := PrepareJSONRelayRequest(
+		[]byte(`{"messages":[]}`),
+		PreparedRelayRequestMetadata{Model: "gpt-5", Protocol: types.RelayFormatOpenAI},
+	)
+	require.NoError(t, err)
+	defer openAIRequest.Close()
+	assert.False(t, openAIRequest.ModelFromBody())
+
+	info := &RelayInfo{
+		OriginModelName: "gpt-5",
+		RelayMode:       relayconstant.RelayModeChatCompletions,
+		RequestURLPath:  "/v1/chat/completions",
+		RelayFormat:     types.RelayFormatOpenAI,
+		ChannelMeta:     &ChannelMeta{UpstreamModelName: "gpt-5"},
+	}
+	info.InitRequestConversionChain()
+	info.RecordPreparedRelayRequest(openAIRequest)
+	err = info.SealAuthoritativeTextTarget(AuthoritativeTextTarget{
+		Model:          "gpt-5",
+		Protocol:       types.RelayFormatOpenAI,
+		RelayMode:      relayconstant.RelayModeChatCompletions,
+		RequestURLPath: "/v1/chat/completions",
+	}, openAIRequest)
+	require.ErrorContains(t, err, "does not contain")
+
+	geminiRequest, err := PrepareJSONRelayRequest(
+		[]byte(`{"contents":[]}`),
+		PreparedRelayRequestMetadata{Model: "gemini-2.5-pro", Protocol: types.RelayFormatGemini},
+	)
+	require.NoError(t, err)
+	defer geminiRequest.Close()
+	assert.False(t, geminiRequest.ModelFromBody())
+
+	info.ResetPreparedRelayRequest()
+	info.RelayMode = relayconstant.RelayModeGemini
+	info.RequestURLPath = "/v1beta/models/gemini-2.5-pro:generateContent"
+	info.RelayFormat = types.RelayFormatGemini
+	info.UpstreamModelName = "gemini-2.5-pro"
+	info.InitRequestConversionChain()
+	info.RecordPreparedRelayRequest(geminiRequest)
+	require.NoError(t, info.SealAuthoritativeTextTarget(AuthoritativeTextTarget{
+		Model:          "gemini-2.5-pro",
+		Protocol:       types.RelayFormatGemini,
+		RelayMode:      relayconstant.RelayModeGemini,
+		RequestURLPath: "/v1beta/models/gemini-2.5-pro:generateContent",
+	}, geminiRequest))
 }
 
 func TestRelayInfoRecordsPreparedMetadataAndConversionChain(t *testing.T) {

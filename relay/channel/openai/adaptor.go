@@ -40,6 +40,37 @@ type Adaptor struct {
 	ResponseFormat string
 }
 
+func (a *Adaptor) TextRelayPreparationCapabilities(input channel.TextRelayTargetInput) channel.TextRelayPreparationCapabilities {
+	supported := input.ChannelType == constant.ChannelTypeOpenAI && isAuthoritativeTextProtocol(input.SourceProtocol)
+	return channel.TextRelayPreparationCapabilities{
+		OfflineConversion:    supported,
+		PureTargetResolution: supported,
+	}
+}
+
+func (a *Adaptor) ResolveTextRelayTarget(input channel.TextRelayTargetInput) (channel.TextRelayTarget, error) {
+	capabilities := a.TextRelayPreparationCapabilities(input)
+	if !capabilities.OfflineConversion || !capabilities.PureTargetResolution {
+		return channel.TextRelayTarget{}, fmt.Errorf("authoritative text target is unsupported for channel type %d and protocol %s", input.ChannelType, input.SourceProtocol)
+	}
+
+	return channel.TextRelayTarget{
+		Model:          input.UpstreamModel,
+		Protocol:       input.FinalProtocol,
+		RelayMode:      input.RelayMode,
+		RequestURLPath: input.RequestURLPath,
+	}, nil
+}
+
+func isAuthoritativeTextProtocol(protocol types.RelayFormat) bool {
+	switch protocol {
+	case types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses, types.RelayFormatClaude, types.RelayFormatGemini:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 	if err != nil {
@@ -614,6 +645,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			request.Reasoning.Effort = effort
 		}
 		request.Model = originModel
+		if info != nil {
+			info.UpstreamModelName = originModel
+		}
 	}
 	if info != nil && request.Reasoning != nil && request.Reasoning.Effort != "" {
 		info.ReasoningEffort = request.Reasoning.Effort

@@ -26,6 +26,7 @@ type PreparedRelayRequest struct {
 	bodyDigest         string
 	size               int64
 	requestedMaxOutput *uint
+	modelFromBody      bool
 	storage            appcommon.BodyStorage
 	ownsStorage        bool
 	closeOnce          sync.Once
@@ -89,6 +90,7 @@ func newPreparedRelayRequest(storage appcommon.BodyStorage, metadata PreparedRel
 		return nil, fmt.Errorf("digest prepared request body: %w", err)
 	}
 	model, requestedMaxOutput, metadataReliable := extractPreparedRequestMetadata(storage, metadata.Protocol)
+	modelFromBody := metadataReliable && model != ""
 	if metadataReliable {
 		if model != "" {
 			metadata.Model = model
@@ -101,6 +103,7 @@ func newPreparedRelayRequest(storage appcommon.BodyStorage, metadata PreparedRel
 		bodyDigest:         bodyDigest,
 		size:               storage.Size(),
 		requestedMaxOutput: copyOptionalUint(metadata.RequestedMaxOutput),
+		modelFromBody:      modelFromBody,
 		storage:            storage,
 		ownsStorage:        ownsStorage,
 	}, nil
@@ -139,6 +142,10 @@ func (request *PreparedRelayRequest) RequestedMaxOutput() *uint {
 		return nil
 	}
 	return copyOptionalUint(request.requestedMaxOutput)
+}
+
+func (request *PreparedRelayRequest) ModelFromBody() bool {
+	return request != nil && request.modelFromBody
 }
 
 func (request *PreparedRelayRequest) Body() ([]byte, error) {

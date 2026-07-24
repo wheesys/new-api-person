@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -21,6 +22,48 @@ import (
 )
 
 type Adaptor struct {
+}
+
+func (a *Adaptor) TextRelayPreparationCapabilities(input channel.TextRelayTargetInput) channel.TextRelayPreparationCapabilities {
+	supported := input.ChannelType == appconstant.ChannelTypeGemini && input.SourceProtocol == types.RelayFormatGemini
+	return channel.TextRelayPreparationCapabilities{
+		OfflineConversion:    supported,
+		PureTargetResolution: supported,
+	}
+}
+
+func (a *Adaptor) ResolveTextRelayTarget(input channel.TextRelayTargetInput) (channel.TextRelayTarget, error) {
+	capabilities := a.TextRelayPreparationCapabilities(input)
+	if !capabilities.OfflineConversion || !capabilities.PureTargetResolution {
+		return channel.TextRelayTarget{}, fmt.Errorf("authoritative text target is unsupported for channel type %d and protocol %s", input.ChannelType, input.SourceProtocol)
+	}
+
+	modelName := normalizeGeminiTargetModel(input.UpstreamModel, input.GeminiThinkingAdapterEnabled, input.PreserveThinkingSuffix)
+	return channel.TextRelayTarget{
+		Model:          modelName,
+		Protocol:       input.FinalProtocol,
+		RelayMode:      input.RelayMode,
+		RequestURLPath: input.RequestURLPath,
+	}, nil
+}
+
+func normalizeGeminiTargetModel(modelName string, thinkingAdapterEnabled, preserveThinkingSuffix bool) string {
+	if !thinkingAdapterEnabled || preserveThinkingSuffix {
+		return modelName
+	}
+	if strings.Contains(modelName, "-thinking-") {
+		return strings.SplitN(modelName, "-thinking-", 2)[0]
+	}
+	if strings.HasSuffix(modelName, "-thinking") {
+		return strings.TrimSuffix(modelName, "-thinking")
+	}
+	if strings.HasSuffix(modelName, "-nothinking") {
+		return strings.TrimSuffix(modelName, "-nothinking")
+	}
+	if baseModel, level, ok := reasoning.TrimEffortSuffix(modelName); ok && level != "" {
+		return baseModel
+	}
+	return modelName
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
@@ -131,46 +174,33 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-
-	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled &&
-		!model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
-		// 新增逻辑：处理 -thinking-<budget> 格式
-		if strings.Contains(info.UpstreamModelName, "-thinking-") {
-			parts := strings.Split(info.UpstreamModelName, "-thinking-")
-			info.UpstreamModelName = parts[0]
-		} else if strings.HasSuffix(info.UpstreamModelName, "-thinking") { // 旧的适配
-			info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-thinking")
-		} else if strings.HasSuffix(info.UpstreamModelName, "-nothinking") {
-			info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-nothinking")
-		} else if baseModel, level, ok := reasoning.TrimEffortSuffix(info.UpstreamModelName); ok && level != "" {
-			info.UpstreamModelName = baseModel
-		}
+	modelName := normalizeGeminiTargetModel(
+		info.UpstreamModelName,
+		model_setting.GetGeminiSettings().ThinkingAdapterEnabled,
+		model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName),
+	)
+	info.UpstreamModelName = modelName
+	version := model_setting.GetGeminiVersionSetting(modelName)
+	if strings.HasPrefix(modelName, "imagen") {
+		return fmt.Sprintf("%s/%s/models/%s:predict", info.ChannelBaseUrl, version, modelName), nil
 	}
-
-	version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
-
-	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return fmt.Sprintf("%s/%s/models/%s:predict", info.ChannelBaseUrl, version, info.UpstreamModelName), nil
-	}
-
-	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+	if strings.HasPrefix(modelName, "text-embedding") ||
+		strings.HasPrefix(modelName, "embedding") ||
+		strings.HasPrefix(modelName, "gemini-embedding") {
 		action := "embedContent"
 		if info.IsGeminiBatchEmbedding {
 			action = "batchEmbedContents"
 		}
-		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
+		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, modelName, action), nil
 	}
-
 	action := "generateContent"
 	if info.IsStream {
 		action = "streamGenerateContent?alt=sse"
-		if info.RelayMode == constant.RelayModeGemini {
-			info.DisablePing = true
-		}
 	}
-	return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
+	if info.IsStream && info.RelayMode == constant.RelayModeGemini {
+		info.DisablePing = true
+	}
+	return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, modelName, action), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
