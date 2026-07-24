@@ -74,7 +74,8 @@
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
 - [x] 完成 `ContextConsensus` 阶段 B-2c2a：抽取 OpenAI 与 Chat-to-Responses 无网络最终请求预准备边界，使用同一不可变正文快照执行发送，并增加一次性执行和 mode/path 生命周期保护，见 `doc/auto-smart-routing-context-consensus-stage-b2c2a-implementation-2026-07-24.md`。
-- [ ] 实现 `ContextConsensus` 阶段 B-2c2b：将无网络预准备扩展到原生 Responses、Claude 和 Gemini，增加 adaptor 纯目标解析与离线转换显式能力门禁，确保最终模型、协议和正文均可作为权威证据。
+- [x] 完成 `ContextConsensus` 阶段 B-2c2b1：将无网络预准备扩展到原生 Responses、Responses Compact、Claude 和 Gemini，保持各协议原有转换顺序并使用同一不可变正文快照发送，见 `doc/auto-smart-routing-context-consensus-stage-b2c2b1-implementation-2026-07-24.md`。
+- [ ] 实现 `ContextConsensus` 阶段 B-2c2b2：增加 adaptor 纯目标解析与离线转换显式能力门禁，确保最终模型、协议和正文可作为权威证据，未声明能力的 adaptor 在权威终检时失败关闭。
 - [ ] 实现 `ContextConsensus` 阶段 B-2c2c：冻结完整候选集合，接入生产权威 tokenizer/上下文上限适配器，并完成单次压缩编排、请求正文与 DTO 原子提交、逐候选终检及主预扣前失败关闭。
 - [ ] 修复全包 `go test -race` 已暴露的既有竞态：流扫描结束信号、Gemini 测试并发修改 Gin 全局模式、任务轮询日志时间状态及异步任务对象读取。
 - [ ] 审计并迁移仍使用非指针输出上限字段的旧渠道适配器（Baidu、Cloudflare、Cohere、Ollama、Xunfei 等），统一保留字段缺失与显式 `0` 的差异。

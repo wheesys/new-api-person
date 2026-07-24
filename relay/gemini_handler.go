@@ -7,29 +7,15 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert"
-	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 )
-
-func isNoThinkingRequest(req *dto.GeminiChatRequest) bool {
-	if req.GenerationConfig.ThinkingConfig != nil && req.GenerationConfig.ThinkingConfig.ThinkingBudget != nil {
-		configBudget := req.GenerationConfig.ThinkingConfig.ThinkingBudget
-		if configBudget != nil && *configBudget == 0 {
-			// 如果思考预算为 0，则认为是非思考请求
-			return true
-		}
-	}
-	return false
-}
 
 func trimModelThinking(modelName string) string {
 	// 去除模型名称中的 -nothinking 后缀
@@ -52,161 +38,17 @@ func trimModelThinking(modelName string) string {
 }
 
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
-	info.InitChannelMeta(c)
-	info.ResetPreparedRelayRequest()
-
-	geminiReq, ok := info.Request.(*dto.GeminiChatRequest)
-	if !ok {
-		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.GeminiChatRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	attempt, newAPIError := PrepareTextRelayAttempt(c, info)
+	if newAPIError != nil {
+		return newAPIError
 	}
+	defer attempt.Close()
 
-	request, err := common.DeepCopy(geminiReq)
-	if err != nil {
-		return types.NewError(fmt.Errorf("failed to copy request to GeminiChatRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	usage, newAPIError := ExecutePreparedTextRelayAttempt(c, info, attempt)
+	if newAPIError != nil {
+		return newAPIError
 	}
-
-	// model mapped 模型映射
-	err = helper.ModelMappedHelper(c, info, request)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
-	}
-
-	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
-		if isNoThinkingRequest(request) {
-			// check is thinking
-			if !strings.Contains(info.OriginModelName, "-nothinking") {
-				// try to get no thinking model price
-				noThinkingModelName := info.OriginModelName + "-nothinking"
-				containPrice := helper.HasModelBillingConfig(noThinkingModelName)
-				if containPrice {
-					info.OriginModelName = noThinkingModelName
-					info.UpstreamModelName = noThinkingModelName
-				}
-			}
-		}
-		if request.GenerationConfig.ThinkingConfig == nil {
-			relayconvert.ApplyGeminiThinkingConfig(request, info)
-		}
-	}
-
-	adaptor := GetAdaptor(info.ApiType)
-	if adaptor == nil {
-		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
-	}
-
-	adaptor.Init(info)
-
-	if info.ChannelSetting.SystemPrompt != "" {
-		if request.SystemInstructions == nil {
-			request.SystemInstructions = &dto.GeminiChatContent{
-				Parts: []dto.GeminiPart{
-					{Text: info.ChannelSetting.SystemPrompt},
-				},
-			}
-		} else if len(request.SystemInstructions.Parts) == 0 {
-			request.SystemInstructions.Parts = []dto.GeminiPart{{Text: info.ChannelSetting.SystemPrompt}}
-		} else if info.ChannelSetting.SystemPromptOverride {
-			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
-			merged := false
-			for i := range request.SystemInstructions.Parts {
-				if request.SystemInstructions.Parts[i].Text == "" {
-					continue
-				}
-				request.SystemInstructions.Parts[i].Text = info.ChannelSetting.SystemPrompt + "\n" + request.SystemInstructions.Parts[i].Text
-				merged = true
-				break
-			}
-			if !merged {
-				request.SystemInstructions.Parts = append([]dto.GeminiPart{{Text: info.ChannelSetting.SystemPrompt}}, request.SystemInstructions.Parts...)
-			}
-		}
-	}
-
-	// Clean up empty system instruction
-	if request.SystemInstructions != nil {
-		hasContent := false
-		for _, part := range request.SystemInstructions.Parts {
-			if part.Text != "" {
-				hasContent = true
-				break
-			}
-		}
-		if !hasContent {
-			request.SystemInstructions = nil
-		}
-	}
-
-	var preparedRequest *relaycommon.PreparedRelayRequest
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-		}
-		preparedRequest, err = relaycommon.PrepareFinalPassThroughRelayRequest(info, storage)
-		if err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-		}
-	} else {
-		// 使用 ConvertGeminiRequest 转换请求格式
-		convertedRequest, err := adaptor.ConvertGeminiRequest(c, info, request)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		// apply param override
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return newAPIErrorFromParamOverride(err)
-			}
-		}
-
-		logger.LogDebug(c, "Gemini request body: %s", jsonData)
-
-		preparedRequest, err = relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		jsonData = nil
-	}
-	defer preparedRequest.Close()
-	requestBody, err := preparedRequest.Reader()
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-	}
-
-	resp, err := adaptor.DoRequest(c, info, requestBody)
-	if err != nil {
-		logger.LogError(c, "Do gemini request failed: "+err.Error())
-		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
-	}
-
-	statusCodeMappingStr := c.GetString("status_code_mapping")
-
-	var httpResp *http.Response
-	if resp != nil {
-		httpResp = resp.(*http.Response)
-		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
-		if httpResp.StatusCode != http.StatusOK {
-			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			// reset status code 重置状态码
-			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-			return newAPIError
-		}
-	}
-
-	usage, openaiErr := adaptor.DoResponse(c, resp.(*http.Response), info)
-	if openaiErr != nil {
-		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
-		return openaiErr
-	}
-
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	service.PostTextConsumeQuota(c, info, usage, nil)
 	return nil
 }
 
