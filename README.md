@@ -193,6 +193,8 @@ docker run --name new-api -d --restart always \
 - ⚖️ Channel weighted random
 - 🔄 Automatic retry on failure
 - 🧭 Explicit `auto:*` / `smart:*` virtual models with administrator-configurable real-model pools
+- 🧩 Protocol-aware context validation for OpenAI Chat Completions, OpenAI Responses, Claude Messages, and Google Gemini
+- 🔒 Provider-bound context blocks unsafe virtual-model switching and disables cross-channel smart retries for explicit models
 - 🚦 User-level model rate limiting
 
 **Format Conversion:**

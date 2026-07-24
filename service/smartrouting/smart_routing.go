@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 )
 
 type EndpointType string
@@ -77,6 +78,7 @@ type SmartRouteRequest struct {
 	ReasoningRequested    bool
 	RequiresReliability   bool
 	TokenMeta             *types.TokenCountMeta
+	ContextConstraint     contextconsensus.ContextRoutingConstraint
 }
 
 type VirtualModelProfile struct {
@@ -153,8 +155,19 @@ type Decision struct {
 
 type ContextConsensusLog struct {
 	Mode                    string
+	Version                 int
+	ValidationMode          string
+	ValidationResult        string
+	Protocol                string
 	Compacted               bool
 	PreservedRecentMessages int
+	PreservedSegmentCount   int
+	ToolExchangeCount       int
+	InputTokensBefore       int
+	BindingLevel            string
+	BindingReasonCodes      []string
+	SwitchAllowed           bool
+	WouldBlock              bool
 }
 
 type policyWeights struct {
@@ -322,11 +335,25 @@ func (decision Decision) LogFields() map[string]interface{} {
 		fields["decision_reasons"] = decision.DecisionReasons
 	}
 	if decision.ContextConsensus.Mode != "" {
-		fields["context_consensus"] = map[string]interface{}{
+		contextConsensus := map[string]interface{}{
 			"mode":                      decision.ContextConsensus.Mode,
 			"compacted":                 decision.ContextConsensus.Compacted,
 			"preserved_recent_messages": decision.ContextConsensus.PreservedRecentMessages,
 		}
+		if decision.ContextConsensus.ValidationMode != "" {
+			contextConsensus["version"] = decision.ContextConsensus.Version
+			contextConsensus["validation_mode"] = decision.ContextConsensus.ValidationMode
+			contextConsensus["validation_result"] = decision.ContextConsensus.ValidationResult
+			contextConsensus["protocol"] = decision.ContextConsensus.Protocol
+			contextConsensus["preserved_segment_count"] = decision.ContextConsensus.PreservedSegmentCount
+			contextConsensus["tool_exchange_count"] = decision.ContextConsensus.ToolExchangeCount
+			contextConsensus["input_tokens_before"] = decision.ContextConsensus.InputTokensBefore
+			contextConsensus["binding_level"] = decision.ContextConsensus.BindingLevel
+			contextConsensus["binding_reason_codes"] = append([]string(nil), decision.ContextConsensus.BindingReasonCodes...)
+			contextConsensus["switch_allowed"] = decision.ContextConsensus.SwitchAllowed
+			contextConsensus["would_block"] = decision.ContextConsensus.WouldBlock
+		}
+		fields["context_consensus"] = contextConsensus
 	}
 	return fields
 }
@@ -471,6 +498,10 @@ func classifyContextRequirement(score int) ContextRequirement {
 
 func rejectCandidate(request SmartRouteRequest, candidate SmartRouteCandidate) []string {
 	reasons := make([]string, 0)
+	if request.ContextConstraint.ValidationMode != "" && !request.ContextConstraint.SwitchAllowed &&
+		candidate.ModelName != request.OriginalModel {
+		reasons = append(reasons, "context_state_switch_not_allowed")
+	}
 	if request.ContextTokensRequired > 0 && candidate.MaxContextTokens > 0 && request.ContextTokensRequired > candidate.MaxContextTokens {
 		reasons = append(reasons, "context_too_small")
 	}

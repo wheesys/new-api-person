@@ -4,9 +4,29 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRankCandidatesRejectsModelSwitchForProviderBoundContext(t *testing.T) {
+	request := SmartRouteRequest{
+		OriginalModel: "auto:quality",
+		ContextConstraint: contextconsensus.ContextRoutingConstraint{
+			ValidationMode:  "validate_only",
+			RequiredBinding: contextconsensus.BindingLevelCredential,
+			SwitchAllowed:   false,
+			WouldBlock:      true,
+		},
+	}
+	candidates := []SmartRouteCandidate{{ModelName: "gpt-5", ChannelID: 1}}
+
+	ranked, rejections := RankCandidates(request, candidates, PolicyQualityFirst)
+
+	assert.Empty(t, ranked)
+	require.Len(t, rejections, 1)
+	assert.Contains(t, rejections[0].Reasons, "context_state_switch_not_allowed")
+}
 
 func TestResolveVirtualModel(t *testing.T) {
 	profile, ok := ResolveVirtualModel("auto")

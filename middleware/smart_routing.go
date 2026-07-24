@@ -16,6 +16,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -27,6 +28,22 @@ type smartRoutingSelection struct {
 	channel   *model.Channel
 	group     string
 	modelName string
+}
+
+type smartRoutingContextValidationError struct {
+	cause error
+}
+
+func (validationError *smartRoutingContextValidationError) Error() string {
+	return validationError.cause.Error()
+}
+
+type smartRoutingContextBindingError struct {
+	reasonCodes []string
+}
+
+func (bindingError *smartRoutingContextBindingError) Error() string {
+	return "smart routing cannot resolve provider-bound context state: " + strings.Join(bindingError.reasonCodes, ", ")
 }
 
 func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, usingGroup string) (*smartRoutingSelection, bool, error) {
@@ -41,6 +58,9 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	routeRequest, err := buildSmartRouteRequest(c, modelRequest, usingGroup)
 	if err != nil {
 		return nil, true, err
+	}
+	if routeRequest.ContextConstraint.WouldBlock {
+		return nil, true, &smartRoutingContextBindingError{reasonCodes: routeRequest.ContextConstraint.ReasonCodes}
 	}
 	analysis := smartrouting.AnalyzeRequest(routeRequest)
 	candidates, err := buildSmartRouteCandidates(c, routeRequest, usingGroup)
@@ -74,7 +94,7 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	if err := rewriteJSONRequestModel(c, selected.ModelName); err != nil {
 		return nil, true, err
 	}
-	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName)
+	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName, smartRoutingContextSwitchAllowed(routeRequest))
 
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, smartrouting.Decision{
 		Enabled:            true,
@@ -88,11 +108,7 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 		FallbackIndex:      0,
 		ScoreFactors:       selected.ScoreFactors,
 		DecisionReasons:    smartRoutingDecisionReasons(analysis),
-		ContextConsensus: smartrouting.ContextConsensusLog{
-			Mode:                    "stateless_full_context",
-			Compacted:               false,
-			PreservedRecentMessages: preservedRecentMessages(routeRequest.TokenMeta),
-		},
+		ContextConsensus:   smartRoutingContextConsensusLog(routeRequest),
 	})
 
 	return &smartRoutingSelection{
@@ -133,7 +149,7 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
 		return nil, false, nil
 	}
-	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName)
+	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName, smartRoutingContextSwitchAllowed(routeRequest))
 
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, smartrouting.Decision{
 		Enabled:            true,
@@ -147,11 +163,7 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 		FallbackIndex:      0,
 		ScoreFactors:       selected.ScoreFactors,
 		DecisionReasons:    smartRoutingDecisionReasons(analysis),
-		ContextConsensus: smartrouting.ContextConsensusLog{
-			Mode:                    "stateless_full_context",
-			Compacted:               false,
-			PreservedRecentMessages: preservedRecentMessages(routeRequest.TokenMeta),
-		},
+		ContextConsensus:   smartRoutingContextConsensusLog(routeRequest),
 	})
 
 	return &smartRoutingSelection{
@@ -214,6 +226,19 @@ func buildSmartRouteRequest(c *gin.Context, modelRequest *ModelRequest, usingGro
 		MessagesCount: maxGJSONInt(gjson.GetBytes(body, "messages.#"), gjson.GetBytes(body, "input.#")),
 		MaxTokens:     request.MaxOutputTokens,
 		Files:         smartRoutingFileMeta(request),
+	}
+	if protocol, supported := smartRoutingContextProtocol(c); supported {
+		envelope, extractErr := contextconsensus.Extract(contextconsensus.ExtractionRequest{
+			Protocol:      protocol,
+			OriginalModel: modelRequest.Model,
+			Body:          body,
+		})
+		if envelope != nil {
+			request.ContextConstraint = envelope.RoutingConstraint(request.EstimatedPromptTokens)
+		}
+		if extractErr != nil {
+			return request, &smartRoutingContextValidationError{cause: extractErr}
+		}
 	}
 	return request, nil
 }
@@ -328,8 +353,8 @@ func filterSmartRoutingCandidatesByRequestedModel(candidates []smartrouting.Smar
 	return filtered
 }
 
-func setSmartRoutingRetryCandidates(c *gin.Context, candidates []smartrouting.SmartRouteCandidate, selectedModel string) {
-	if c == nil || selectedModel == "" || len(candidates) == 0 {
+func setSmartRoutingRetryCandidates(c *gin.Context, candidates []smartrouting.SmartRouteCandidate, selectedModel string, switchAllowed bool) {
+	if c == nil || selectedModel == "" || len(candidates) == 0 || !switchAllowed {
 		return
 	}
 	retryCandidates := make([]smartrouting.SmartRouteCandidate, 0, len(candidates))
@@ -341,6 +366,54 @@ func setSmartRoutingRetryCandidates(c *gin.Context, candidates []smartrouting.Sm
 	if len(retryCandidates) > 0 {
 		common.SetContextKey(c, constant.ContextKeySmartRoutingRetryCandidates, retryCandidates)
 	}
+}
+
+func smartRoutingContextProtocol(c *gin.Context) (types.RelayFormat, bool) {
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/v1/messages") {
+		return types.RelayFormatClaude, true
+	}
+	switch relayconstant.Path2RelayMode(path) {
+	case relayconstant.RelayModeResponses:
+		return types.RelayFormatOpenAIResponses, true
+	case relayconstant.RelayModeGemini:
+		return types.RelayFormatGemini, true
+	case relayconstant.RelayModeResponsesCompact:
+		return "", false
+	default:
+		if smartRoutingEndpoint(c) == smartrouting.EndpointChatCompletions {
+			return types.RelayFormatOpenAI, true
+		}
+		return "", false
+	}
+}
+
+func smartRoutingContextConsensusLog(request smartrouting.SmartRouteRequest) smartrouting.ContextConsensusLog {
+	constraint := request.ContextConstraint
+	mode := constraint.Mode
+	if mode == "" {
+		mode = "stateless_full_context"
+	}
+	return smartrouting.ContextConsensusLog{
+		Mode:                    mode,
+		Version:                 1,
+		ValidationMode:          constraint.ValidationMode,
+		ValidationResult:        constraint.ValidationResult,
+		Protocol:                string(constraint.Protocol),
+		Compacted:               false,
+		PreservedRecentMessages: preservedRecentMessages(request.TokenMeta),
+		PreservedSegmentCount:   constraint.PreservedSegmentCount,
+		ToolExchangeCount:       constraint.ToolExchangeCount,
+		InputTokensBefore:       constraint.EffectivePromptTokens,
+		BindingLevel:            string(constraint.RequiredBinding),
+		BindingReasonCodes:      append([]string(nil), constraint.ReasonCodes...),
+		SwitchAllowed:           smartRoutingContextSwitchAllowed(request),
+		WouldBlock:              constraint.WouldBlock,
+	}
+}
+
+func smartRoutingContextSwitchAllowed(request smartrouting.SmartRouteRequest) bool {
+	return request.ContextConstraint.ValidationMode == "" || request.ContextConstraint.SwitchAllowed
 }
 
 func getSmartRoutingChannel(channelID int) (*model.Channel, error) {
@@ -491,6 +564,16 @@ func maxGJSONInt(values ...gjson.Result) int {
 }
 
 func abortSmartRoutingError(c *gin.Context, usingGroup string, modelName string, err error) {
+	var contextValidationError *smartRoutingContextValidationError
+	if errors.As(err, &contextValidationError) {
+		abortWithOpenAiMessage(c, http.StatusBadRequest, contextValidationError.Error(), types.ErrorCodeInvalidRequest)
+		return
+	}
+	var contextBindingError *smartRoutingContextBindingError
+	if errors.As(err, &contextBindingError) {
+		abortWithOpenAiMessage(c, http.StatusConflict, contextBindingError.Error(), types.ErrorCodeInvalidRequest)
+		return
+	}
 	showGroup := usingGroup
 	if usingGroup == "auto" {
 		if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {

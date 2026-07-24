@@ -39,8 +39,19 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 		DecisionReasons: []string{"tools_required", "json_schema_required"},
 		ContextConsensus: smartrouting.ContextConsensusLog{
 			Mode:                    "stateless_full_context",
+			Version:                 1,
+			ValidationMode:          "validate_only",
+			ValidationResult:        "would_block",
+			Protocol:                "openai_responses",
 			Compacted:               false,
 			PreservedRecentMessages: 6,
+			PreservedSegmentCount:   4,
+			ToolExchangeCount:       2,
+			InputTokensBefore:       2048,
+			BindingLevel:            "credential",
+			BindingReasonCodes:      []string{"responses_previous_response_id"},
+			SwitchAllowed:           false,
+			WouldBlock:              true,
 		},
 	})
 
@@ -66,4 +77,15 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 	assert.Equal(t, 12, smartRouting["selected_channel_id"])
 	assert.NotContains(t, smartRouting, "request_body")
 	assert.NotContains(t, smartRouting, "api_key")
+
+	contextConsensus, ok := smartRouting["context_consensus"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "validate_only", contextConsensus["validation_mode"])
+	assert.Equal(t, "would_block", contextConsensus["validation_result"])
+	assert.Equal(t, "credential", contextConsensus["binding_level"])
+	assert.Equal(t, true, contextConsensus["would_block"])
+	encodedOther, err := common.Marshal(other)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encodedOther), "resp-sensitive-reference")
+	assert.NotContains(t, string(encodedOther), "tool-sensitive-result")
 }
