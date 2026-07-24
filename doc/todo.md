@@ -50,6 +50,7 @@
 - [x] 接入 SWE-bench、Artificial Analysis 和 Arena 榜单适配器，支持通过环境变量配置外部榜单地址，并按来源归一化后合并到模型画像缓存。
 - [x] 完成虚拟模型管理员可配置模型池后端闭环：新增 `smart_routing.virtual_model_pools` 配置、`auto:*` / `smart:*` 候选池过滤和回归测试，并归档到 `doc/auto-smart-routing-configurable-model-pool-implementation-2026-07-10.md`。
 - [x] 在默认前端模型设置页新增 `Smart Routing` 配置入口，支持编辑 `smart_routing.virtual_model_pools` 并补齐六语言 i18n，实施报告见 `doc/auto-smart-routing-configurable-model-pool-implementation-2026-07-10.md`。
+- [x] 完成跨模型 `ContextConsensus`、自动压缩和工具状态保持技术设计，明确 provider-bound 状态、工具原子段、独立计费、加密存储和分阶段实施方案，见 `doc/auto-smart-routing-context-consensus-design-2026-07-24.md`。
 
 ## 待办
 
@@ -66,7 +67,9 @@
 - [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
-- [ ] 如需继续推进，设计跨模型 `ContextConsensus` 会话共识、自动压缩和工具状态保持方案。
+- [ ] 按 `doc/auto-smart-routing-context-consensus-design-2026-07-24.md` 实现阶段 A：四协议 `ContextEnvelope`、provider-bound 状态检测、工具图验证、精确预算接口和 `validate_only` 审计，不调用压缩模型。
+- [ ] 阶段 A 完成后，实现阶段 B：请求内显式压缩、结构化共识摘要、协议安全重写和独立压缩计费。
+- [ ] 阶段 B 完成后，实现阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL 和 provider state 绑定映射。
 - [ ] 如需继续推进，设计智能路由日志、指标聚合和后台配置页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。
