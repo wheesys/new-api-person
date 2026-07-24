@@ -68,6 +68,52 @@ type CompactionExecutionOutput struct {
 	Usage         CompactionUsage
 }
 
+// BillableCompactionExecutionError reports a failed execution that still
+// produced valid output and usage which must be settled.
+type BillableCompactionExecutionError struct {
+	output CompactionExecutionOutput
+	cause  error
+}
+
+// NewBillableCompactionExecutionError marks valid execution output for settlement despite failure.
+func NewBillableCompactionExecutionError(output CompactionExecutionOutput, cause error) *BillableCompactionExecutionError {
+	return &BillableCompactionExecutionError{output: output, cause: cause}
+}
+
+func (executionError *BillableCompactionExecutionError) Error() string {
+	if executionError == nil {
+		return "billable compaction execution failed"
+	}
+	if executionError.cause == nil {
+		return "billable compaction execution failed"
+	}
+	return fmt.Sprintf("billable compaction execution failed: %v", executionError.cause)
+}
+
+func (executionError *BillableCompactionExecutionError) Unwrap() error {
+	if executionError == nil {
+		return nil
+	}
+	return executionError.cause
+}
+
+// ExecutionOutput returns the output that must be used for settlement.
+func (executionError *BillableCompactionExecutionError) ExecutionOutput() CompactionExecutionOutput {
+	if executionError == nil {
+		return CompactionExecutionOutput{}
+	}
+	return executionError.output
+}
+
+// AsBillableCompactionExecutionError recognizes the contract through wrapped errors.
+func AsBillableCompactionExecutionError(err error) (*BillableCompactionExecutionError, bool) {
+	var executionError *BillableCompactionExecutionError
+	if !errors.As(err, &executionError) || executionError == nil {
+		return nil, false
+	}
+	return executionError, true
+}
+
 type CompactionBillingReceipt struct {
 	BillingReference string
 	ReservedQuota    int
@@ -78,40 +124,42 @@ type CompactionSettlement struct {
 }
 
 type CompactionAuditRecord struct {
-	RequestPurpose        string               `json:"request_purpose"`
-	ParentRequestID       string               `json:"parent_request_id"`
-	ChildRequestID        string               `json:"child_request_id"`
-	Model                 string               `json:"model"`
-	PolicyVersion         string               `json:"policy_version"`
-	SourceDigest          string               `json:"source_digest"`
-	PreparedRequestDigest string               `json:"prepared_request_digest,omitempty"`
-	SummaryDigest         string               `json:"summary_digest,omitempty"`
-	State                 CompactionChildState `json:"state"`
-	ResultCode            string               `json:"result_code"`
-	InputTokens           int                  `json:"input_tokens"`
-	OutputTokens          int                  `json:"output_tokens"`
-	TotalTokens           int                  `json:"total_tokens"`
-	MaxOutputTokens       int                  `json:"max_output_tokens"`
-	ReservedQuota         int                  `json:"reserved_quota"`
-	SettledQuota          int                  `json:"settled_quota"`
-	Refunded              bool                 `json:"refunded"`
+	RequestPurpose           string               `json:"request_purpose"`
+	ParentRequestID          string               `json:"parent_request_id"`
+	ChildRequestID           string               `json:"child_request_id"`
+	Model                    string               `json:"model"`
+	PolicyVersion            string               `json:"policy_version"`
+	SourceDigest             string               `json:"source_digest"`
+	PreparedRequestDigest    string               `json:"prepared_request_digest,omitempty"`
+	SummaryDigest            string               `json:"summary_digest,omitempty"`
+	State                    CompactionChildState `json:"state"`
+	ResultCode               string               `json:"result_code"`
+	InputTokens              int                  `json:"input_tokens"`
+	OutputTokens             int                  `json:"output_tokens"`
+	TotalTokens              int                  `json:"total_tokens"`
+	MaxOutputTokens          int                  `json:"max_output_tokens"`
+	ReservedQuota            int                  `json:"reserved_quota"`
+	SettledQuota             int                  `json:"settled_quota"`
+	Refunded                 bool                 `json:"refunded"`
+	BillableExecutionFailure bool                 `json:"billable_execution_failure"`
 }
 
 type CompactionChildResult struct {
-	ParentRequestID       string
-	ChildRequestID        string
-	Model                 string
-	State                 CompactionChildState
-	ResultCode            string
-	Succeeded             bool
-	PreparedRequestDigest string
-	SummaryDigest         string
-	Summary               *ConsensusSummary
-	Usage                 CompactionUsage
-	ReservedQuota         int
-	SettledQuota          int
-	Refunded              bool
-	AuditRecorded         bool
+	ParentRequestID          string
+	ChildRequestID           string
+	Model                    string
+	State                    CompactionChildState
+	ResultCode               string
+	Succeeded                bool
+	PreparedRequestDigest    string
+	SummaryDigest            string
+	Summary                  *ConsensusSummary
+	Usage                    CompactionUsage
+	ReservedQuota            int
+	SettledQuota             int
+	Refunded                 bool
+	BillableExecutionFailure bool
+	AuditRecorded            bool
 }
 
 type CompactionChildRequestIDGenerator interface {
@@ -266,16 +314,26 @@ func (executor *CompactionChildExecutor) Execute(ctx context.Context, request Co
 
 	executor.setState(CompactionChildStateExecuting)
 	output, err := executor.dependencies.Runner.ExecuteCompactionChild(ctx, descriptor, prepared)
-	result.SummaryDigest = output.SummaryDigest
-	result.Usage = output.Usage
 	if err != nil {
+		billableExecutionError, billable := AsBillableCompactionExecutionError(err)
+		if billable {
+			output = billableExecutionError.ExecutionOutput()
+			result.SummaryDigest = output.SummaryDigest
+			result.Usage = output.Usage
+			validationCode, validationErr := validateCompactionExecutionOutput(output)
+			if validationErr != nil {
+				return executor.fail(ctx, request, result, validationCode, receipt, errors.Join(err, validationErr))
+			}
+			return executor.finishBillableExecutionFailure(ctx, request, result, receipt, output, err)
+		}
+		result.SummaryDigest = output.SummaryDigest
+		result.Usage = output.Usage
 		return executor.fail(ctx, request, result, "execute_failed", receipt, err)
 	}
-	if strings.TrimSpace(output.SummaryDigest) == "" {
-		return executor.fail(ctx, request, result, "invalid_execution_result", receipt, fmt.Errorf("compaction summary digest is required"))
-	}
-	if output.Usage.InputTokens < 0 || output.Usage.OutputTokens < 0 {
-		return executor.fail(ctx, request, result, "invalid_execution_usage", receipt, fmt.Errorf("compaction usage tokens must not be negative"))
+	result.SummaryDigest = output.SummaryDigest
+	result.Usage = output.Usage
+	if validationCode, validationErr := validateCompactionExecutionOutput(output); validationErr != nil {
+		return executor.fail(ctx, request, result, validationCode, receipt, validationErr)
 	}
 	executor.setState(CompactionChildStateExecuted)
 
@@ -303,6 +361,56 @@ func (executor *CompactionChildExecutor) Execute(ctx context.Context, request Co
 	executor.setState(CompactionChildStateLogged)
 	result.AuditRecorded = true
 	return result, nil
+}
+
+func (executor *CompactionChildExecutor) finishBillableExecutionFailure(
+	ctx context.Context,
+	request CompactionChildRequest,
+	result CompactionChildResult,
+	receipt *CompactionBillingReceipt,
+	output CompactionExecutionOutput,
+	executionErr error,
+) (CompactionChildResult, error) {
+	result.BillableExecutionFailure = true
+	result.Succeeded = false
+	result.Summary = &output.Summary
+	executor.setState(CompactionChildStateExecuted)
+
+	executor.setState(CompactionChildStateSettling)
+	settlement, settlementErr := executor.dependencies.Billing.SettleCompactionChild(ctx, receipt, output)
+	result.SettledQuota = settlement.SettledQuota
+	if settlementErr != nil {
+		executor.setState(CompactionChildStateSettlementFailed)
+		result.State = CompactionChildStateSettlementFailed
+		result.ResultCode = "billable_execution_settle_failed"
+		auditErr := executor.dependencies.Auditor.RecordCompactionChild(ctx, buildCompactionAuditRecord(request, result))
+		result.AuditRecorded = auditErr == nil
+		return result, errors.Join(executionErr, fmt.Errorf("settle billable compaction execution: %w", settlementErr), auditErr)
+	}
+
+	executor.setState(CompactionChildStateSettled)
+	result.State = CompactionChildStateLogged
+	result.ResultCode = "billable_execution_failed"
+	auditErr := executor.dependencies.Auditor.RecordCompactionChild(ctx, buildCompactionAuditRecord(request, result))
+	if auditErr != nil {
+		executor.setState(CompactionChildStateAuditFailed)
+		result.State = CompactionChildStateAuditFailed
+		result.ResultCode = "billable_execution_audit_failed"
+		return result, errors.Join(executionErr, fmt.Errorf("record billable compaction execution audit after settlement: %w", auditErr))
+	}
+	executor.setState(CompactionChildStateLogged)
+	result.AuditRecorded = true
+	return result, executionErr
+}
+
+func validateCompactionExecutionOutput(output CompactionExecutionOutput) (string, error) {
+	if strings.TrimSpace(output.SummaryDigest) == "" {
+		return "invalid_execution_result", fmt.Errorf("compaction summary digest is required")
+	}
+	if output.Usage.InputTokens < 0 || output.Usage.OutputTokens < 0 {
+		return "invalid_execution_usage", fmt.Errorf("compaction usage tokens must not be negative")
+	}
+	return "", nil
 }
 
 func (executor *CompactionChildExecutor) begin() bool {
@@ -362,22 +470,23 @@ func (executor *CompactionChildExecutor) refundIfNeeded(ctx context.Context, rec
 
 func buildCompactionAuditRecord(request CompactionChildRequest, result CompactionChildResult) CompactionAuditRecord {
 	return CompactionAuditRecord{
-		RequestPurpose:        CompactionRequestPurposeContextCompaction,
-		ParentRequestID:       result.ParentRequestID,
-		ChildRequestID:        result.ChildRequestID,
-		Model:                 result.Model,
-		PolicyVersion:         strings.TrimSpace(request.PolicyVersion),
-		SourceDigest:          strings.TrimSpace(request.SourceDigest),
-		PreparedRequestDigest: result.PreparedRequestDigest,
-		SummaryDigest:         result.SummaryDigest,
-		State:                 result.State,
-		ResultCode:            result.ResultCode,
-		InputTokens:           result.Usage.InputTokens,
-		OutputTokens:          result.Usage.OutputTokens,
-		TotalTokens:           result.Usage.TotalTokens(),
-		MaxOutputTokens:       request.MaxOutputTokens,
-		ReservedQuota:         result.ReservedQuota,
-		SettledQuota:          result.SettledQuota,
-		Refunded:              result.Refunded,
+		RequestPurpose:           CompactionRequestPurposeContextCompaction,
+		ParentRequestID:          result.ParentRequestID,
+		ChildRequestID:           result.ChildRequestID,
+		Model:                    result.Model,
+		PolicyVersion:            strings.TrimSpace(request.PolicyVersion),
+		SourceDigest:             strings.TrimSpace(request.SourceDigest),
+		PreparedRequestDigest:    result.PreparedRequestDigest,
+		SummaryDigest:            result.SummaryDigest,
+		State:                    result.State,
+		ResultCode:               result.ResultCode,
+		InputTokens:              result.Usage.InputTokens,
+		OutputTokens:             result.Usage.OutputTokens,
+		TotalTokens:              result.Usage.TotalTokens(),
+		MaxOutputTokens:          request.MaxOutputTokens,
+		ReservedQuota:            result.ReservedQuota,
+		SettledQuota:             result.SettledQuota,
+		Refunded:                 result.Refunded,
+		BillableExecutionFailure: result.BillableExecutionFailure,
 	}
 }

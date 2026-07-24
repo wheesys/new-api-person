@@ -3,6 +3,7 @@ package contextconsensus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -13,10 +14,13 @@ import (
 type testCompactionChildLifecycle struct {
 	childRequestID        string
 	failStage             string
+	billableExecution     bool
 	needsRefund           bool
+	needsRefundChecks     int
 	keepRefundAfterSettle bool
 	order                 []string
 	auditRecords          []CompactionAuditRecord
+	settlementOutputs     []CompactionExecutionOutput
 }
 
 func (lifecycle *testCompactionChildLifecycle) NewChildRequestID(string) (string, error) {
@@ -46,11 +50,13 @@ func (lifecycle *testCompactionChildLifecycle) PreconsumeCompactionChild(_ conte
 }
 
 func (lifecycle *testCompactionChildLifecycle) NeedsRefund(*CompactionBillingReceipt) bool {
+	lifecycle.needsRefundChecks++
 	return lifecycle.needsRefund
 }
 
-func (lifecycle *testCompactionChildLifecycle) SettleCompactionChild(_ context.Context, _ *CompactionBillingReceipt, _ CompactionExecutionOutput) (CompactionSettlement, error) {
+func (lifecycle *testCompactionChildLifecycle) SettleCompactionChild(_ context.Context, _ *CompactionBillingReceipt, output CompactionExecutionOutput) (CompactionSettlement, error) {
 	lifecycle.order = append(lifecycle.order, "settle")
+	lifecycle.settlementOutputs = append(lifecycle.settlementOutputs, output)
 	if lifecycle.failStage == "settle" {
 		return CompactionSettlement{SettledQuota: 9}, errors.New("settle failed")
 	}
@@ -78,6 +84,9 @@ func (lifecycle *testCompactionChildLifecycle) ExecuteCompactionChild(_ context.
 	}
 	if lifecycle.failStage == "execute" {
 		return output, errors.New("execute failed")
+	}
+	if lifecycle.billableExecution {
+		return CompactionExecutionOutput{}, NewBillableCompactionExecutionError(output, errors.New("provider failed after producing usage"))
 	}
 	return output, nil
 }
@@ -223,6 +232,105 @@ func TestCompactionChildExecutorRefundsFailuresOnlyWhenNeeded(t *testing.T) {
 			assert.Equal(t, "audit", lifecycle.order[len(lifecycle.order)-1])
 		})
 	}
+}
+
+func TestAsBillableCompactionExecutionErrorRecognizesWrappedError(t *testing.T) {
+	output := CompactionExecutionOutput{
+		SummaryDigest: "summary-digest",
+		Usage:         CompactionUsage{InputTokens: 100, OutputTokens: 20},
+	}
+	cause := errors.New("provider failed after producing usage")
+	err := fmt.Errorf("runner failed: %w", NewBillableCompactionExecutionError(output, cause))
+
+	billableExecutionError, ok := AsBillableCompactionExecutionError(err)
+	require.True(t, ok)
+	require.NotNil(t, billableExecutionError)
+	assert.Equal(t, output, billableExecutionError.ExecutionOutput())
+	assert.ErrorIs(t, err, cause)
+}
+
+func TestCompactionChildExecutorSettlesAndAuditsBillableExecutionFailure(t *testing.T) {
+	lifecycle := &testCompactionChildLifecycle{
+		childRequestID:        "child-request-1",
+		billableExecution:     true,
+		needsRefund:           true,
+		keepRefundAfterSettle: true,
+	}
+	executor := newTestCompactionChildExecutor(t, lifecycle)
+
+	result, err := executor.Execute(context.Background(), validCompactionChildRequest())
+	require.ErrorContains(t, err, "provider failed after producing usage")
+	assert.False(t, result.Succeeded)
+	assert.True(t, result.BillableExecutionFailure)
+	assert.Equal(t, "billable_execution_failed", result.ResultCode)
+	assert.Equal(t, CompactionChildStateLogged, result.State)
+	assert.Equal(t, CompactionUsage{InputTokens: 100, OutputTokens: 20}, result.Usage)
+	assert.Equal(t, 9, result.SettledQuota)
+	assert.True(t, result.AuditRecorded)
+	assert.False(t, result.Refunded)
+	assert.Zero(t, lifecycle.needsRefundChecks)
+	assert.NotContains(t, lifecycle.order, "refund")
+	assert.Equal(t, []string{"request_id", "prepare", "preconsume", "execute", "settle", "audit"}, lifecycle.order)
+
+	require.Len(t, lifecycle.settlementOutputs, 1)
+	assert.Equal(t, result.Usage, lifecycle.settlementOutputs[0].Usage)
+	require.Len(t, lifecycle.auditRecords, 1)
+	assert.True(t, lifecycle.auditRecords[0].BillableExecutionFailure)
+	assert.Equal(t, "billable_execution_failed", lifecycle.auditRecords[0].ResultCode)
+	assert.Equal(t, 120, lifecycle.auditRecords[0].TotalTokens)
+}
+
+func TestCompactionChildExecutorAuditsBillableFailureWhenSettlementFailsWithoutRefund(t *testing.T) {
+	lifecycle := &testCompactionChildLifecycle{
+		childRequestID:    "child-request-1",
+		billableExecution: true,
+		failStage:         "settle",
+		needsRefund:       true,
+	}
+	executor := newTestCompactionChildExecutor(t, lifecycle)
+
+	result, err := executor.Execute(context.Background(), validCompactionChildRequest())
+	require.ErrorContains(t, err, "provider failed after producing usage")
+	require.ErrorContains(t, err, "settle failed")
+	assert.False(t, result.Succeeded)
+	assert.True(t, result.BillableExecutionFailure)
+	assert.Equal(t, "billable_execution_settle_failed", result.ResultCode)
+	assert.Equal(t, CompactionChildStateSettlementFailed, result.State)
+	assert.Equal(t, 9, result.SettledQuota)
+	assert.True(t, result.AuditRecorded)
+	assert.False(t, result.Refunded)
+	assert.Zero(t, lifecycle.needsRefundChecks)
+	assert.NotContains(t, lifecycle.order, "refund")
+	assert.Equal(t, []string{"request_id", "prepare", "preconsume", "execute", "settle", "audit"}, lifecycle.order)
+
+	require.Len(t, lifecycle.auditRecords, 1)
+	assert.True(t, lifecycle.auditRecords[0].BillableExecutionFailure)
+	assert.Equal(t, "billable_execution_settle_failed", lifecycle.auditRecords[0].ResultCode)
+}
+
+func TestCompactionChildExecutorDoesNotRefundBillableFailureWhenAuditFails(t *testing.T) {
+	lifecycle := &testCompactionChildLifecycle{
+		childRequestID:        "child-request-1",
+		billableExecution:     true,
+		failStage:             "audit",
+		needsRefund:           true,
+		keepRefundAfterSettle: true,
+	}
+	executor := newTestCompactionChildExecutor(t, lifecycle)
+
+	result, err := executor.Execute(context.Background(), validCompactionChildRequest())
+	require.ErrorContains(t, err, "provider failed after producing usage")
+	require.ErrorContains(t, err, "audit after settlement")
+	assert.False(t, result.Succeeded)
+	assert.True(t, result.BillableExecutionFailure)
+	assert.Equal(t, "billable_execution_audit_failed", result.ResultCode)
+	assert.Equal(t, CompactionChildStateAuditFailed, result.State)
+	assert.Equal(t, 9, result.SettledQuota)
+	assert.False(t, result.AuditRecorded)
+	assert.False(t, result.Refunded)
+	assert.Zero(t, lifecycle.needsRefundChecks)
+	assert.NotContains(t, lifecycle.order, "refund")
+	assert.Equal(t, []string{"request_id", "prepare", "preconsume", "execute", "settle", "audit"}, lifecycle.order)
 }
 
 func TestCompactionChildExecutorCanOnlyRunOnce(t *testing.T) {

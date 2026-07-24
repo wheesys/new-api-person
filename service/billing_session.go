@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -30,8 +31,28 @@ type BillingSession struct {
 	trusted          bool // 是否命中信任额度旁路
 	fundingSettled   bool // funding.Settle 已成功，资金来源已提交
 	settled          bool // Settle 全部完成（资金 + 令牌）
-	refunded         bool // Refund 已调用
+	refunded         bool // Refund 的资金来源和令牌步骤均已完成
+	refundStarted    bool
+	refundInProgress bool
+	fundingRefunded  bool
+	tokenRefunded    bool
 	mu               sync.Mutex
+}
+
+type billingRefundOperation struct {
+	tokenId       int
+	tokenKey      string
+	tokenQuota    int
+	funding       FundingSource
+	refundFunding bool
+	refundToken   bool
+}
+
+type billingRefundResult struct {
+	fundingAttempted bool
+	fundingError     error
+	tokenAttempted   bool
+	tokenError       error
 }
 
 // Settle 根据实际消耗额度进行结算。
@@ -75,12 +96,51 @@ func (s *BillingSession) Settle(actualQuota int) error {
 
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
+	operation, _ := s.beginRefund(c)
+	if operation == nil {
+		return
+	}
+	gopool.Go(func() {
+		if err := s.finishRefund(operation.execute()); err != nil {
+			common.SysLog("error refunding billing session: " + err.Error())
+		}
+	})
+}
+
+// RefundSync refunds the session synchronously and reports any failure. It is
+// used by internal child requests that must know the refund outcome before the
+// parent request can continue.
+func (s *BillingSession) RefundSync(c *gin.Context) error {
+	operation, err := s.beginRefund(c)
+	if err != nil {
+		return err
+	}
+	if operation == nil {
+		return nil
+	}
+	return s.finishRefund(operation.execute())
+}
+
+func (s *BillingSession) beginRefund(c *gin.Context) (*billingRefundOperation, error) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
-		return
+		return nil, nil
 	}
-	s.refunded = true
+	if s.refundInProgress {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("billing refund is already in progress")
+	}
+	s.refundStarted = true
+	s.refundInProgress = true
+	operation := &billingRefundOperation{
+		tokenId:       s.relayInfo.TokenId,
+		tokenKey:      s.relayInfo.TokenKey,
+		tokenQuota:    s.tokenConsumed,
+		funding:       s.funding,
+		refundFunding: !s.fundingRefunded,
+		refundToken:   !s.tokenRefunded && s.tokenConsumed > 0 && !s.relayInfo.IsPlayground,
+	}
 	s.mu.Unlock()
 
 	logger.LogInfo(c, fmt.Sprintf("用户 %d 请求失败, 返还预扣费（token_quota=%s, funding=%s）",
@@ -89,27 +149,41 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		s.funding.Source(),
 	))
 
-	// 复制需要的值到闭包中
-	tokenId := s.relayInfo.TokenId
-	tokenKey := s.relayInfo.TokenKey
-	isPlayground := s.relayInfo.IsPlayground
-	tokenConsumed := s.tokenConsumed
-	extraReserved := s.extraReserved
-	funding := s.funding
+	return operation, nil
+}
 
-	gopool.Go(func() {
-		// 1) 退还资金来源
-		if err := funding.Refund(); err != nil {
-			common.SysLog("error refunding billing source: " + err.Error())
-		}
-		_ = extraReserved
-		// 2) 退还令牌额度
-		if tokenConsumed > 0 && !isPlayground {
-			if err := model.IncreaseTokenQuota(tokenId, tokenKey, tokenConsumed); err != nil {
-				common.SysLog("error refunding token quota: " + err.Error())
-			}
-		}
-	})
+func (operation *billingRefundOperation) execute() billingRefundResult {
+	if operation == nil {
+		return billingRefundResult{}
+	}
+	result := billingRefundResult{
+		fundingAttempted: operation.refundFunding,
+		tokenAttempted:   operation.refundToken,
+	}
+	if operation.refundFunding {
+		result.fundingError = operation.funding.Refund()
+	}
+	if operation.refundToken {
+		result.tokenError = model.IncreaseTokenQuota(operation.tokenId, operation.tokenKey, operation.tokenQuota)
+	}
+	return result
+}
+
+func (s *BillingSession) finishRefund(result billingRefundResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if result.fundingAttempted && result.fundingError == nil {
+		s.fundingRefunded = true
+	}
+	if result.tokenAttempted && result.tokenError == nil {
+		s.tokenRefunded = true
+	}
+	s.refundInProgress = false
+	tokenRefundComplete := s.tokenConsumed <= 0 || s.relayInfo.IsPlayground || s.tokenRefunded
+	if s.fundingRefunded && tokenRefundComplete {
+		s.refunded = true
+	}
+	return errors.Join(result.fundingError, result.tokenError)
 }
 
 // NeedsRefund 返回是否存在需要退还的预扣状态。
@@ -123,6 +197,10 @@ func (s *BillingSession) needsRefundLocked() bool {
 	if s.settled || s.refunded || s.fundingSettled {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
 		return false
+	}
+	if s.refundStarted {
+		tokenRefundPending := s.tokenConsumed > 0 && !s.relayInfo.IsPlayground && !s.tokenRefunded
+		return !s.fundingRefunded || tokenRefundPending
 	}
 	if s.tokenConsumed > 0 {
 		return true

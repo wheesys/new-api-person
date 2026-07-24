@@ -116,9 +116,23 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
+	appendInternalRequestAudit(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	appendSmartRoutingDecision(ctx, other)
 	return other
+}
+
+func appendInternalRequestAudit(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil || relayInfo.RequestPurpose == "" {
+		return
+	}
+	other["request_purpose"] = relayInfo.RequestPurpose
+	if relayInfo.ParentRequestId != "" {
+		other["parent_request_id"] = relayInfo.ParentRequestId
+	}
+	if relayInfo.PolicyVersion != "" {
+		other["policy_version"] = relayInfo.PolicyVersion
+	}
 }
 
 func appendSmartRoutingDecision(ctx *gin.Context, other map[string]interface{}) {

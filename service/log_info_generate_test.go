@@ -89,3 +89,25 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 	assert.NotContains(t, string(encodedOther), "resp-sensitive-reference")
 	assert.NotContains(t, string(encodedOther), "tool-sensitive-result")
 }
+
+func TestGenerateTextOtherInfoIncludesSafeInternalRequestAudit(t *testing.T) {
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		StartTime:         time.Unix(100, 0),
+		FirstResponseTime: time.Unix(101, 0),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+		RequestPurpose:    "context_compaction",
+		ParentRequestId:   "parent-request",
+		PolicyVersion:     "context-consensus-v1",
+		TokenKey:          "sensitive-token-key",
+	}
+
+	other := GenerateTextOtherInfo(context, relayInfo, 1, 1, 1, 0, 0, 0, 1)
+
+	assert.Equal(t, "context_compaction", other["request_purpose"])
+	assert.Equal(t, "parent-request", other["parent_request_id"])
+	assert.Equal(t, "context-consensus-v1", other["policy_version"])
+	encodedOther, err := common.Marshal(other)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encodedOther), "sensitive-token-key")
+}

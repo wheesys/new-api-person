@@ -73,6 +73,9 @@ const (
 	// ContextKeyLanguage stores the user's language preference for i18n
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
+	// ContextKeySuppressDebugLog disables request-scoped debug output for
+	// internal calls whose bodies may contain user context.
+	ContextKeySuppressDebugLog ContextKey = "suppress_debug_log"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit

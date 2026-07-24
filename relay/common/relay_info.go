@@ -140,6 +140,10 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// Internal child request audit metadata. These fields must never contain request bodies or credentials.
+	RequestPurpose  string
+	ParentRequestId string
+	PolicyVersion   string
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
