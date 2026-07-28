@@ -57,8 +57,8 @@ func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*Ollam
 	if r.Seed != nil {
 		chatReq.Options["seed"] = int(lo.FromPtr(r.Seed))
 	}
-	if mt := r.GetMaxTokens(); mt != 0 {
-		chatReq.Options["num_predict"] = int(mt)
+	if outputLimit := r.GetMaxTokensPointer(); outputLimit != nil {
+		chatReq.Options["num_predict"] = int(*outputLimit)
 	}
 
 	if r.Stop != nil {
@@ -202,8 +202,8 @@ func openAIToGenerate(c *gin.Context, r *dto.GeneralOpenAIRequest) (*OllamaGener
 	if r.Seed != nil {
 		gen.Options["seed"] = int(lo.FromPtr(r.Seed))
 	}
-	if mt := r.GetMaxTokens(); mt != 0 {
-		gen.Options["num_predict"] = int(mt)
+	if outputLimit := r.GetMaxTokensPointer(); outputLimit != nil {
+		gen.Options["num_predict"] = int(*outputLimit)
 	}
 	if r.Stop != nil {
 		switch v := r.Stop.(type) {

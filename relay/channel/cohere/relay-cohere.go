@@ -23,13 +23,14 @@ func requestOpenAI2Cohere(textRequest dto.GeneralOpenAIRequest) *CohereRequest {
 		ChatHistory: []ChatHistory{},
 		Message:     "",
 		Stream:      lo.FromPtrOr(textRequest.Stream, false),
-		MaxTokens:   textRequest.GetMaxTokens(),
+		MaxTokens:   textRequest.GetMaxTokensPointer(),
 	}
 	if common.CohereSafetySetting != "NONE" {
 		cohereReq.SafetyMode = common.CohereSafetySetting
 	}
-	if cohereReq.MaxTokens == 0 {
-		cohereReq.MaxTokens = 4000
+	if cohereReq.MaxTokens == nil {
+		defaultMaxTokens := uint(4000)
+		cohereReq.MaxTokens = &defaultMaxTokens
 	}
 	for _, msg := range textRequest.Messages {
 		if msg.Role == "user" {

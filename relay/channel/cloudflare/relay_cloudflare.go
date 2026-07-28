@@ -22,7 +22,7 @@ func convertCf2CompletionsRequest(textRequest dto.GeneralOpenAIRequest) *CfReque
 	p, _ := textRequest.Prompt.(string)
 	return &CfRequest{
 		Prompt:      p,
-		MaxTokens:   textRequest.GetMaxTokens(),
+		MaxTokens:   textRequest.GetMaxTokensPointer(),
 		Stream:      lo.FromPtrOr(textRequest.Stream, false),
 		Temperature: textRequest.Temperature,
 	}

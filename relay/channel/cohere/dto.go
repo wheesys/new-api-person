@@ -7,7 +7,7 @@ type CohereRequest struct {
 	ChatHistory []ChatHistory `json:"chat_history"`
 	Message     string        `json:"message"`
 	Stream      bool          `json:"stream"`
-	MaxTokens   uint          `json:"max_tokens"`
+	MaxTokens   *uint         `json:"max_tokens,omitempty"`
 	SafetyMode  string        `json:"safety_mode,omitempty"`
 }
 
