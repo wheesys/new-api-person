@@ -1,6 +1,7 @@
 package smartrouting
 
 import (
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -28,18 +29,20 @@ const (
 
 // RuntimeHealthSnapshot is an immutable view of one channel and model pair.
 type RuntimeHealthSnapshot struct {
-	ChannelID           int
-	ModelName           string
-	State               ChannelHealthState
-	Reliability         float64
-	SuccessEWMA         float64
-	FailureEWMA         float64
-	ResetWindowScore    float64
-	LatencyScore        float64
-	LatencySampleCount  int
-	ConsecutiveFailures int
-	Cooldown            time.Duration
-	OpenUntil           time.Time
+	ChannelID                 int
+	ModelName                 string
+	State                     ChannelHealthState
+	Reliability               float64
+	SuccessEWMA               float64
+	FailureEWMA               float64
+	ResetWindowScore          float64
+	LatencyScore              float64
+	LatencySampleCount        int
+	ThroughputTokensPerSecond float64
+	ThroughputSampleCount     int
+	ConsecutiveFailures       int
+	Cooldown                  time.Duration
+	OpenUntil                 time.Time
 }
 
 type runtimeHealthKey struct {
@@ -48,18 +51,20 @@ type runtimeHealthKey struct {
 }
 
 type runtimeHealthEntry struct {
-	state               ChannelHealthState
-	successEWMA         float64
-	failureEWMA         float64
-	consecutiveFailures int
-	cooldown            time.Duration
-	openedAt            time.Time
-	openUntil           time.Time
-	probeInFlight       bool
-	probeUntil          time.Time
-	latencyEWMASeconds  float64
-	latencySampleCount  int
-	lastObservedAt      time.Time
+	state                 ChannelHealthState
+	successEWMA           float64
+	failureEWMA           float64
+	consecutiveFailures   int
+	cooldown              time.Duration
+	openedAt              time.Time
+	openUntil             time.Time
+	probeInFlight         bool
+	probeUntil            time.Time
+	latencyEWMASeconds    float64
+	latencySampleCount    int
+	throughputEWMA        float64
+	throughputSampleCount int
+	lastObservedAt        time.Time
 }
 
 // RuntimeHealthTracker maintains concurrent in-process health observations.
@@ -143,14 +148,18 @@ func (tracker *RuntimeHealthTracker) TryAcquireProbe(channelID int, modelName st
 
 // RecordSuccess updates EWMA reliability and closes a half-open circuit.
 func (tracker *RuntimeHealthTracker) RecordSuccess(channelID int, modelName string) RuntimeHealthSnapshot {
-	return tracker.recordSuccess(channelID, modelName, 0)
+	return tracker.recordSuccessWithMetrics(channelID, modelName, 0, 0)
 }
 
 func (tracker *RuntimeHealthTracker) RecordSuccessWithLatency(channelID int, modelName string, latency time.Duration) RuntimeHealthSnapshot {
-	return tracker.recordSuccess(channelID, modelName, latency)
+	return tracker.recordSuccessWithMetrics(channelID, modelName, latency, 0)
 }
 
-func (tracker *RuntimeHealthTracker) recordSuccess(channelID int, modelName string, latency time.Duration) RuntimeHealthSnapshot {
+func (tracker *RuntimeHealthTracker) RecordSuccessWithMetrics(channelID int, modelName string, latency time.Duration, tokensPerSecond float64) RuntimeHealthSnapshot {
+	return tracker.recordSuccessWithMetrics(channelID, modelName, latency, tokensPerSecond)
+}
+
+func (tracker *RuntimeHealthTracker) recordSuccessWithMetrics(channelID int, modelName string, latency time.Duration, tokensPerSecond float64) RuntimeHealthSnapshot {
 	key := runtimeHealthKey{channelID: channelID, modelName: strings.TrimSpace(modelName)}
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
@@ -159,7 +168,7 @@ func (tracker *RuntimeHealthTracker) recordSuccess(channelID int, modelName stri
 	tracker.prune(now)
 	entry, ok := tracker.entries[key]
 	if !ok {
-		if latency <= 0 {
+		if latency <= 0 && !validThroughput(tokensPerSecond) {
 			return RuntimeHealthSnapshot{
 				ChannelID:        channelID,
 				ModelName:        key.modelName,
@@ -184,6 +193,14 @@ func (tracker *RuntimeHealthTracker) recordSuccess(channelID int, modelName stri
 			entry.latencyEWMASeconds = updateRuntimeHealthEWMA(entry.latencyEWMASeconds, latencySeconds)
 		}
 		entry.latencySampleCount++
+	}
+	if validThroughput(tokensPerSecond) {
+		if entry.throughputSampleCount == 0 {
+			entry.throughputEWMA = tokensPerSecond
+		} else {
+			entry.throughputEWMA = updateRuntimeHealthEWMA(entry.throughputEWMA, tokensPerSecond)
+		}
+		entry.throughputSampleCount++
 	}
 
 	if entry.state != ChannelHealthOpen {
@@ -282,18 +299,20 @@ func (entry *runtimeHealthEntry) open(now time.Time) {
 
 func (entry *runtimeHealthEntry) snapshot(key runtimeHealthKey, now time.Time) RuntimeHealthSnapshot {
 	return RuntimeHealthSnapshot{
-		ChannelID:           key.channelID,
-		ModelName:           key.modelName,
-		State:               entry.state,
-		Reliability:         entry.successEWMA,
-		SuccessEWMA:         entry.successEWMA,
-		FailureEWMA:         entry.failureEWMA,
-		ResetWindowScore:    entry.resetWindowScore(now),
-		LatencyScore:        latencyFactor(time.Duration(entry.latencyEWMASeconds * float64(time.Second))),
-		LatencySampleCount:  entry.latencySampleCount,
-		ConsecutiveFailures: entry.consecutiveFailures,
-		Cooldown:            entry.cooldown,
-		OpenUntil:           entry.openUntil,
+		ChannelID:                 key.channelID,
+		ModelName:                 key.modelName,
+		State:                     entry.state,
+		Reliability:               entry.successEWMA,
+		SuccessEWMA:               entry.successEWMA,
+		FailureEWMA:               entry.failureEWMA,
+		ResetWindowScore:          entry.resetWindowScore(now),
+		LatencyScore:              latencyFactor(time.Duration(entry.latencyEWMASeconds * float64(time.Second))),
+		LatencySampleCount:        entry.latencySampleCount,
+		ThroughputTokensPerSecond: entry.throughputEWMA,
+		ThroughputSampleCount:     entry.throughputSampleCount,
+		ConsecutiveFailures:       entry.consecutiveFailures,
+		Cooldown:                  entry.cooldown,
+		OpenUntil:                 entry.openUntil,
 	}
 }
 
@@ -302,6 +321,10 @@ func latencyFactor(latency time.Duration) float64 {
 		return 0.5
 	}
 	return normalizeScore(1 / (1 + latency.Seconds()))
+}
+
+func validThroughput(tokensPerSecond float64) bool {
+	return tokensPerSecond > 0 && !math.IsNaN(tokensPerSecond) && !math.IsInf(tokensPerSecond, 0)
 }
 
 func (entry *runtimeHealthEntry) resetWindowScore(now time.Time) float64 {
@@ -346,6 +369,10 @@ func RecordRuntimeHealthSuccess(channelID int, modelName string) RuntimeHealthSn
 
 func RecordRuntimeHealthSuccessWithLatency(channelID int, modelName string, latency time.Duration) RuntimeHealthSnapshot {
 	return defaultRuntimeHealthTracker.RecordSuccessWithLatency(channelID, modelName, latency)
+}
+
+func RecordRuntimeHealthSuccessWithMetrics(channelID int, modelName string, latency time.Duration, tokensPerSecond float64) RuntimeHealthSnapshot {
+	return defaultRuntimeHealthTracker.RecordSuccessWithMetrics(channelID, modelName, latency, tokensPerSecond)
 }
 
 // RecordRuntimeHealthFailure records a failed process-wide observation.

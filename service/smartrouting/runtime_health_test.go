@@ -1,6 +1,7 @@
 package smartrouting
 
 import (
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,32 @@ func TestRuntimeHealthTrackerRecordsObservedLatencyAndPrunesStaleEntries(t *test
 	snapshot = tracker.Snapshot(62, "another-model")
 	assert.Equal(t, ChannelHealthHealthy, snapshot.State)
 	assert.Empty(t, tracker.entries)
+}
+
+func TestRuntimeHealthTrackerRecordsThroughputWithOneSuccessObservation(t *testing.T) {
+	tracker := NewRuntimeHealthTracker()
+
+	tracker.RecordFailure(63, "throughput-model")
+	snapshot := tracker.RecordSuccessWithMetrics(63, "throughput-model", 500*time.Millisecond, 20)
+	assert.InDelta(t, 0.84, snapshot.SuccessEWMA, 0.000001)
+	assert.Equal(t, 1, snapshot.LatencySampleCount)
+	assert.Equal(t, 1, snapshot.ThroughputSampleCount)
+	assert.Equal(t, 20.0, snapshot.ThroughputTokensPerSecond)
+
+	tracker.RecordSuccessWithMetrics(63, "throughput-model", time.Second, 40)
+	snapshot = tracker.Snapshot(63, "throughput-model")
+	assert.Equal(t, 2, snapshot.ThroughputSampleCount)
+	assert.InDelta(t, 24.0, snapshot.ThroughputTokensPerSecond, 0.000001)
+}
+
+func TestRuntimeHealthTrackerRejectsInvalidThroughput(t *testing.T) {
+	tracker := NewRuntimeHealthTracker()
+
+	for _, value := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		snapshot := tracker.RecordSuccessWithMetrics(64, "invalid-throughput", time.Second, value)
+		assert.Equal(t, 0, snapshot.ThroughputSampleCount)
+	}
+	assert.Equal(t, 4, tracker.Snapshot(64, "invalid-throughput").LatencySampleCount)
 }
 
 func TestRuntimeHealthTrackerDoesNotCreateEntryForUnobservedLatency(t *testing.T) {
@@ -161,4 +188,21 @@ func TestRuntimeHealthTrackerIsConcurrentSafe(t *testing.T) {
 	assert.GreaterOrEqual(t, snapshot.Reliability, 0.0)
 	assert.LessOrEqual(t, snapshot.Reliability, 1.0)
 	assert.InDelta(t, 1.0, snapshot.SuccessEWMA+snapshot.FailureEWMA, 0.000001)
+}
+
+func TestRuntimeHealthTrackerRecordsThroughputConcurrently(t *testing.T) {
+	tracker := NewRuntimeHealthTracker()
+	var waitGroup sync.WaitGroup
+	for index := 0; index < 100; index++ {
+		waitGroup.Add(1)
+		go func(tokensPerSecond float64) {
+			defer waitGroup.Done()
+			tracker.RecordSuccessWithMetrics(52, "concurrent-throughput", 250*time.Millisecond, tokensPerSecond)
+		}(float64(index + 1))
+	}
+	waitGroup.Wait()
+
+	snapshot := tracker.Snapshot(52, "concurrent-throughput")
+	assert.Equal(t, 100, snapshot.ThroughputSampleCount)
+	assert.True(t, validThroughput(snapshot.ThroughputTokensPerSecond))
 }

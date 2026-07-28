@@ -421,6 +421,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) (TextConsumeResult, error) {
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
+	recordSmartRoutingOutputTokens(ctx, relayInfo, originUsage, time.Now())
 	if usage == nil {
 		extraContent = append(extraContent, "上游无计费信息")
 	}
@@ -575,4 +576,32 @@ func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		LogError:         logErr,
 	}
 	return result, errors.Join(settlementErr, logErr)
+}
+
+func recordSmartRoutingOutputTokens(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, observedAt time.Time) {
+	if relayInfo == nil || usage == nil || !relayInfo.IsStream || usage.CompletionTokens < 8 ||
+		common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens) {
+		return
+	}
+	if !isSmartRoutingTextGeneration(relayInfo) {
+		return
+	}
+	relayInfo.RecordCurrentUpstreamAttemptOutputTokens(int64(usage.CompletionTokens), observedAt)
+}
+
+func isSmartRoutingTextGeneration(relayInfo *relaycommon.RelayInfo) bool {
+	switch relayInfo.RelayFormat {
+	case types.RelayFormatOpenAI:
+		return relayInfo.RelayMode == relayconstant.RelayModeChatCompletions ||
+			relayInfo.RelayMode == relayconstant.RelayModeCompletions
+	case types.RelayFormatClaude:
+		return true
+	case types.RelayFormatGemini:
+		return relayInfo.RelayMode == relayconstant.RelayModeGemini &&
+			!strings.Contains(strings.ToLower(relayInfo.RequestURLPath), "embed")
+	case types.RelayFormatOpenAIResponses:
+		return relayInfo.RelayMode == relayconstant.RelayModeResponses
+	default:
+		return false
+	}
 }

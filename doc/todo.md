@@ -59,6 +59,7 @@
 - [x] 完成 `ContextConsensus` 阶段 B-2c1：建立绑定模型、渠道、协议和正文摘要的权威 token/上下文上限证据契约，新增压缩渠道白名单、严格上限配置和安全压缩提示构造器，见 `doc/auto-smart-routing-context-consensus-stage-b2c1-implementation-2026-07-24.md`。
 - [x] 参考 OmniRoute 智能路由思路补充请求复杂度、任务匹配、上下文/缓存亲和、重置窗口、评分数据有效性、运行时健康隔离和会话稳定性；未引入外部配置体系，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 - [x] 将智能路由延迟评分改为逐上游尝试的有效样本：流式使用首个上游响应数据 TTFT，非流式使用完整尝试耗时，并隔离重试、忽略无首包流式延迟，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
+- [x] 将智能路由吞吐评分改为按“渠道 + 模型”采集的权威流式文本 output token/s，过滤本地估算和非文本请求，达到有效样本门槛后在候选集合内相对归一化，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 
 ## 待办
 

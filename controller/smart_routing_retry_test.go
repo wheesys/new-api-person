@@ -66,6 +66,18 @@ func TestRecordRuntimeHealthSuccessForAttemptUsesValidScoringLatency(t *testing.
 	})
 	nonStream := smartrouting.GetRuntimeHealthSnapshot(3903, "non-stream")
 	assert.Equal(t, 1, nonStream.LatencySampleCount)
+
+	recordRuntimeHealthSuccessForAttempt(3904, "stream-with-throughput", true, relaycommon.UpstreamAttemptSample{
+		Latency:                   2 * time.Second,
+		HasLatency:                true,
+		TTFT:                      500 * time.Millisecond,
+		HasTTFT:                   true,
+		ThroughputTokensPerSecond: 24,
+		HasThroughput:             true,
+	})
+	streamWithThroughput := smartrouting.GetRuntimeHealthSnapshot(3904, "stream-with-throughput")
+	assert.Equal(t, 1, streamWithThroughput.ThroughputSampleCount)
+	assert.Equal(t, 24.0, streamWithThroughput.ThroughputTokensPerSecond)
 }
 
 func setupSmartRoutingRetryTestDB(t *testing.T) *gorm.DB {

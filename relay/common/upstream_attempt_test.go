@@ -22,6 +22,32 @@ func TestUpstreamAttemptStreamingUsesTTFT(t *testing.T) {
 	assert.Equal(t, 3*time.Second, sample.Latency)
 }
 
+func TestUpstreamAttemptStreamingCalculatesGenerationAndThroughput(t *testing.T) {
+	startedAt := time.Unix(150, 0)
+	info := &RelayInfo{IsStream: true}
+	attempt := info.BeginUpstreamAttempt(15, 0, startedAt)
+	attempt.MarkFirstResponse(startedAt.Add(250 * time.Millisecond))
+	attempt.MarkOutputTokens(100, startedAt.Add(1250*time.Millisecond))
+	sample := attempt.Finish(startedAt.Add(1250 * time.Millisecond))
+
+	require.True(t, sample.HasGeneration)
+	assert.Equal(t, time.Second, sample.Generation)
+	assert.Equal(t, int64(100), sample.OutputTokens)
+	assert.InDelta(t, 100.0, sample.ThroughputTokensPerSecond, 0.000001)
+	assert.True(t, sample.HasThroughput)
+}
+
+func TestUpstreamAttemptRejectsTooShortThroughputSample(t *testing.T) {
+	startedAt := time.Unix(160, 0)
+	attempt := (&RelayInfo{IsStream: true}).BeginUpstreamAttempt(16, 0, startedAt)
+	attempt.MarkFirstResponse(startedAt.Add(250 * time.Millisecond))
+	attempt.MarkOutputTokens(100, startedAt.Add(300*time.Millisecond))
+	sample := attempt.Finish(startedAt.Add(300 * time.Millisecond))
+
+	assert.False(t, sample.HasThroughput)
+	assert.Zero(t, sample.ThroughputTokensPerSecond)
+}
+
 func TestUpstreamAttemptStreamingWithoutFirstResponseHasNoScore(t *testing.T) {
 	startedAt := time.Unix(200, 0)
 	attempt := (&RelayInfo{IsStream: true}).BeginUpstreamAttempt(20, 0, startedAt)
@@ -59,15 +85,19 @@ func TestUpstreamAttemptsAreIsolatedAcrossRetries(t *testing.T) {
 	firstStartedAt := time.Unix(400, 0)
 	firstAttempt := info.BeginUpstreamAttempt(40, 0, firstStartedAt)
 	firstAttempt.MarkFirstResponse(firstStartedAt.Add(2 * time.Second))
+	firstAttempt.MarkOutputTokens(20, firstStartedAt.Add(4*time.Second))
 
 	secondStartedAt := time.Unix(500, 0)
 	secondAttempt := info.BeginUpstreamAttempt(41, 1, secondStartedAt)
 	secondAttempt.MarkFirstResponse(secondStartedAt.Add(100 * time.Millisecond))
+	info.RecordCurrentUpstreamAttemptOutputTokens(30, secondStartedAt.Add(time.Second))
 
 	firstSample := firstAttempt.Finish(firstStartedAt.Add(4 * time.Second))
 	secondSample := secondAttempt.Finish(secondStartedAt.Add(time.Second))
 	assert.Equal(t, 2*time.Second, firstSample.TTFT)
 	assert.Equal(t, 100*time.Millisecond, secondSample.TTFT)
+	assert.Equal(t, int64(20), firstSample.OutputTokens)
+	assert.Equal(t, int64(30), secondSample.OutputTokens)
 }
 
 func TestUpstreamAttemptFirstResponseIsFirstWriteWins(t *testing.T) {

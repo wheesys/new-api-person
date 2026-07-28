@@ -517,7 +517,11 @@ func recordRuntimeHealthSuccessForAttempt(channelID int, modelName string, isStr
 		smartrouting.RecordRuntimeHealthSuccess(channelID, modelName)
 		return
 	}
-	smartrouting.RecordRuntimeHealthSuccessWithLatency(channelID, modelName, latency)
+	throughput := float64(0)
+	if sample.HasThroughput {
+		throughput = sample.ThroughputTokensPerSecond
+	}
+	smartrouting.RecordRuntimeHealthSuccessWithMetrics(channelID, modelName, latency, throughput)
 }
 
 func RelayMidjourney(c *gin.Context) {

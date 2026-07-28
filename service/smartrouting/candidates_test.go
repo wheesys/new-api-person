@@ -175,3 +175,31 @@ func TestBuildCandidatesUsesObservedRuntimeLatency(t *testing.T) {
 	require.Len(t, candidates, 1)
 	assert.InDelta(t, 0.8, candidates[0].LatencyScore, 0.000001)
 }
+
+func TestBuildCandidatesNormalizesObservedThroughputWithinCandidateSet(t *testing.T) {
+	ClearRuntimeHealth()
+	t.Cleanup(ClearRuntimeHealth)
+	const modelName = "runtime-throughput-model"
+	for index := 0; index < 3; index++ {
+		RecordRuntimeHealthSuccessWithMetrics(99003, modelName, 250*time.Millisecond, 10)
+		RecordRuntimeHealthSuccessWithMetrics(99004, modelName, 250*time.Millisecond, 30)
+	}
+
+	candidates := BuildCandidatesFromSnapshots(SmartRouteRequest{
+		UsingGroup:   "default",
+		EndpointType: EndpointChatCompletions,
+	}, []model.Pricing{{
+		ModelName:              modelName,
+		ModelRatio:             1,
+		CompletionRatio:        1,
+		SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+		EnableGroup:            []string{"default"},
+	}}, []ChannelSnapshot{
+		{ID: 99003, Group: "default", Models: modelName, Status: 1, EndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI}},
+		{ID: 99004, Group: "default", Models: modelName, Status: 1, EndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI}},
+	})
+
+	require.Len(t, candidates, 2)
+	assert.Equal(t, 0.0, candidates[0].ThroughputScore)
+	assert.Equal(t, 1.0, candidates[1].ThroughputScore)
+}

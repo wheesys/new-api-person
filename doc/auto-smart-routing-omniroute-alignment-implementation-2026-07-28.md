@@ -28,11 +28,14 @@
 同时修正基础评分数据：
 
 - `reliability` 不再固定为 `1`，改为读取按“渠道 + 模型”维护的运行时成功 EWMA，并结合多 Key 渠道可用 Key 比例。
-- 渠道 `Weight` 不再冒充吞吐量；没有真实吞吐数据时使用中性分 `0.5`，不参与候选间差异制造。
+- 渠道 `Weight` 不再冒充吞吐量；没有足够真实吞吐数据时使用中性分 `0.5`，不参与候选间差异制造。
 - 渠道表中的 `ResponseTime` 只来自手工或定时测试，不再直接作为智能路由延迟分。没有真实请求样本时使用中性分 `0.5`；同一“渠道 + 模型”至少积累 3 次有效真实请求延迟后，延迟 EWMA 才参与 `latency` 评分。
 - 延迟样本按每次实际上游尝试独立计时，重试不会复用请求级开始时间或前一次尝试的首包时间。流式请求使用“尝试开始到上游响应体首次读到非空数据”的 TTFT；SDK 事件流和 WebSocket 使用既有首事件/首消息标记。非流式请求和异步任务提交使用单次上游尝试的完整耗时。
 - 流式请求成功但没有观测到有效首包时，只记录健康成功，不写入延迟 EWMA，避免退回整段流式生成耗时污染评分。
 - HTTP 响应体的原始首包只写入当前上游尝试；请求级 `FirstResponseTime` 仍由有效流事件、SDK 事件或 WebSocket 消息确认。失败尝试读取 429/5xx 错误正文时不会抢先污染最终成功请求的 TTFT、消费日志和性能指标。
+- `throughput` 改为按“渠道 + 模型”采集真实流式文本输出 token/s：生成时长从单次尝试首包到权威 usage 到达，输出 token 使用 OpenAI、Responses、Claude、Gemini 等统一后的上游 `CompletionTokens`；后续结算、数据库和日志耗时不计入生成时长。
+- 采样入口按原始 RelayFormat、RelayMode 和 Gemini 路径明确限定为文本生成端点。本地响应文本估算、非流式请求、少于 8 个输出 token、首包后不足 100ms、音频、图像、Embedding、Rerank 和异步任务提交不进入吞吐 EWMA。每个“渠道 + 模型”至少积累 3 个有效样本，且当前候选集合至少有 2 个有效观测时，才按集合内最小/最大吞吐相对归一化；否则保持中性分 `0.5`。
+- 可靠性、延迟和吞吐通过同一次成功观测更新，避免一次请求重复推进成功 EWMA。
 
 ### 健康状态、故障隔离与重置窗口
 
@@ -74,7 +77,7 @@
 
 - 运行时健康画像当前为单进程状态，多实例之间可能暂时不同；数据库渠道状态和渠道缓存仍负责全局硬隔离。
 - `reset_window` 当前表示本地健康熔断冷却，不表示供应商账户配额重置时间；后者需要可靠的上游配额元数据，本轮按范围不引入外部配置。
-- 没有真实吞吐指标时保持中性分。后续若增加渠道级可验证吞吐采样，应替换中性值，而不是重新复用渠道权重。
+- 吞吐画像当前只覆盖具有权威输出 usage 和有效首包的流式文本请求；不满足口径的协议保持中性分。吞吐 EWMA 与健康状态一样是单进程数据，多实例间可能暂时不同。
 - 流式 TTFT 当前定义为首个上游响应数据，不保证等同于首个可见文本 token；若供应商先发送心跳或协议控制数据，该数据也会成为首包。后续若需要模型生成速度比较，应另行采集首个有效内容时间和输出 token 吞吐量，不能混入当前延迟指标。
 
 ## 验证
@@ -89,6 +92,9 @@
 - HTTP 流式响应体只在首次读取到非空数据时标记首包，空读取和 EOF 不产生首包记录。
 - 首次失败尝试的错误正文只标记该尝试，第二次流式成功后请求级首包时间指向成功流；请求级首包时间统一通过并发安全快照读取。
 - 讯飞流式 WebSocket 和火山 TTS WebSocket 在首个有效响应/音频负载到达时记录首包。
+- 权威流式文本 usage 的逐尝试 output token、首包至 usage 到达的生成时长和 token/s 计算；结算/日志延迟不计入生成时长，本地估算、短样本、小样本及图像 SSE 等非文本请求不采集。
+- 吞吐 EWMA 的渠道/模型隔离、无效值拒绝、并发安全、3 样本门槛，以及至少两个有效候选时的集合内相对归一化。
+- 成功请求在一次运行时健康观测中同时更新可靠性、延迟和吞吐，不重复计算成功 EWMA。
 - 多 Key 可用比例和运行时可靠性合并。
 - 始终隔离 `open`，并始终拒绝全部 Key 不可用的渠道。
 - 会话稳定性只在已选真实模型内部、健康且分差有界时优先亲和渠道。
@@ -97,6 +103,6 @@
 验证命令：
 
 ```bash
-go test ./relay/common ./relay/channel ./controller ./service/smartrouting
-go test -race ./relay/common ./relay/channel ./controller ./service/smartrouting -run 'Test(UpstreamAttempt|RelayInfoRequestFirstResponse|FirstResponseReadCloser|RecordRuntimeHealthSuccessForAttempt|GetChannel|ShouldRecordRuntimeHealthFailure|RuntimeHealth)' -count=1
+go test ./relay/common ./relay/channel ./controller ./service ./service/smartrouting
+go test -race ./relay/common ./relay/channel ./controller ./service ./service/smartrouting -run 'Test(UpstreamAttempt|RelayInfoRequestFirstResponse|FirstResponseReadCloser|RecordSmartRoutingOutputTokens|RecordRuntimeHealthSuccessForAttempt|GetChannel|ShouldRecordRuntimeHealthFailure|RuntimeHealth|BuildCandidates)' -count=1
 ```

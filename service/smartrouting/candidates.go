@@ -65,6 +65,7 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 	}
 
 	candidates := make([]SmartRouteCandidate, 0)
+	throughputObservations := make([]throughputObservation, 0)
 	for _, item := range pricing {
 		if !pricingMatchesRequest(item, request) {
 			continue
@@ -119,9 +120,49 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 				HealthState:        healthState,
 				HardUnavailable:    activeKeyRatio == 0,
 			})
+			throughputObservations = append(throughputObservations, throughputObservation{
+				tokensPerSecond: healthSnapshot.ThroughputTokensPerSecond,
+				sampleCount:     healthSnapshot.ThroughputSampleCount,
+			})
 		}
 	}
+	applyRelativeThroughputScores(candidates, throughputObservations)
 	return candidates
+}
+
+type throughputObservation struct {
+	tokensPerSecond float64
+	sampleCount     int
+}
+
+func applyRelativeThroughputScores(candidates []SmartRouteCandidate, observations []throughputObservation) {
+	if len(candidates) == 0 || len(candidates) != len(observations) {
+		return
+	}
+	validCount := 0
+	minimum := 0.0
+	maximum := 0.0
+	for _, observation := range observations {
+		if observation.sampleCount < 3 || !validThroughput(observation.tokensPerSecond) {
+			continue
+		}
+		if validCount == 0 || observation.tokensPerSecond < minimum {
+			minimum = observation.tokensPerSecond
+		}
+		if validCount == 0 || observation.tokensPerSecond > maximum {
+			maximum = observation.tokensPerSecond
+		}
+		validCount++
+	}
+	if validCount < 2 || maximum <= minimum {
+		return
+	}
+	for index, observation := range observations {
+		if observation.sampleCount < 3 || !validThroughput(observation.tokensPerSecond) {
+			continue
+		}
+		candidates[index].ThroughputScore = normalizeScore((observation.tokensPerSecond - minimum) / (maximum - minimum))
+	}
 }
 
 func mergeModelCapabilitiesWithProfile(capabilities ModelCapabilities, profile ModelRoutingProfile) ModelCapabilities {
