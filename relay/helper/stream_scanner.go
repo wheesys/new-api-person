@@ -139,7 +139,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}
 	// Ensure gin.Context is not returned to Gin's pool while any stream goroutine can still use it.
 	defer cleanup()
-
 	scanner.Split(bufio.ScanLines)
 	copyCodexSSEHeaders(c, resp)
 	SetEventStreamHeaders(c)
@@ -150,6 +149,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	if pingEnabled && pingTicker != nil {
 		wg.Add(1)
 		gopool.Go(func() {
+			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					logger.LogError(c, fmt.Sprintf("ping goroutine panic: %v", r))
@@ -157,7 +157,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					stop()
 				}
 				logger.LogDebug(c, "ping goroutine exited")
-				wg.Done()
 			}()
 
 			// 添加超时保护，防止 goroutine 无限运行
@@ -200,13 +199,13 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 	wg.Add(1)
 	gopool.Go(func() {
+		defer wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				logger.LogError(c, fmt.Sprintf("data handler goroutine panic: %v", r))
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPanic, fmt.Errorf("handler panic: %v", r))
 			}
 			stop()
-			wg.Done()
 		}()
 		sr := newStreamResult(info.StreamStatus)
 		for data := range dataChan {
@@ -226,6 +225,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	// Scanner goroutine with improved error handling
 	wg.Add(1)
 	common.RelayCtxGo(ctx, func() {
+		defer wg.Done()
 		defer func() {
 			close(dataChan)
 			if r := recover(); r != nil {
@@ -234,7 +234,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 			stop()
 			logger.LogDebug(c, "scanner goroutine exited")
-			wg.Done()
 		}()
 
 		for scanner.Scan() {

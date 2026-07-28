@@ -81,7 +81,7 @@
 - [x] 完成 `ContextConsensus` 阶段 B-2c2b1：将无网络预准备扩展到原生 Responses、Responses Compact、Claude 和 Gemini，保持各协议原有转换顺序并使用同一不可变正文快照发送，见 `doc/auto-smart-routing-context-consensus-stage-b2c2b1-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-2c2b2：增加 adaptor 纯目标解析与离线转换显式能力门禁，封印最终模型、协议、路径和正文证据，并让未声明能力的 adaptor 在权威终检时失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-b2c2b2-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-2c2c：冻结完整候选集合，接入严格 tokenizer/上下文上限适配器，并完成单次压缩编排、请求正文与 DTO 原子提交、逐候选终检及主预扣前失败关闭；未支持的最终协议、模型和请求状态继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-b2c2c-implementation-2026-07-28.md`。
-- [ ] 修复全包 `go test -race` 已暴露的既有竞态：流扫描结束信号、Gemini 测试并发修改 Gin 全局模式、任务轮询日志时间状态及异步任务对象读取。
+- [x] 修复全包 `go test -race` 已暴露的既有竞态：收紧流扫描生命周期、消除任务轮询并发日志状态竞争，并隔离 Gin 全局模式与异步任务对象测试读写；同类 AWS、MiniMax 测试一并修复，见 `doc/auto-smart-routing-race-fixes-implementation-2026-07-28.md`。
 - [ ] 审计并迁移仍使用非指针输出上限字段的旧渠道适配器（Baidu、Cloudflare、Cohere、Ollama、Xunfei 等），统一保留字段缺失与显式 `0` 的差异。
 - [ ] 阶段 B 完成后，实现阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL 和 provider state 绑定映射。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
