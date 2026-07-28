@@ -57,6 +57,7 @@
 - [x] 完成 `ContextConsensus` 阶段 B-2b1：建立无 Gin/网络/数据库依赖的压缩子请求执行契约，提供独立 request ID、一次性状态机、结构化计费结果、失败退款语义和父子审计，见 `doc/auto-smart-routing-context-consensus-stage-b2b1-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-2b2：在 controller 层实现隔离的真实非流式压缩子请求执行器，接入独立渠道选择、RelayInfo、BillingSession、计费快照、请求输入、响应校验和父子消费日志，见 `doc/auto-smart-routing-context-consensus-stage-b2b2-implementation-2026-07-24.md`。
 - [x] 完成 `ContextConsensus` 阶段 B-2c1：建立绑定模型、渠道、协议和正文摘要的权威 token/上下文上限证据契约，新增压缩渠道白名单、严格上限配置和安全压缩提示构造器，见 `doc/auto-smart-routing-context-consensus-stage-b2c1-implementation-2026-07-24.md`。
+- [x] 参考 OmniRoute 智能路由思路补充请求复杂度、任务匹配、上下文/缓存亲和、重置窗口、评分数据有效性、运行时健康隔离和会话稳定性；未引入外部配置体系，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 
 ## 待办
 

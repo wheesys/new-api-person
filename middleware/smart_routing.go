@@ -71,8 +71,10 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	if configuredPoolApplied && len(candidates) == 0 {
 		return nil, true, fmt.Errorf("no smart routing candidate for virtual model %s after applying configured model pool", modelRequest.Model)
 	}
+	candidates = applySmartRoutingAffinity(c, candidates)
 	ranked, _ := smartrouting.RankCandidates(routeRequest, candidates, profile.Policy)
 	ranked = filterSmartRoutingCandidatesByTokenLimit(c, ranked)
+	ranked = stabilizeSmartRoutingSession(ranked)
 	if len(ranked) == 0 {
 		return nil, true, fmt.Errorf("no smart routing candidate for virtual model %s", modelRequest.Model)
 	}
@@ -91,6 +93,7 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 	if !channelSupportsRequestPath(channel, c.Request.URL.Path, selected.ModelName) {
 		return nil, true, fmt.Errorf("smart routing selected channel %d does not support request path", selected.ChannelID)
 	}
+	bindSmartRoutingAffinity(c, selected)
 	if err := rewriteJSONRequestModel(c, selected.ModelName); err != nil {
 		return nil, true, err
 	}
@@ -100,10 +103,13 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 		Enabled:            true,
 		Policy:             profile.Policy,
 		TaskComplexity:     analysis.TaskComplexity,
+		TaskType:           analysis.TaskType,
+		RecommendedTier:    analysis.RecommendedTier,
 		ContextRequirement: analysis.ContextRequirement,
 		OriginalModel:      modelRequest.Model,
 		SelectedModel:      selected.ModelName,
 		SelectedChannelID:  selected.ChannelID,
+		SelectedHealth:     selected.HealthState,
 		CandidateCount:     len(ranked),
 		FallbackIndex:      0,
 		ScoreFactors:       selected.ScoreFactors,
@@ -139,8 +145,10 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 	if len(candidates) == 0 {
 		return nil, false, nil
 	}
+	candidates = applySmartRoutingAffinity(c, candidates)
 
 	ranked, _ := smartrouting.RankCandidates(routeRequest, candidates, smartrouting.PolicyBalanced)
+	ranked = stabilizeSmartRoutingSession(ranked)
 	if len(ranked) == 0 {
 		return nil, false, nil
 	}
@@ -149,16 +157,20 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
 		return nil, false, nil
 	}
+	bindSmartRoutingAffinity(c, selected)
 	setSmartRoutingRetryCandidates(c, ranked, selected.ModelName, smartRoutingContextSwitchAllowed(routeRequest))
 
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, smartrouting.Decision{
 		Enabled:            true,
 		Policy:             smartrouting.PolicyBalanced,
 		TaskComplexity:     analysis.TaskComplexity,
+		TaskType:           analysis.TaskType,
+		RecommendedTier:    analysis.RecommendedTier,
 		ContextRequirement: analysis.ContextRequirement,
 		OriginalModel:      modelRequest.Model,
 		SelectedModel:      modelRequest.Model,
 		SelectedChannelID:  selected.ChannelID,
+		SelectedHealth:     selected.HealthState,
 		CandidateCount:     len(ranked),
 		FallbackIndex:      0,
 		ScoreFactors:       selected.ScoreFactors,
@@ -257,6 +269,60 @@ func buildSmartRouteCandidates(c *gin.Context, request smartrouting.SmartRouteRe
 		candidates = append(candidates, smartrouting.BuildCandidatesFromSnapshots(requestForGroup, pricing, snapshots)...)
 	}
 	return candidates, nil
+}
+
+func applySmartRoutingAffinity(c *gin.Context, candidates []smartrouting.SmartRouteCandidate) []smartrouting.SmartRouteCandidate {
+	type affinityScope struct {
+		modelName string
+		group     string
+	}
+
+	preferences := make(map[affinityScope]service.ChannelAffinityPreference)
+	for index := range candidates {
+		scope := affinityScope{modelName: candidates[index].ModelName, group: candidates[index].Group}
+		preference, resolved := preferences[scope]
+		if !resolved {
+			preference = service.PeekChannelAffinityPreference(c, scope.modelName, scope.group)
+			preferences[scope] = preference
+		}
+		if !preference.Found || preference.ChannelID != candidates[index].ChannelID {
+			continue
+		}
+		if preference.Kind == service.ChannelAffinityCache {
+			candidates[index].CacheAffinityScore = 1
+			continue
+		}
+		candidates[index].AffinityScore = 1
+	}
+	return candidates
+}
+
+func bindSmartRoutingAffinity(c *gin.Context, selected smartrouting.SmartRouteCandidate) {
+	preference := service.ResolveChannelAffinityPreference(c, selected.ModelName, selected.Group)
+	if preference.Found && preference.ChannelID == selected.ChannelID {
+		service.MarkChannelAffinityUsed(c, selected.Group, selected.ChannelID)
+	}
+}
+
+func stabilizeSmartRoutingSession(candidates []smartrouting.SmartRouteCandidate) []smartrouting.SmartRouteCandidate {
+	const maximumAffinityScoreGap = 0.1
+	if len(candidates) < 2 {
+		return candidates
+	}
+	selectedModel := candidates[0].ModelName
+	for index := 1; index < len(candidates); index++ {
+		candidate := candidates[index]
+		if candidate.ModelName != selectedModel || candidate.HealthState != smartrouting.ChannelHealthHealthy ||
+			(candidate.AffinityScore <= 0 && candidate.CacheAffinityScore <= 0) ||
+			candidates[0].FinalScore-candidate.FinalScore > maximumAffinityScoreGap {
+			continue
+		}
+		stableCandidate := candidate
+		copy(candidates[1:index+1], candidates[0:index])
+		candidates[0] = stableCandidate
+		break
+	}
+	return candidates
 }
 
 func loadSmartRoutingChannelSnapshots(requestPath string) ([]smartrouting.ChannelSnapshot, error) {

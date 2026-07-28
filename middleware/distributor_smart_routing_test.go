@@ -6,11 +6,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -54,6 +56,57 @@ func setupDistributorSmartRoutingTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func TestStabilizeSmartRoutingSessionKeepsSelectedModelAndPrefersAffinityChannel(t *testing.T) {
+	candidates := []smartrouting.SmartRouteCandidate{
+		{ModelName: "model-a", ChannelID: 1, FinalScore: 0.9, HealthState: smartrouting.ChannelHealthHealthy},
+		{ModelName: "model-b", ChannelID: 2, FinalScore: 0.88, CacheAffinityScore: 1},
+		{ModelName: "model-a", ChannelID: 3, FinalScore: 0.8, AffinityScore: 1, HealthState: smartrouting.ChannelHealthHealthy},
+	}
+
+	stabilized := stabilizeSmartRoutingSession(candidates)
+
+	require.Len(t, stabilized, 3)
+	assert.Equal(t, "model-a", stabilized[0].ModelName)
+	assert.Equal(t, 3, stabilized[0].ChannelID)
+	assert.Equal(t, 1, stabilized[1].ChannelID)
+}
+
+func TestStabilizeSmartRoutingSessionDoesNotPromoteUnhealthyOrLowScoreChannel(t *testing.T) {
+	candidates := []smartrouting.SmartRouteCandidate{
+		{ModelName: "model-a", ChannelID: 1, FinalScore: 0.9, HealthState: smartrouting.ChannelHealthHealthy},
+		{ModelName: "model-a", ChannelID: 2, FinalScore: 0.85, AffinityScore: 1, HealthState: smartrouting.ChannelHealthDegraded},
+		{ModelName: "model-a", ChannelID: 3, FinalScore: 0.7, CacheAffinityScore: 1, HealthState: smartrouting.ChannelHealthHealthy},
+	}
+
+	stabilized := stabilizeSmartRoutingSession(candidates)
+
+	assert.Equal(t, 1, stabilized[0].ChannelID)
+}
+
+func TestApplySmartRoutingAffinityUsesExistingPromptCacheBinding(t *testing.T) {
+	affinityValue := fmt.Sprintf("smart-route-cache-%d", time.Now().UnixNano())
+	writeRecorder := httptest.NewRecorder()
+	writeContext, _ := gin.CreateTestContext(writeRecorder)
+	writeContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"prompt_cache_key":%q}`, affinityValue)))
+	writeContext.Request.Header.Set("Content-Type", "application/json")
+	service.ResolveChannelAffinityPreference(writeContext, "gpt-5", "default")
+	service.RecordChannelAffinity(writeContext, 42)
+
+	routeRecorder := httptest.NewRecorder()
+	routeContext, _ := gin.CreateTestContext(routeRecorder)
+	routeContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"prompt_cache_key":%q}`, affinityValue)))
+	routeContext.Request.Header.Set("Content-Type", "application/json")
+	candidates := applySmartRoutingAffinity(routeContext, []smartrouting.SmartRouteCandidate{
+		{ModelName: "gpt-5", Group: "default", ChannelID: 41},
+		{ModelName: "gpt-5", Group: "default", ChannelID: 42},
+	})
+
+	assert.Zero(t, candidates[0].CacheAffinityScore)
+	assert.Equal(t, 1.0, candidates[1].CacheAffinityScore)
+	service.ResolveChannelAffinityPreference(routeContext, "gpt-5", "default")
+	assert.True(t, service.ClearCurrentChannelAffinityCache(routeContext))
 }
 
 func setSmartRoutingVirtualModelPoolsForTest(t *testing.T, pools map[string][]string) {
@@ -586,6 +639,12 @@ func TestDistributeDoesNotStoreRetryCandidatesWhenExplicitModelSelectionFallsBac
 		Status:    1,
 		NameRule:  model.NameRuleExact,
 	}).Error)
+	smartrouting.ClearRuntimeHealth()
+	t.Cleanup(smartrouting.ClearRuntimeHealth)
+	for sampleIndex := 0; sampleIndex < 3; sampleIndex++ {
+		smartrouting.RecordRuntimeHealthSuccessWithLatency(3100, "gpt-fixed", 900*time.Millisecond)
+		smartrouting.RecordRuntimeHealthSuccessWithLatency(3101, "gpt-fixed", 50*time.Millisecond)
+	}
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

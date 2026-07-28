@@ -72,6 +72,7 @@
 - 工具请求要求候选支持 tools。
 - JSON schema 请求要求候选支持 JSON schema。
 - 图像、音频、文件、推理请求要求候选支持对应能力。
+- 运行时健康状态为 `open` 的候选始终隔离；多 Key 渠道全部 Key 不可用时始终拒绝。冷却到期后只有取得半开单探针租约的请求可以试探恢复。
 - 普通模型请求只能保留候选模型名等于请求模型名，或等于请求模型规范化匹配名的候选；最终 `selected_model` 仍记录为客户端请求的模型名。
 
 软评分：
@@ -83,12 +84,16 @@ final_score =
   + latency_weight * latency_score
   + throughput_weight * throughput_score
   + quality_weight * quality_score
+  + task_match_weight * task_match_score
+  + context_weight * context_score
+  + cache_weight * cache_score
+  + reset_window_weight * reset_window_score
   + affinity_weight * affinity_score
 ```
 
 不同策略只调整权重。`cost_first` 可以让便宜的可用模型优先；`quality_first` 可以让高质量和高可靠模型优先。
 
-渠道评分中，渠道倍率通过 `EstimatedQuota` 影响 `cost_score`，`ResponseTime` 影响 `latency_score`，渠道 `Weight` 影响 `throughput_score`。当前阶段没有独立的历史可靠性聚合时，启用渠道的 `reliability_score` 暂按可用处理，后续由指标聚合补充真实可靠性。
+渠道评分中，渠道倍率通过 `EstimatedQuota` 影响 `cost_score`；渠道表中的一次性测试 `ResponseTime` 不再直接参与智能调度，只有至少 3 次真实上游成功请求产生的按“渠道 + 模型”延迟 EWMA 才影响 `latency_score`，样本不足时使用中性分。渠道 `Weight` 不再作为吞吐量，尚无真实吞吐数据时 `throughput_score` 固定为中性分，不制造候选差异。`reliability_score` 来自同维度的运行时成功 EWMA，并结合多 Key 渠道可用 Key 比例。任务匹配、上下文余量、缓存亲和、重置窗口和会话亲和分别保留独立审计因子。
 
 ## 日志审计
 
@@ -99,18 +104,25 @@ final_score =
   "enabled": true,
   "policy": "quality_first",
   "complexity": "complex",
+  "task_type": "coding",
+  "recommended_tier": "premium",
   "context_requirement": "long",
   "original_model": "auto:quality",
   "selected_model": "premium-reasoning",
   "selected_channel_id": 12,
+  "selected_health": "healthy",
   "candidate_count": 4,
   "fallback_index": 0,
   "score_factors": {
     "cost": 0.2,
     "reliability": 0.98,
     "latency": 0.55,
-    "throughput": 0,
+    "throughput": 0.5,
     "quality": 0.97,
+    "task_match": 0.95,
+    "context": 0.75,
+    "cache": 1,
+    "reset_window": 1,
     "affinity": 0
   },
   "decision_reasons": ["tools_required", "json_schema_required"],
@@ -143,6 +155,9 @@ final_score =
 - 新增智能路由画像系统任务：外部榜单数据默认 10 天刷新一次，内部模型画像默认 1 天重算一次。首版支持 Aider 榜单 JSON/CSV/Markdown 表格解析，并将编码通过率、成本和耗时归一化为多维评分。
 - 新增 SWE-bench、Artificial Analysis 和 Arena 榜单适配器，统一输出 `ExternalBenchmarkRecord`；外部榜单刷新任务支持按环境变量配置多来源地址并合并缓存。
 - 模型画像生成改为先按来源归一化，再按模型名聚合，避免 Arena Elo、Artificial Analysis 指数和 Aider/SWE-bench 通过率的量纲互相污染；`Sources` 与 `SourceScores` 会保留来源审计信息。
+- 参考 OmniRoute 智能路由思路补充任务类型与推荐层级，新增任务匹配、上下文、缓存亲和、重置窗口和会话亲和评分，修正可靠性、延迟和吞吐评分数据来源。
+- 新增按“渠道 + 模型”隔离的运行时健康状态、EWMA 可靠性、连续失败熔断、指数冷却、半开恢复和多 Key 健康检查；现有渠道禁用仍作为全局硬状态。
+- 复用既有渠道亲和缓存，并在已经选定的真实模型内部优先亲和渠道，保持会话稳定性。完整实施说明见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 
 ## 下一步
 

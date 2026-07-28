@@ -218,7 +218,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		if !tryAcquireSmartRoutingHealthProbe(c, channel.Id, relayInfo.OriginModelName) {
+			newAPIError = types.NewError(
+				fmt.Errorf("智能路由渠道 %d 的半开探测正在执行", channel.Id),
+				types.ErrorCodeGetChannelFailed,
+			)
+			continue
+		}
 
+		attemptStartedAt := time.Now()
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -231,6 +239,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			smartrouting.RecordRuntimeHealthSuccessWithLatency(channel.Id, relayInfo.OriginModelName, time.Since(attemptStartedAt))
 			relayInfo.LastError = nil
 			return
 		}
@@ -390,6 +399,7 @@ func updateSmartRoutingDecisionForRetry(c *gin.Context, candidate smartrouting.S
 		return
 	}
 	decision.SelectedChannelID = candidate.ChannelID
+	decision.SelectedHealth = candidate.HealthState
 	decision.FallbackIndex = retryIndex
 	decision.ScoreFactors = candidate.ScoreFactors
 	common.SetContextKey(c, constant.ContextKeySmartRoutingDecision, decision)
@@ -431,6 +441,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
+	if shouldRecordRuntimeHealthFailure(err) {
+		smartrouting.RecordRuntimeHealthFailure(channelError.ChannelId, common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+	}
 	if service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
@@ -472,6 +485,29 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func shouldRecordRuntimeHealthFailure(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if types.IsChannelError(err) || service.ShouldDisableChannel(err) {
+		return true
+	}
+	if err.StatusCode < 100 || err.StatusCode > 599 {
+		return true
+	}
+	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) {
+		return false
+	}
+	return operation_setting.ShouldRetryByStatusCode(err.StatusCode)
+}
+
+func tryAcquireSmartRoutingHealthProbe(c *gin.Context, channelID int, modelName string) bool {
+	if _, ok := common.GetContextKeyType[smartrouting.Decision](c, constant.ContextKeySmartRoutingDecision); !ok {
+		return true
+	}
+	return smartrouting.TryAcquireRuntimeHealthProbe(channelID, modelName)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -620,9 +656,19 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		if !tryAcquireSmartRoutingHealthProbe(c, channel.Id, relayInfo.OriginModelName) {
+			taskErr = service.TaskErrorWrapperLocal(
+				fmt.Errorf("智能路由渠道 %d 的半开探测正在执行", channel.Id),
+				"smart_routing_probe_busy",
+				http.StatusServiceUnavailable,
+			)
+			continue
+		}
 
+		attemptStartedAt := time.Now()
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
+			smartrouting.RecordRuntimeHealthSuccessWithLatency(channel.Id, relayInfo.OriginModelName, time.Since(attemptStartedAt))
 			break
 		}
 

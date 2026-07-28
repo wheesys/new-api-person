@@ -31,6 +31,17 @@ const (
 	TaskCritical TaskComplexity = "critical"
 )
 
+type TaskType string
+
+const (
+	TaskTypeGeneral     TaskType = "general"
+	TaskTypeTranslation TaskType = "translation"
+	TaskTypeCoding      TaskType = "coding"
+	TaskTypeReasoning   TaskType = "reasoning"
+	TaskTypeAnalysis    TaskType = "analysis"
+	TaskTypeCreative    TaskType = "creative"
+)
+
 type ContextRequirement string
 
 const (
@@ -89,6 +100,8 @@ type VirtualModelProfile struct {
 
 type SmartRouteAnalysis struct {
 	TaskComplexity     TaskComplexity
+	TaskType           TaskType
+	RecommendedTier    ModelQualityTier
 	ContextRequirement ContextRequirement
 	TaskScore          int
 	ContextScore       int
@@ -120,6 +133,10 @@ type SmartRouteCandidate struct {
 	ContextScore       float64
 	PreferenceScore    float64
 	AffinityScore      float64
+	CacheAffinityScore float64
+	ResetWindowScore   float64
+	HealthState        ChannelHealthState
+	HardUnavailable    bool
 	FinalScore         float64
 	ScoreFactors       ScoreFactors
 }
@@ -130,6 +147,10 @@ type ScoreFactors struct {
 	Latency     float64
 	Throughput  float64
 	Quality     float64
+	TaskMatch   float64
+	Context     float64
+	Cache       float64
+	ResetWindow float64
 	Affinity    float64
 }
 
@@ -142,10 +163,13 @@ type Decision struct {
 	Enabled            bool
 	Policy             RoutePolicy
 	TaskComplexity     TaskComplexity
+	TaskType           TaskType
+	RecommendedTier    ModelQualityTier
 	ContextRequirement ContextRequirement
 	OriginalModel      string
 	SelectedModel      string
 	SelectedChannelID  int
+	SelectedHealth     ChannelHealthState
 	CandidateCount     int
 	FallbackIndex      int
 	ScoreFactors       ScoreFactors
@@ -176,6 +200,10 @@ type policyWeights struct {
 	latency     float64
 	throughput  float64
 	quality     float64
+	taskMatch   float64
+	context     float64
+	cache       float64
+	resetWindow float64
 	affinity    float64
 }
 
@@ -209,44 +237,64 @@ var virtualModelProfiles = map[string]VirtualModelProfile{
 
 var routePolicyWeights = map[RoutePolicy]policyWeights{
 	PolicyCostFirst: {
-		cost:        0.55,
-		reliability: 0.18,
-		latency:     0.12,
-		throughput:  0.05,
-		quality:     0.08,
-		affinity:    0.02,
+		cost:        0.40,
+		reliability: 0.15,
+		latency:     0.10,
+		throughput:  0.04,
+		quality:     0.05,
+		taskMatch:   0.08,
+		context:     0.05,
+		cache:       0.04,
+		resetWindow: 0.04,
+		affinity:    0.05,
 	},
 	PolicyBalanced: {
-		cost:        0.25,
-		reliability: 0.25,
-		latency:     0.20,
-		throughput:  0.08,
-		quality:     0.17,
+		cost:        0.18,
+		reliability: 0.20,
+		latency:     0.15,
+		throughput:  0.05,
+		quality:     0.12,
+		taskMatch:   0.12,
+		context:     0.06,
+		cache:       0.04,
+		resetWindow: 0.03,
 		affinity:    0.05,
 	},
 	PolicyQualityFirst: {
-		cost:        0.10,
-		reliability: 0.25,
-		latency:     0.08,
-		throughput:  0.07,
-		quality:     0.45,
-		affinity:    0.05,
+		cost:        0.07,
+		reliability: 0.18,
+		latency:     0.07,
+		throughput:  0.04,
+		quality:     0.25,
+		taskMatch:   0.20,
+		context:     0.07,
+		cache:       0.03,
+		resetWindow: 0.03,
+		affinity:    0.06,
 	},
 	PolicyLatencyFirst: {
-		cost:        0.18,
-		reliability: 0.20,
-		latency:     0.45,
+		cost:        0.10,
+		reliability: 0.17,
+		latency:     0.30,
 		throughput:  0.08,
-		quality:     0.06,
-		affinity:    0.03,
+		quality:     0.05,
+		taskMatch:   0.09,
+		context:     0.05,
+		cache:       0.06,
+		resetWindow: 0.04,
+		affinity:    0.06,
 	},
 	PolicyReliabilityFirst: {
-		cost:        0.08,
-		reliability: 0.50,
-		latency:     0.12,
-		throughput:  0.08,
-		quality:     0.17,
-		affinity:    0.05,
+		cost:        0.06,
+		reliability: 0.32,
+		latency:     0.10,
+		throughput:  0.05,
+		quality:     0.08,
+		taskMatch:   0.10,
+		context:     0.05,
+		cache:       0.06,
+		resetWindow: 0.08,
+		affinity:    0.10,
 	},
 }
 
@@ -265,8 +313,12 @@ func ResolveVirtualModel(modelName string) (VirtualModelProfile, bool) {
 func AnalyzeRequest(request SmartRouteRequest) SmartRouteAnalysis {
 	taskScore, taskReasons := scoreTaskComplexity(request)
 	contextScore, contextReasons := scoreContextRequirement(request)
+	taskComplexity := classifyTaskComplexity(taskScore, request.RequiresReliability)
+	taskType := classifyTaskType(request)
 	return SmartRouteAnalysis{
-		TaskComplexity:     classifyTaskComplexity(taskScore, request.RequiresReliability),
+		TaskComplexity:     taskComplexity,
+		TaskType:           taskType,
+		RecommendedTier:    recommendedTier(taskComplexity, taskType, request),
 		ContextRequirement: classifyContextRequirement(contextScore),
 		TaskScore:          taskScore,
 		ContextScore:       contextScore,
@@ -283,6 +335,7 @@ func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate,
 	accepted := make([]SmartRouteCandidate, 0, len(candidates))
 	rejections := make([]CandidateRejection, 0)
 	maxQuota := maxEstimatedQuota(candidates)
+	analysis := AnalyzeRequest(request)
 	for _, candidate := range candidates {
 		reasons := rejectCandidate(request, candidate)
 		if len(reasons) > 0 {
@@ -293,7 +346,7 @@ func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate,
 			continue
 		}
 		scored := candidate
-		scored.ScoreFactors = buildScoreFactors(request, candidate, maxQuota)
+		scored.ScoreFactors = buildScoreFactors(request, analysis, candidate, maxQuota)
 		scored.FinalScore = weightedScore(scored.ScoreFactors, policy)
 		accepted = append(accepted, scored)
 	}
@@ -316,19 +369,26 @@ func (decision Decision) LogFields() map[string]interface{} {
 		"enabled":             decision.Enabled,
 		"policy":              string(decision.Policy),
 		"complexity":          string(decision.TaskComplexity),
+		"task_type":           string(decision.TaskType),
+		"recommended_tier":    string(decision.RecommendedTier),
 		"context_requirement": string(decision.ContextRequirement),
 		"original_model":      decision.OriginalModel,
 		"selected_model":      decision.SelectedModel,
 		"selected_channel_id": decision.SelectedChannelID,
+		"selected_health":     string(decision.SelectedHealth),
 		"candidate_count":     decision.CandidateCount,
 		"fallback_index":      decision.FallbackIndex,
 		"score_factors": map[string]interface{}{
-			"cost":        decision.ScoreFactors.Cost,
-			"reliability": decision.ScoreFactors.Reliability,
-			"latency":     decision.ScoreFactors.Latency,
-			"throughput":  decision.ScoreFactors.Throughput,
-			"quality":     decision.ScoreFactors.Quality,
-			"affinity":    decision.ScoreFactors.Affinity,
+			"cost":         decision.ScoreFactors.Cost,
+			"reliability":  decision.ScoreFactors.Reliability,
+			"latency":      decision.ScoreFactors.Latency,
+			"throughput":   decision.ScoreFactors.Throughput,
+			"quality":      decision.ScoreFactors.Quality,
+			"task_match":   decision.ScoreFactors.TaskMatch,
+			"context":      decision.ScoreFactors.Context,
+			"cache":        decision.ScoreFactors.Cache,
+			"reset_window": decision.ScoreFactors.ResetWindow,
+			"affinity":     decision.ScoreFactors.Affinity,
 		},
 	}
 	if len(decision.DecisionReasons) > 0 {
@@ -368,7 +428,11 @@ func scoreTaskComplexity(request SmartRouteRequest) (int, []string) {
 		reasons = append(reasons, "simple_rewrite_or_translation")
 	}
 	if request.HasTools || request.ToolCount > 0 {
-		score += 3 + request.ToolCount
+		toolComplexity := request.ToolCount
+		if toolComplexity > 3 {
+			toolComplexity = 3
+		}
+		score += 3 + toolComplexity
 		reasons = append(reasons, "tools_required")
 	}
 	if request.RequiresJSONSchema {
@@ -391,9 +455,13 @@ func scoreTaskComplexity(request SmartRouteRequest) (int, []string) {
 		score += 3
 		reasons = append(reasons, "reasoning_requested")
 	}
-	if containsAny(text, []string{"代码", "debug", "调试", "迁移", "架构", "方案", "多步骤", "multi-step", "schema"}) {
+	if containsAny(text, []string{"代码", "code", "debug", "调试", "迁移", "migration", "架构", "方案", "多步骤", "multi-step", "schema"}) {
 		score += 2
 		reasons = append(reasons, "complex_task_terms")
+	}
+	if containsAny(text, []string{"证明", "prove", "数学", "math", "定理", "theorem", "根因", "root cause"}) {
+		score += 2
+		reasons = append(reasons, "deep_analysis_terms")
 	}
 	if request.MaxOutputTokens >= 4096 || (request.TokenMeta != nil && request.TokenMeta.MaxTokens >= 4096) {
 		score += 1
@@ -496,8 +564,51 @@ func classifyContextRequirement(score int) ContextRequirement {
 	}
 }
 
+func classifyTaskType(request SmartRouteRequest) TaskType {
+	text := normalizedCombinedText(request.TokenMeta)
+	if isSimpleRewriteOrTranslation(text) && containsAny(text, []string{"翻译", "translate"}) {
+		return TaskTypeTranslation
+	}
+	if request.ReasoningRequested || containsAny(text, []string{"reasoning", "推理", "证明", "prove", "定理", "theorem"}) {
+		return TaskTypeReasoning
+	}
+	if isCodingTaskText(text) {
+		return TaskTypeCoding
+	}
+	if containsAny(text, []string{"分析", "analysis", "比较", "compare", "评估", "evaluate", "根因", "root cause"}) {
+		return TaskTypeAnalysis
+	}
+	if containsAny(text, []string{"创作", "creative", "故事", "story", "文案", "copywriting", "诗", "poem"}) {
+		return TaskTypeCreative
+	}
+	return TaskTypeGeneral
+}
+
+func recommendedTier(complexity TaskComplexity, taskType TaskType, request SmartRouteRequest) ModelQualityTier {
+	if taskType == TaskTypeReasoning || request.ReasoningRequested {
+		return QualityReasoning
+	}
+
+	tier := QualityEconomy
+	switch complexity {
+	case TaskCritical, TaskComplex:
+		tier = QualityPremium
+	case TaskStandard:
+		tier = QualityStandard
+	}
+	if (request.HasTools || request.ToolCount > 0 || request.RequiresJSONSchema) && tier == QualityEconomy {
+		return QualityStandard
+	}
+	return tier
+}
+
 func rejectCandidate(request SmartRouteRequest, candidate SmartRouteCandidate) []string {
 	reasons := make([]string, 0)
+	if candidate.HardUnavailable {
+		reasons = append(reasons, "channel_hard_unavailable")
+	} else if candidate.HealthState == ChannelHealthOpen {
+		reasons = append(reasons, "channel_health_open")
+	}
 	if request.ContextConstraint.ValidationMode != "" && !request.ContextConstraint.SwitchAllowed &&
 		candidate.ModelName != request.OriginalModel {
 		reasons = append(reasons, "context_state_switch_not_allowed")
@@ -539,13 +650,17 @@ func maxEstimatedQuota(candidates []SmartRouteCandidate) int {
 	return maxQuota
 }
 
-func buildScoreFactors(request SmartRouteRequest, candidate SmartRouteCandidate, maxQuota int) ScoreFactors {
+func buildScoreFactors(request SmartRouteRequest, analysis SmartRouteAnalysis, candidate SmartRouteCandidate, maxQuota int) ScoreFactors {
 	return ScoreFactors{
 		Cost:        costScore(candidate.EstimatedQuota, maxQuota),
 		Reliability: normalizeScore(candidate.Reliability),
 		Latency:     candidateLatencyFactor(candidate),
 		Throughput:  normalizeScore(candidate.ThroughputScore),
 		Quality:     candidateQualityFactor(request, candidate),
+		TaskMatch:   candidateTaskMatchFactor(analysis, candidate),
+		Context:     candidateContextFactor(request, candidate),
+		Cache:       normalizeScore(candidate.CacheAffinityScore),
+		ResetWindow: normalizeScore(candidate.ResetWindowScore),
 		Affinity:    normalizeScore(candidate.AffinityScore),
 	}
 }
@@ -575,6 +690,74 @@ func candidateQualityFactor(request SmartRouteRequest, candidate SmartRouteCandi
 	return normalizeScore(quality)
 }
 
+func candidateTaskMatchFactor(analysis SmartRouteAnalysis, candidate SmartRouteCandidate) float64 {
+	specialtyScore := 0.5
+	switch analysis.TaskType {
+	case TaskTypeCoding:
+		if candidate.CodingScore > 0 {
+			specialtyScore = candidate.CodingScore
+		}
+	case TaskTypeReasoning:
+		if candidate.ReasoningScore > 0 {
+			specialtyScore = candidate.ReasoningScore
+		} else if candidate.SupportsReasoning {
+			specialtyScore = 0.8
+		}
+	case TaskTypeAnalysis:
+		if candidate.ReasoningScore > 0 {
+			specialtyScore = candidate.ReasoningScore
+		}
+	}
+	tierScore := qualityTierMatchScore(analysis.RecommendedTier, candidate.QualityTier)
+	return normalizeScore(specialtyScore*0.5 + tierScore*0.5)
+}
+
+func qualityTierMatchScore(recommended ModelQualityTier, actual ModelQualityTier) float64 {
+	if recommended == actual {
+		return 1
+	}
+	tierOrder := map[ModelQualityTier]int{
+		QualityEconomy:   0,
+		QualityStandard:  1,
+		QualityPremium:   2,
+		QualityReasoning: 3,
+	}
+	recommendedOrder, recommendedKnown := tierOrder[recommended]
+	actualOrder, actualKnown := tierOrder[actual]
+	if !recommendedKnown || !actualKnown {
+		return 0.5
+	}
+	difference := recommendedOrder - actualOrder
+	if difference < 0 {
+		difference = -difference
+	}
+	if difference == 1 {
+		return 0.7
+	}
+	return 0.35
+}
+
+func candidateContextFactor(request SmartRouteRequest, candidate SmartRouteCandidate) float64 {
+	requiredTokens := request.ContextTokensRequired
+	if requiredTokens <= 0 {
+		if candidate.ContextScore > 0 {
+			return normalizeScore(candidate.ContextScore)
+		}
+		return 0.5
+	}
+	if candidate.MaxContextTokens <= 0 {
+		return 0.5
+	}
+	if requiredTokens >= candidate.MaxContextTokens {
+		return 0
+	}
+	headroom := 1 - float64(requiredTokens)/float64(candidate.MaxContextTokens)
+	if candidate.ContextScore > 0 {
+		headroom = headroom*0.75 + normalizeScore(candidate.ContextScore)*0.25
+	}
+	return normalizeScore(headroom)
+}
+
 func weightedScore(factors ScoreFactors, policy RoutePolicy) float64 {
 	weights, ok := routePolicyWeights[policy]
 	if !ok {
@@ -585,6 +768,10 @@ func weightedScore(factors ScoreFactors, policy RoutePolicy) float64 {
 		factors.Latency*weights.latency +
 		factors.Throughput*weights.throughput +
 		factors.Quality*weights.quality +
+		factors.TaskMatch*weights.taskMatch +
+		factors.Context*weights.context +
+		factors.Cache*weights.cache +
+		factors.ResetWindow*weights.resetWindow +
 		factors.Affinity*weights.affinity
 }
 

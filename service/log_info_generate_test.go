@@ -24,10 +24,13 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 		Enabled:            true,
 		Policy:             smartrouting.PolicyQualityFirst,
 		TaskComplexity:     smartrouting.TaskComplex,
+		TaskType:           smartrouting.TaskTypeCoding,
+		RecommendedTier:    smartrouting.QualityPremium,
 		ContextRequirement: smartrouting.ContextLong,
 		OriginalModel:      "auto:quality",
 		SelectedModel:      "premium-reasoning",
 		SelectedChannelID:  12,
+		SelectedHealth:     smartrouting.ChannelHealthHealthy,
 		CandidateCount:     4,
 		FallbackIndex:      0,
 		ScoreFactors: smartrouting.ScoreFactors{
@@ -35,6 +38,10 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 			Reliability: 0.98,
 			Latency:     0.55,
 			Quality:     0.97,
+			TaskMatch:   0.95,
+			Context:     0.75,
+			Cache:       1,
+			ResetWindow: 1,
 		},
 		DecisionReasons: []string{"tools_required", "json_schema_required"},
 		ContextConsensus: smartrouting.ContextConsensusLog{
@@ -71,10 +78,19 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 	assert.Equal(t, true, smartRouting["enabled"])
 	assert.Equal(t, "quality_first", smartRouting["policy"])
 	assert.Equal(t, "complex", smartRouting["complexity"])
+	assert.Equal(t, "coding", smartRouting["task_type"])
+	assert.Equal(t, "premium", smartRouting["recommended_tier"])
 	assert.Equal(t, "long", smartRouting["context_requirement"])
 	assert.Equal(t, "auto:quality", smartRouting["original_model"])
 	assert.Equal(t, "premium-reasoning", smartRouting["selected_model"])
 	assert.Equal(t, 12, smartRouting["selected_channel_id"])
+	assert.Equal(t, "healthy", smartRouting["selected_health"])
+	scoreFactors, ok := smartRouting["score_factors"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 0.95, scoreFactors["task_match"])
+	assert.Equal(t, 0.75, scoreFactors["context"])
+	assert.Equal(t, 1.0, scoreFactors["cache"])
+	assert.Equal(t, 1.0, scoreFactors["reset_window"])
 	assert.NotContains(t, smartRouting, "request_body")
 	assert.NotContains(t, smartRouting, "api_key")
 

@@ -12,12 +12,32 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/smartrouting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestShouldRecordRuntimeHealthFailureUsesRetryableChannelErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		expected   bool
+	}{
+		{name: "client request error", statusCode: 400, expected: false},
+		{name: "rate limited", statusCode: 429, expected: true},
+		{name: "upstream unavailable", statusCode: 503, expected: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := types.NewOpenAIError(fmt.Errorf("status %d", test.statusCode), types.ErrorCodeBadResponseStatusCode, test.statusCode)
+			assert.Equal(t, test.expected, shouldRecordRuntimeHealthFailure(err))
+		})
+	}
+}
 
 func setupSmartRoutingRetryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()

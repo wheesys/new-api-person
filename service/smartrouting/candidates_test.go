@@ -2,6 +2,7 @@ package smartrouting
 
 import (
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -61,7 +62,9 @@ func TestBuildCandidatesFromSnapshotsFiltersGroupAndEndpoint(t *testing.T) {
 	assert.True(t, candidates[0].SupportsTools)
 	assert.True(t, candidates[0].SupportsJSONSchema)
 	assert.True(t, candidates[0].SupportsStream)
-	assert.InDelta(t, 0.75, candidates[0].LatencyScore, 0.001)
+	assert.Equal(t, 0.5, candidates[0].LatencyScore)
+	assert.Equal(t, 0.5, candidates[0].ThroughputScore)
+	assert.Equal(t, ChannelHealthHealthy, candidates[0].HealthState)
 }
 
 func TestInferModelCapabilitiesFromModelNameAndEndpoint(t *testing.T) {
@@ -106,4 +109,69 @@ func TestNewChannelSnapshotCopiesRoutingFields(t *testing.T) {
 	require.NotNil(t, snapshot.PriceRatio)
 	assert.Equal(t, 0.25, *snapshot.PriceRatio)
 	assert.Contains(t, snapshot.EndpointTypes, constant.EndpointTypeOpenAI)
+}
+
+func TestBuildCandidatesUsesRuntimeAndMultiKeyHealth(t *testing.T) {
+	ClearRuntimeHealth()
+	t.Cleanup(ClearRuntimeHealth)
+	const channelID = 99001
+	const modelName = "runtime-health-model"
+	RecordRuntimeHealthFailure(channelID, modelName)
+
+	candidates := BuildCandidatesFromSnapshots(SmartRouteRequest{
+		UsingGroup:   "default",
+		EndpointType: EndpointChatCompletions,
+	}, []model.Pricing{{
+		ModelName:              modelName,
+		ModelRatio:             1,
+		CompletionRatio:        1,
+		SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+		EnableGroup:            []string{"default"},
+	}}, []ChannelSnapshot{{
+		ID:                 channelID,
+		Group:              "default",
+		Models:             modelName,
+		Status:             1,
+		EndpointTypes:      []constant.EndpointType{constant.EndpointTypeOpenAI},
+		IsMultiKey:         true,
+		MultiKeySize:       4,
+		MultiKeyStatusList: map[int]int{1: 2},
+	}})
+
+	require.Len(t, candidates, 1)
+	assert.Equal(t, ChannelHealthDegraded, candidates[0].HealthState)
+	assert.InDelta(t, 0.6, candidates[0].Reliability, 0.000001)
+	assert.Equal(t, 0.5, candidates[0].LatencyScore)
+	assert.Equal(t, 0.5, candidates[0].ThroughputScore)
+}
+
+func TestBuildCandidatesUsesObservedRuntimeLatency(t *testing.T) {
+	ClearRuntimeHealth()
+	t.Cleanup(ClearRuntimeHealth)
+	const channelID = 99002
+	const modelName = "runtime-latency-model"
+	RecordRuntimeHealthSuccessWithLatency(channelID, modelName, 250*time.Millisecond)
+	RecordRuntimeHealthSuccessWithLatency(channelID, modelName, 250*time.Millisecond)
+	RecordRuntimeHealthSuccessWithLatency(channelID, modelName, 250*time.Millisecond)
+
+	candidates := BuildCandidatesFromSnapshots(SmartRouteRequest{
+		UsingGroup:   "default",
+		EndpointType: EndpointChatCompletions,
+	}, []model.Pricing{{
+		ModelName:              modelName,
+		ModelRatio:             1,
+		CompletionRatio:        1,
+		SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+		EnableGroup:            []string{"default"},
+	}}, []ChannelSnapshot{{
+		ID:            channelID,
+		Group:         "default",
+		Models:        modelName,
+		Status:        1,
+		ResponseTime:  10,
+		EndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+	}})
+
+	require.Len(t, candidates, 1)
+	assert.InDelta(t, 0.8, candidates[0].LatencyScore, 0.000001)
 }

@@ -225,9 +225,17 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
 
-	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
-	require.True(t, found)
-	require.Equal(t, 9528, channelID)
+	peeked := PeekChannelAffinityPreference(ctx, "gpt-5", "default")
+	require.True(t, peeked.Found)
+	require.Equal(t, 9528, peeked.ChannelID)
+	require.Equal(t, ChannelAffinitySession, peeked.Kind)
+	_, hasMetaAfterPeek := getChannelAffinityMeta(ctx)
+	require.False(t, hasMetaAfterPeek)
+
+	preference := ResolveChannelAffinityPreference(ctx, "gpt-5", "default")
+	require.True(t, preference.Found)
+	require.Equal(t, 9528, preference.ChannelID)
+	require.Equal(t, ChannelAffinitySession, preference.Kind)
 
 	meta, ok := getChannelAffinityMeta(ctx)
 	require.True(t, ok)
@@ -293,9 +301,10 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"prompt_cache_key":"%s"}`, affinityValue)))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
-	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
-	require.True(t, found)
-	require.Equal(t, 9527, channelID)
+	preference := ResolveChannelAffinityPreference(ctx, "gpt-5", "default")
+	require.True(t, preference.Found)
+	require.Equal(t, 9527, preference.ChannelID)
+	require.Equal(t, ChannelAffinityCache, preference.Kind)
 
 	baseOverride := map[string]interface{}{
 		"temperature": 0.2,

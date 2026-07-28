@@ -10,14 +10,17 @@ import (
 )
 
 type ChannelSnapshot struct {
-	ID            int
-	Group         string
-	Models        string
-	Status        int
-	ResponseTime  int
-	Weight        int
-	PriceRatio    *float64
-	EndpointTypes []constant.EndpointType
+	ID                 int
+	Group              string
+	Models             string
+	Status             int
+	ResponseTime       int
+	Weight             int
+	PriceRatio         *float64
+	EndpointTypes      []constant.EndpointType
+	IsMultiKey         bool
+	MultiKeySize       int
+	MultiKeyStatusList map[int]int
 }
 
 func NewChannelSnapshot(channel *model.Channel) ChannelSnapshot {
@@ -25,15 +28,22 @@ func NewChannelSnapshot(channel *model.Channel) ChannelSnapshot {
 		return ChannelSnapshot{}
 	}
 	models := channel.Models
+	statusList := make(map[int]int, len(channel.ChannelInfo.MultiKeyStatusList))
+	for keyIndex, status := range channel.ChannelInfo.MultiKeyStatusList {
+		statusList[keyIndex] = status
+	}
 	return ChannelSnapshot{
-		ID:            channel.Id,
-		Group:         channel.Group,
-		Models:        models,
-		Status:        channel.Status,
-		ResponseTime:  channel.ResponseTime,
-		Weight:        channel.GetWeight(),
-		PriceRatio:    channel.PriceRatio,
-		EndpointTypes: common.GetEndpointTypesByChannelType(channel.Type, firstCommaListValue(models)),
+		ID:                 channel.Id,
+		Group:              channel.Group,
+		Models:             models,
+		Status:             channel.Status,
+		ResponseTime:       channel.ResponseTime,
+		Weight:             channel.GetWeight(),
+		PriceRatio:         channel.PriceRatio,
+		EndpointTypes:      common.GetEndpointTypesByChannelType(channel.Type, firstCommaListValue(models)),
+		IsMultiKey:         channel.ChannelInfo.IsMultiKey,
+		MultiKeySize:       channel.ChannelInfo.MultiKeySize,
+		MultiKeyStatusList: statusList,
 	}
 }
 
@@ -69,7 +79,18 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 				continue
 			}
 			estimatedQuota := estimateQuota(request, item, channel)
-			latencyScore := latencyScoreFromResponseTime(channel.ResponseTime)
+			healthSnapshot := GetRuntimeHealthSnapshot(channel.ID, item.ModelName)
+			latencyScore := 0.5
+			if healthSnapshot.LatencySampleCount >= 3 {
+				latencyScore = healthSnapshot.LatencyScore
+			}
+			activeKeyRatio := channelActiveKeyRatio(channel)
+			healthState := healthSnapshot.State
+			if activeKeyRatio == 0 {
+				healthState = ChannelHealthOpen
+			} else if activeKeyRatio < 1 && healthState == ChannelHealthHealthy {
+				healthState = ChannelHealthDegraded
+			}
 			candidates = append(candidates, SmartRouteCandidate{
 				ModelName:          item.ModelName,
 				ChannelID:          channel.ID,
@@ -84,9 +105,9 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 				SupportsReasoning:  capabilities.SupportsReasoning,
 				SupportsStream:     capabilities.SupportsStream,
 				EstimatedQuota:     estimatedQuota,
-				Reliability:        1,
+				Reliability:        normalizeScore(healthSnapshot.Reliability * activeKeyRatio),
 				LatencyScore:       latencyScore,
-				ThroughputScore:    channelWeightScore(channel.Weight),
+				ThroughputScore:    0.5,
 				QualityScore:       candidateQualityScore(capabilities.QualityTier, profile, hasProfile),
 				CodingScore:        profile.CodingScore,
 				ReasoningScore:     profile.ReasoningScore,
@@ -94,6 +115,9 @@ func BuildCandidatesFromSnapshots(request SmartRouteRequest, pricing []model.Pri
 				ContextScore:       profile.ContextScore,
 				PreferenceScore:    profile.PreferenceScore,
 				AffinityScore:      0,
+				ResetWindowScore:   healthSnapshot.ResetWindowScore,
+				HealthState:        healthState,
+				HardUnavailable:    activeKeyRatio == 0,
 			})
 		}
 	}
@@ -252,19 +276,20 @@ func channelRatioValue(ratio *float64) float64 {
 	return *ratio
 }
 
-func latencyScoreFromResponseTime(responseTime int) float64 {
-	if responseTime <= 0 {
-		return 0.5
+func channelActiveKeyRatio(channel ChannelSnapshot) float64 {
+	if !channel.IsMultiKey {
+		return 1
 	}
-	score := 1 - float64(responseTime)/1000
-	return normalizeScore(score)
-}
-
-func channelWeightScore(weight int) float64 {
-	if weight <= 0 {
+	if channel.MultiKeySize <= 0 {
 		return 0
 	}
-	return normalizeScore(float64(weight) / 100)
+	activeKeys := channel.MultiKeySize
+	for keyIndex, status := range channel.MultiKeyStatusList {
+		if keyIndex >= 0 && keyIndex < channel.MultiKeySize && status != common.ChannelStatusEnabled {
+			activeKeys--
+		}
+	}
+	return normalizeScore(float64(activeKeys) / float64(channel.MultiKeySize))
 }
 
 func qualityScore(tier ModelQualityTier) float64 {
