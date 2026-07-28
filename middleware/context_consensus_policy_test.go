@@ -22,9 +22,11 @@ func TestCaptureContextConsensusPolicyRequiresAllThreeAuthorizations(t *testing.
 		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 			"smart_routing.context_consensus_enabled":   boolString(originalSettings.ContextConsensusEnabled),
 			"smart_routing.auto_compaction_enabled":     boolString(originalSettings.AutoCompactionEnabled),
+			"smart_routing.managed_context_enabled":     boolString(originalSettings.ManagedContextEnabled),
 			"smart_routing.preserved_recent_turns":      intString(originalSettings.PreservedRecentTurns),
 			"smart_routing.max_summary_tokens":          intString(originalSettings.MaxSummaryTokens),
 			"smart_routing.max_compaction_input_tokens": intString(originalSettings.MaxCompactionInputTokens),
+			"smart_routing.context_state_ttl_seconds":   intString(originalSettings.ContextStateTTLSeconds),
 		}))
 	})
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
@@ -66,14 +68,14 @@ func TestCaptureContextConsensusPolicyRequiresAllThreeAuthorizations(t *testing.
 	}
 }
 
-func TestCaptureContextConsensusPolicyRejectsUnsupportedManagedHeaders(t *testing.T) {
+func TestCaptureContextConsensusPolicyRejectsInvalidManagedHeaders(t *testing.T) {
 	tests := []struct {
 		name   string
 		header string
 		value  string
 	}{
 		{name: "unknown mode", header: contextModeHeader, value: "unexpected"},
-		{name: "managed mode", header: contextModeHeader, value: "managed"},
+		{name: "managed mode without contract", header: contextModeHeader, value: "managed"},
 		{name: "context id", header: contextIDHeader, value: "opaque-context"},
 		{name: "revision", header: contextRevisionHeader, value: "3"},
 	}
@@ -90,6 +92,36 @@ func TestCaptureContextConsensusPolicyRejectsUnsupportedManagedHeaders(t *testin
 			assert.Empty(t, context.Request.Header.Get(contextRevisionHeader))
 		})
 	}
+}
+
+func TestCaptureContextConsensusPolicyCapturesManagedContract(t *testing.T) {
+	originalSettings := model_setting.GetSmartRoutingSettings()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+			"smart_routing.context_consensus_enabled": boolString(originalSettings.ContextConsensusEnabled),
+			"smart_routing.managed_context_enabled":   boolString(originalSettings.ManagedContextEnabled),
+		}))
+	})
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"smart_routing.context_consensus_enabled": "true",
+		"smart_routing.managed_context_enabled":   "true",
+	}))
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	context.Request.Header.Set(contextModeHeader, "managed")
+	context.Request.Header.Set(contextIDHeader, "opaque-context")
+	context.Request.Header.Set(contextRevisionHeader, "7")
+	common.SetContextKey(context, constant.ContextKeyTokenContextCompaction, true)
+
+	require.NoError(t, captureContextConsensusPolicy(context))
+	managedRequest, ok := common.GetContextKeyType[contextconsensus.ManagedContextRequest](context, constant.ContextKeyManagedContextRequest)
+	require.True(t, ok)
+	assert.Equal(t, "opaque-context", managedRequest.ExternalContextID)
+	assert.Equal(t, uint64(7), managedRequest.ExpectedRevision)
+	assert.Empty(t, context.Request.Header.Get(contextIDHeader))
+	assert.Empty(t, context.Request.Header.Get(contextModeHeader))
+	assert.Empty(t, context.Request.Header.Get(contextRevisionHeader))
 }
 
 func boolString(value bool) string {

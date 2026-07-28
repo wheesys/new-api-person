@@ -202,6 +202,7 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 		"smart_routing.context_consensus_enabled":        "true",
 		"smart_routing.auto_compaction_enabled":          "true",
+		"smart_routing.managed_context_enabled":          "true",
 		"smart_routing.compaction_model_pool":            `["gpt-5-mini"]`,
 		"smart_routing.compaction_channel_ids":           `[3,7]`,
 		"smart_routing.authoritative_context_limits":     `{"gpt-5-mini":{"max_context_tokens":128000,"version":"2026-07","channel_ids":[3],"relay_formats":["openai"]}}`,
@@ -212,11 +213,13 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 		"smart_routing.max_compaction_calls_per_request": "1",
 		"smart_routing.max_compaction_quota":             "5000",
 		"smart_routing.compaction_timeout_seconds":       "15",
+		"smart_routing.context_state_ttl_seconds":        "7200",
 	}))
 
 	snapshot := GetSmartRoutingSettings()
 	require.True(t, snapshot.ContextConsensusEnabled)
 	require.True(t, snapshot.AutoCompactionEnabled)
+	require.True(t, snapshot.ManagedContextEnabled)
 	assert.Equal(t, []string{"gpt-5-mini"}, snapshot.CompactionModelPool)
 	assert.Equal(t, []int{3, 7}, snapshot.CompactionChannelIDs)
 	assert.Equal(t, 128000, snapshot.AuthoritativeContextLimits["gpt-5-mini"].MaxContextTokens)
@@ -227,6 +230,7 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, 1, snapshot.MaxCompactionCallsPerRequest)
 	assert.Equal(t, 5000, snapshot.MaxCompactionQuota)
 	assert.Equal(t, 15, snapshot.CompactionTimeoutSeconds)
+	assert.Equal(t, 7200, snapshot.ContextStateTTLSeconds)
 
 	snapshot.CompactionModelPool[0] = "mutated"
 	snapshot.CompactionChannelIDs[0] = 99

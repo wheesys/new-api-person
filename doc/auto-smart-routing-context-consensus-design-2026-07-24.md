@@ -578,6 +578,8 @@ allow_tool_result_compaction=false
 - 首批仅支持非流式请求。
 - Redis/加密密钥不可用时 fail closed。
 
+实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`。托管请求仍保持关闭并返回 503；只有完成 C-2 响应提交屏障和 C-3 幂等/provider state 运行时闭环后，才允许启用并标记阶段 C 完成。
+
 ### 阶段 D：工具结果压缩和可视化
 
 - 先支持单工具串行，再评估并行工具段。

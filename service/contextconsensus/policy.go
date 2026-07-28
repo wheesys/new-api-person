@@ -8,6 +8,14 @@ type CompactionPolicy struct {
 	MaxSummaryTokens     int
 }
 
+// ManagedContextRequest is the gateway-only managed session contract captured
+// from request headers. ExternalContextID must remain request-local and must not
+// be persisted or written to logs.
+type ManagedContextRequest struct {
+	ExternalContextID string
+	ExpectedRevision  uint64
+}
+
 type CompactionPolicySnapshot struct {
 	SystemEnabled        bool   `json:"system_enabled"`
 	APIKeyAllowed        bool   `json:"api_key_allowed"`

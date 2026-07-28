@@ -26,6 +26,7 @@ const (
 
 	/* context consensus keys */
 	ContextKeyContextConsensusPolicy ContextKey = "context_consensus_policy"
+	ContextKeyManagedContextRequest  ContextKey = "managed_context_request"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"

@@ -13,6 +13,7 @@ type SmartRoutingSettings struct {
 	VirtualModelPools            map[string][]string                        `json:"virtual_model_pools"`
 	ContextConsensusEnabled      bool                                       `json:"context_consensus_enabled"`
 	AutoCompactionEnabled        bool                                       `json:"auto_compaction_enabled"`
+	ManagedContextEnabled        bool                                       `json:"managed_context_enabled"`
 	CompactionModelPool          []string                                   `json:"compaction_model_pool"`
 	CompactionChannelIDs         []int                                      `json:"compaction_channel_ids"`
 	AuthoritativeContextLimits   map[string]AuthoritativeContextLimitConfig `json:"authoritative_context_limits"`
@@ -23,6 +24,7 @@ type SmartRoutingSettings struct {
 	MaxCompactionCallsPerRequest int                                        `json:"max_compaction_calls_per_request"`
 	MaxCompactionQuota           int                                        `json:"max_compaction_quota"`
 	CompactionTimeoutSeconds     int                                        `json:"compaction_timeout_seconds"`
+	ContextStateTTLSeconds       int                                        `json:"context_state_ttl_seconds"`
 }
 
 type AuthoritativeContextLimitConfig struct {
@@ -43,6 +45,7 @@ var smartRoutingSettings = SmartRoutingSettings{
 	MaxCompactionInputTokens:     128000,
 	MaxCompactionCallsPerRequest: 1,
 	CompactionTimeoutSeconds:     30,
+	ContextStateTTLSeconds:       3600,
 }
 
 var smartRoutingSettingsSnapshot atomic.Pointer[SmartRoutingSettings]
@@ -226,6 +229,7 @@ func cloneSmartRoutingSettings(settings *SmartRoutingSettings) *SmartRoutingSett
 		MaxCompactionInputTokens:     128000,
 		MaxCompactionCallsPerRequest: 1,
 		CompactionTimeoutSeconds:     30,
+		ContextStateTTLSeconds:       3600,
 	}
 	if settings == nil {
 		return cloned

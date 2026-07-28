@@ -1,0 +1,441 @@
+package contextconsensus
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/go-redis/redis/v8"
+)
+
+const (
+	managedRedisRevisionField      = "revision"
+	managedRedisFencingField       = "fencing_token"
+	managedRedisPayloadField       = "encrypted_payload"
+	managedRedisBindingDigestField = "binding_digest"
+)
+
+var (
+	managedAcquireLeaseScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return -1
+end
+local fencing_token = redis.call('INCR', KEYS[2])
+redis.call('PSETEX', KEYS[1], ARGV[2], ARGV[1] .. ':' .. fencing_token)
+redis.call('PEXPIRE', KEYS[2], ARGV[3])
+return fencing_token
+`)
+	managedRenewLeaseScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1
+`)
+	managedReleaseLeaseScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+return 1
+`)
+	managedCompareAndSwapScript = redis.NewScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return -1
+end
+local current_revision = redis.call('HGET', KEYS[1], 'revision')
+if not current_revision then
+  current_revision = '0'
+end
+if current_revision ~= ARGV[2] then
+  return -2
+end
+redis.call('HSET', KEYS[1],
+  'revision', ARGV[3],
+  'fencing_token', ARGV[4],
+  'encrypted_payload', ARGV[5])
+redis.call('PEXPIRE', KEYS[1], ARGV[6])
+redis.call('PEXPIRE', KEYS[3], ARGV[7])
+return tonumber(ARGV[3])
+`)
+	managedDeleteConsensusScript = redis.NewScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return -1
+end
+local current_revision = redis.call('HGET', KEYS[1], 'revision')
+if not current_revision then
+  return -3
+end
+if current_revision ~= ARGV[2] then
+  return -2
+end
+redis.call('DEL', KEYS[1])
+return 1
+`)
+	managedRegisterProviderBindingScript = redis.NewScript(`
+local current_digest = redis.call('HGET', KEYS[1], 'binding_digest')
+if current_digest and current_digest ~= ARGV[1] then
+  return -1
+end
+redis.call('HSET', KEYS[1],
+  'binding_digest', ARGV[1],
+  'encrypted_payload', ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
+`)
+	managedDeleteProviderBindingScript = redis.NewScript(`
+local current_digest = redis.call('HGET', KEYS[1], 'binding_digest')
+if not current_digest then
+  return -2
+end
+if current_digest ~= ARGV[1] then
+  return -1
+end
+redis.call('DEL', KEYS[1])
+return 1
+`)
+)
+
+// RedisManagedConsensusRepository is a dedicated encrypted-state repository.
+// It intentionally bypasses common.RedisSet so ciphertext is never printed in
+// debug logs, and all mutating concurrency checks execute in Redis Lua scripts.
+type RedisManagedConsensusRepository struct {
+	client                  *redis.Client
+	maximumRetention        time.Duration
+	fencingCounterRetention time.Duration
+	now                     func() time.Time
+}
+
+func NewRedisManagedConsensusRepository(client *redis.Client, maximumRetention time.Duration) (*RedisManagedConsensusRepository, error) {
+	if client == nil {
+		return nil, fmt.Errorf("managed consensus Redis client is required")
+	}
+	if maximumRetention <= 0 || maximumRetention > time.Duration(math.MaxInt64/2) {
+		return nil, fmt.Errorf("managed consensus maximum retention must be positive and bounded")
+	}
+	return &RedisManagedConsensusRepository{
+		client:                  client,
+		maximumRetention:        maximumRetention,
+		fencingCounterRetention: maximumRetention * 2,
+		now:                     time.Now,
+	}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) LoadConsensus(ctx context.Context, key ManagedConversationStorageKey) (ManagedConsensusRecord, error) {
+	if err := repository.validateConversationKey(key); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	fields, err := repository.client.HGetAll(ctx, key.RepositoryKey).Result()
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("load managed consensus metadata: %w", err)
+	}
+	if len(fields) == 0 {
+		return ManagedConsensusRecord{}, ErrManagedConsensusNotFound
+	}
+	ttl, err := repository.client.PTTL(ctx, key.RepositoryKey).Result()
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("load managed consensus TTL: %w", err)
+	}
+	if ttl <= 0 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus state has no valid TTL")
+	}
+	revision, err := strconv.ParseUint(fields[managedRedisRevisionField], 10, 64)
+	if err != nil || revision == 0 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus revision is invalid")
+	}
+	fencingToken, err := strconv.ParseUint(fields[managedRedisFencingField], 10, 64)
+	if err != nil || fencingToken == 0 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus fencing token is invalid")
+	}
+	var payload ManagedEncryptedEnvelope
+	if err := common.UnmarshalJsonStr(fields[managedRedisPayloadField], &payload); err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("decode encrypted managed consensus envelope: %w", err)
+	}
+	return ManagedConsensusRecord{
+		Revision:     revision,
+		FencingToken: fencingToken,
+		Payload:      payload,
+		ExpiresAt:    repository.now().Add(ttl),
+	}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) AcquireConsensusLease(ctx context.Context, key ManagedConversationStorageKey, holderID string, ttl time.Duration) (ManagedConsensusLease, error) {
+	if err := repository.validateConversationKey(key); err != nil {
+		return ManagedConsensusLease{}, err
+	}
+	if strings.TrimSpace(holderID) == "" {
+		return ManagedConsensusLease{}, fmt.Errorf("managed consensus lease holder is required")
+	}
+	if err := repository.validateTTL(ttl); err != nil {
+		return ManagedConsensusLease{}, err
+	}
+	leaseKey := key.RepositoryKey + ":lease"
+	fencingKey := key.RepositoryKey + ":fence"
+	result, err := managedAcquireLeaseScript.Run(ctx, repository.client, []string{leaseKey, fencingKey}, holderID, ttl.Milliseconds(), repository.fencingCounterRetention.Milliseconds()).Int64()
+	if err != nil {
+		return ManagedConsensusLease{}, fmt.Errorf("acquire managed consensus lease: %w", err)
+	}
+	if result == -1 {
+		return ManagedConsensusLease{}, ErrManagedConsensusLeaseHeld
+	}
+	if result <= 0 {
+		return ManagedConsensusLease{}, fmt.Errorf("managed consensus fencing token is invalid")
+	}
+	return ManagedConsensusLease{
+		RepositoryKey: key.RepositoryKey,
+		HolderID:      holderID,
+		FencingToken:  uint64(result),
+		ExpiresAt:     repository.now().Add(ttl),
+	}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) RenewConsensusLease(ctx context.Context, lease ManagedConsensusLease, ttl time.Duration) (ManagedConsensusLease, error) {
+	if err := repository.validateLease(lease); err != nil {
+		return ManagedConsensusLease{}, err
+	}
+	if err := repository.validateTTL(ttl); err != nil {
+		return ManagedConsensusLease{}, err
+	}
+	result, err := managedRenewLeaseScript.Run(ctx, repository.client, []string{lease.RepositoryKey + ":lease"}, managedLeaseValue(lease), ttl.Milliseconds()).Int64()
+	if err != nil {
+		return ManagedConsensusLease{}, fmt.Errorf("renew managed consensus lease: %w", err)
+	}
+	if result != 1 {
+		return ManagedConsensusLease{}, ErrManagedConsensusLeaseInvalid
+	}
+	lease.ExpiresAt = repository.now().Add(ttl)
+	return lease, nil
+}
+
+func (repository *RedisManagedConsensusRepository) ReleaseConsensusLease(ctx context.Context, lease ManagedConsensusLease) error {
+	if err := repository.validateLease(lease); err != nil {
+		return err
+	}
+	result, err := managedReleaseLeaseScript.Run(ctx, repository.client, []string{lease.RepositoryKey + ":lease"}, managedLeaseValue(lease)).Int64()
+	if err != nil {
+		return fmt.Errorf("release managed consensus lease: %w", err)
+	}
+	if result != 1 {
+		return ErrManagedConsensusLeaseInvalid
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) CompareAndSwapConsensus(ctx context.Context, key ManagedConversationStorageKey, expectedRevision uint64, lease ManagedConsensusLease, payload ManagedEncryptedEnvelope, ttl time.Duration) (ManagedConsensusRecord, error) {
+	if err := repository.validateConversationKey(key); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if err := repository.validateLeaseForKey(key, lease); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if expectedRevision == math.MaxUint64 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus revision overflow")
+	}
+	if payload.Purpose != ManagedEncryptionPurposeConsensusState || payload.Revision != expectedRevision+1 {
+		return ManagedConsensusRecord{}, fmt.Errorf("encrypted consensus payload revision or purpose does not match CAS")
+	}
+	if err := repository.validateTTL(ttl); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	encodedPayload, err := common.Marshal(payload)
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("encode encrypted managed consensus envelope: %w", err)
+	}
+	result, err := managedCompareAndSwapScript.Run(
+		ctx,
+		repository.client,
+		[]string{key.RepositoryKey, key.RepositoryKey + ":lease", key.RepositoryKey + ":fence"},
+		managedLeaseValue(lease),
+		strconv.FormatUint(expectedRevision, 10),
+		strconv.FormatUint(expectedRevision+1, 10),
+		strconv.FormatUint(lease.FencingToken, 10),
+		string(encodedPayload),
+		ttl.Milliseconds(),
+		repository.fencingCounterRetention.Milliseconds(),
+	).Int64()
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("compare and swap managed consensus: %w", err)
+	}
+	switch result {
+	case -1:
+		return ManagedConsensusRecord{}, ErrManagedConsensusLeaseInvalid
+	case -2:
+		return ManagedConsensusRecord{}, ErrManagedConsensusRevisionConflict
+	}
+	if result <= 0 || uint64(result) != expectedRevision+1 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus CAS returned an invalid revision")
+	}
+	return ManagedConsensusRecord{
+		Revision:     uint64(result),
+		FencingToken: lease.FencingToken,
+		Payload:      payload,
+		ExpiresAt:    repository.now().Add(ttl),
+	}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) DeleteConsensus(ctx context.Context, key ManagedConversationStorageKey, expectedRevision uint64, lease ManagedConsensusLease) error {
+	if err := repository.validateConversationKey(key); err != nil {
+		return err
+	}
+	if err := repository.validateLeaseForKey(key, lease); err != nil {
+		return err
+	}
+	result, err := managedDeleteConsensusScript.Run(ctx, repository.client, []string{key.RepositoryKey, key.RepositoryKey + ":lease"}, managedLeaseValue(lease), strconv.FormatUint(expectedRevision, 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("delete managed consensus: %w", err)
+	}
+	switch result {
+	case -1:
+		return ErrManagedConsensusLeaseInvalid
+	case -2:
+		return ErrManagedConsensusRevisionConflict
+	case -3:
+		return ErrManagedConsensusNotFound
+	}
+	if result != 1 {
+		return fmt.Errorf("delete managed consensus returned an invalid result")
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) LoadProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey) (ManagedProviderStateRecord, error) {
+	if err := repository.validateProviderStateKey(key); err != nil {
+		return ManagedProviderStateRecord{}, err
+	}
+	fields, err := repository.client.HGetAll(ctx, key.RepositoryKey).Result()
+	if err != nil {
+		return ManagedProviderStateRecord{}, fmt.Errorf("load provider state binding metadata: %w", err)
+	}
+	if len(fields) == 0 {
+		return ManagedProviderStateRecord{}, ErrProviderStateBindingNotFound
+	}
+	ttl, err := repository.client.PTTL(ctx, key.RepositoryKey).Result()
+	if err != nil {
+		return ManagedProviderStateRecord{}, fmt.Errorf("load provider state binding TTL: %w", err)
+	}
+	if ttl <= 0 {
+		return ManagedProviderStateRecord{}, fmt.Errorf("provider state binding has no valid TTL")
+	}
+	var payload ManagedEncryptedEnvelope
+	if err := common.UnmarshalJsonStr(fields[managedRedisPayloadField], &payload); err != nil {
+		return ManagedProviderStateRecord{}, fmt.Errorf("decode encrypted provider state binding envelope: %w", err)
+	}
+	bindingDigest := fields[managedRedisBindingDigestField]
+	if bindingDigest == "" {
+		return ManagedProviderStateRecord{}, fmt.Errorf("provider state binding digest is missing")
+	}
+	return ManagedProviderStateRecord{BindingDigest: bindingDigest, Payload: payload, ExpiresAt: repository.now().Add(ttl)}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) RegisterProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey, bindingDigest string, payload ManagedEncryptedEnvelope, ttl time.Duration) (ManagedProviderStateRecord, error) {
+	if err := repository.validateProviderStateKey(key); err != nil {
+		return ManagedProviderStateRecord{}, err
+	}
+	if strings.TrimSpace(bindingDigest) == "" {
+		return ManagedProviderStateRecord{}, fmt.Errorf("provider state binding digest is required")
+	}
+	if payload.Purpose != ManagedEncryptionPurposeProviderState || payload.Revision != 1 {
+		return ManagedProviderStateRecord{}, fmt.Errorf("encrypted provider state payload has invalid revision or purpose")
+	}
+	if err := repository.validateTTL(ttl); err != nil {
+		return ManagedProviderStateRecord{}, err
+	}
+	encodedPayload, err := common.Marshal(payload)
+	if err != nil {
+		return ManagedProviderStateRecord{}, fmt.Errorf("encode encrypted provider state binding envelope: %w", err)
+	}
+	result, err := managedRegisterProviderBindingScript.Run(ctx, repository.client, []string{key.RepositoryKey}, bindingDigest, string(encodedPayload), ttl.Milliseconds()).Int64()
+	if err != nil {
+		return ManagedProviderStateRecord{}, fmt.Errorf("register provider state binding: %w", err)
+	}
+	if result == -1 {
+		return ManagedProviderStateRecord{}, ErrProviderStateBindingConflict
+	}
+	if result != 1 {
+		return ManagedProviderStateRecord{}, fmt.Errorf("register provider state binding returned an invalid result")
+	}
+	return ManagedProviderStateRecord{BindingDigest: bindingDigest, Payload: payload, ExpiresAt: repository.now().Add(ttl)}, nil
+}
+
+func (repository *RedisManagedConsensusRepository) DeleteProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey, expectedBindingDigest string) error {
+	if err := repository.validateProviderStateKey(key); err != nil {
+		return err
+	}
+	if strings.TrimSpace(expectedBindingDigest) == "" {
+		return fmt.Errorf("expected provider state binding digest is required")
+	}
+	result, err := managedDeleteProviderBindingScript.Run(ctx, repository.client, []string{key.RepositoryKey}, expectedBindingDigest).Int64()
+	if err != nil {
+		return fmt.Errorf("delete provider state binding: %w", err)
+	}
+	switch result {
+	case -1:
+		return ErrProviderStateBindingConflict
+	case -2:
+		return ErrProviderStateBindingNotFound
+	}
+	if result != 1 {
+		return fmt.Errorf("delete provider state binding returned an invalid result")
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) validateConversationKey(key ManagedConversationStorageKey) error {
+	if repository == nil || repository.client == nil {
+		return fmt.Errorf("managed consensus Redis repository is unavailable")
+	}
+	if !strings.HasPrefix(key.RepositoryKey, managedConsensusRepositoryKeyPrefix+":") || key.OwnerHMAC == "" || key.ConversationHMAC == "" || key.KeyVersion == "" {
+		return fmt.Errorf("managed consensus conversation storage key is invalid")
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) validateProviderStateKey(key ManagedProviderStateStorageKey) error {
+	if repository == nil || repository.client == nil {
+		return fmt.Errorf("managed consensus Redis repository is unavailable")
+	}
+	if !strings.HasPrefix(key.RepositoryKey, managedProviderStateRepositoryPrefix+":") || key.OwnerHMAC == "" || key.StateReferenceHMAC == "" || key.KeyVersion == "" {
+		return fmt.Errorf("managed provider state storage key is invalid")
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) validateLease(lease ManagedConsensusLease) error {
+	if repository == nil || repository.client == nil {
+		return fmt.Errorf("managed consensus Redis repository is unavailable")
+	}
+	if !strings.HasPrefix(lease.RepositoryKey, managedConsensusRepositoryKeyPrefix+":") || strings.TrimSpace(lease.HolderID) == "" || lease.FencingToken == 0 {
+		return ErrManagedConsensusLeaseInvalid
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) validateLeaseForKey(key ManagedConversationStorageKey, lease ManagedConsensusLease) error {
+	if err := repository.validateLease(lease); err != nil {
+		return err
+	}
+	if lease.RepositoryKey != key.RepositoryKey {
+		return ErrManagedConsensusLeaseInvalid
+	}
+	return nil
+}
+
+func (repository *RedisManagedConsensusRepository) validateTTL(ttl time.Duration) error {
+	if repository == nil || repository.maximumRetention <= 0 {
+		return fmt.Errorf("managed consensus Redis repository is unavailable")
+	}
+	if ttl <= 0 || ttl > repository.maximumRetention || ttl.Milliseconds() <= 0 {
+		return fmt.Errorf("managed consensus TTL must be positive and within maximum retention")
+	}
+	return nil
+}
+
+func managedLeaseValue(lease ManagedConsensusLease) string {
+	return lease.HolderID + ":" + strconv.FormatUint(lease.FencingToken, 10)
+}
+
+var _ ManagedConsensusRepository = (*RedisManagedConsensusRepository)(nil)

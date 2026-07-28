@@ -8,12 +8,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
-	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -92,8 +93,8 @@ func TestInternalCompactionExecutorSettlesInvalidBillableSummary(t *testing.T) {
 	postConsumeCalls := 0
 	recordErrorCalls := 0
 	dependencies := successfulInternalCompactionDependencies(t, []byte("not-json"))
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -155,8 +156,8 @@ func TestInternalCompactionExecutorRefundsOrdinaryExecutionFailure(t *testing.T)
 	request, _ := validInternalCompactionRequest(t, parent)
 	billing := &fakeInternalCompactionBilling{needsRefund: true, preConsumedQuota: 25}
 	dependencies := successfulInternalCompactionDependencies(t, nil)
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -185,8 +186,8 @@ func TestInternalCompactionExecutorRefundsZeroUsageAndRecordsFailureAudit(t *tes
 	recordErrorCalls := 0
 	postConsumeCalls := 0
 	dependencies := successfulInternalCompactionDependencies(t, summaryBody)
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -226,8 +227,8 @@ func TestInternalCompactionExecutorDoesNotExecuteAfterPreconsumeFailure(t *testi
 	request, _ := validInternalCompactionRequest(t, parent)
 	executeCalls := 0
 	dependencies := successfulInternalCompactionDependencies(t, nil)
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -256,8 +257,8 @@ func TestInternalCompactionExecutorRejectsEstimatedQuotaBeforePreconsume(t *test
 	preconsumeCalls := 0
 	executeCalls := 0
 	dependencies := successfulInternalCompactionDependencies(t, nil)
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -286,8 +287,8 @@ func TestInternalCompactionExecutorReportsConsumeLogFailureWithoutRefund(t *test
 	billing := &fakeInternalCompactionBilling{needsRefund: true, preConsumedQuota: 25}
 	logError := errors.New("consume log unavailable")
 	dependencies := successfulInternalCompactionDependencies(t, summaryBody)
-	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-		price := types.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
+	dependencies.priceRequest = func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+		price := hosttypes.PriceData{QuotaToPreConsume: 25, ChannelRatio: 1, ChannelRatioSet: true}
 		info.PriceData = price
 		return price, nil
 	}
@@ -525,8 +526,8 @@ func successfulInternalCompactionDependencies(t *testing.T, summaryBody []byte) 
 		estimateTokens: func(_ *gin.Context, _ *types.TokenCountMeta, _ *relaycommon.RelayInfo) (int, error) {
 			return 20, nil
 		},
-		priceRequest: func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (types.PriceData, error) {
-			price := types.PriceData{FreeModel: true, ChannelRatio: 1, ChannelRatioSet: true}
+		priceRequest: func(_ *gin.Context, info *relaycommon.RelayInfo, _ int, _ *types.TokenCountMeta) (hosttypes.PriceData, error) {
+			price := hosttypes.PriceData{FreeModel: true, ChannelRatio: 1, ChannelRatioSet: true}
 			info.PriceData = price
 			return price, nil
 		},

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestResponseOpenAI2ClaudeToolUseInputIsObject(t *testing.T) {
 func TestRequestOpenAI2ClaudeMessagePreservesExplicitZeroMaxCompletionTokens(t *testing.T) {
 	zero := uint(0)
 	legacy := uint(7)
-	request, err := RequestOpenAI2ClaudeMessage(nil, dto.GeneralOpenAIRequest{
+	request, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
 		Model:               "claude-sonnet-4",
 		MaxTokens:           &legacy,
 		MaxCompletionTokens: &zero,

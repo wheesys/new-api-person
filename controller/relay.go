@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -125,6 +126,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
+		return
+	}
+	if managedContextError := validateManagedContextRelayGate(c, relayInfo.IsStream); managedContextError != nil {
+		newAPIError = managedContextError
 		return
 	}
 
@@ -301,6 +306,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+func validateManagedContextRelayGate(c *gin.Context, stream bool) *types.NewAPIError {
+	if _, managed := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest); !managed {
+		return nil
+	}
+	if stream {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("managed context does not support streaming requests"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	return types.NewErrorWithStatusCode(
+		fmt.Errorf("managed context is unavailable"),
+		types.ErrorCodeInvalidRequest,
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithSkipRetry(),
+	)
 }
 
 var upgrader = websocket.Upgrader{
