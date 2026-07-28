@@ -29,7 +29,10 @@
 
 - `reliability` 不再固定为 `1`，改为读取按“渠道 + 模型”维护的运行时成功 EWMA，并结合多 Key 渠道可用 Key 比例。
 - 渠道 `Weight` 不再冒充吞吐量；没有真实吞吐数据时使用中性分 `0.5`，不参与候选间差异制造。
-- 渠道表中的 `ResponseTime` 只来自手工或定时测试，不再直接作为智能路由延迟分。没有真实请求样本时使用中性分 `0.5`；同一“渠道 + 模型”至少积累 3 次真实上游成功耗时后，延迟 EWMA 才参与 `latency` 评分。
+- 渠道表中的 `ResponseTime` 只来自手工或定时测试，不再直接作为智能路由延迟分。没有真实请求样本时使用中性分 `0.5`；同一“渠道 + 模型”至少积累 3 次有效真实请求延迟后，延迟 EWMA 才参与 `latency` 评分。
+- 延迟样本按每次实际上游尝试独立计时，重试不会复用请求级开始时间或前一次尝试的首包时间。流式请求使用“尝试开始到上游响应体首次读到非空数据”的 TTFT；SDK 事件流和 WebSocket 使用既有首事件/首消息标记。非流式请求和异步任务提交使用单次上游尝试的完整耗时。
+- 流式请求成功但没有观测到有效首包时，只记录健康成功，不写入延迟 EWMA，避免退回整段流式生成耗时污染评分。
+- HTTP 响应体的原始首包只写入当前上游尝试；请求级 `FirstResponseTime` 仍由有效流事件、SDK 事件或 WebSocket 消息确认。失败尝试读取 429/5xx 错误正文时不会抢先污染最终成功请求的 TTFT、消费日志和性能指标。
 
 ### 健康状态、故障隔离与重置窗口
 
@@ -72,7 +75,7 @@
 - 运行时健康画像当前为单进程状态，多实例之间可能暂时不同；数据库渠道状态和渠道缓存仍负责全局硬隔离。
 - `reset_window` 当前表示本地健康熔断冷却，不表示供应商账户配额重置时间；后者需要可靠的上游配额元数据，本轮按范围不引入外部配置。
 - 没有真实吞吐指标时保持中性分。后续若增加渠道级可验证吞吐采样，应替换中性值，而不是重新复用渠道权重。
-- 当前延迟 EWMA 是单次完整上游尝试耗时，流式输出长度仍会影响可比性；后续应优先接入 TTFT，或结合输出 token 数拆分吞吐指标。
+- 流式 TTFT 当前定义为首个上游响应数据，不保证等同于首个可见文本 token；若供应商先发送心跳或协议控制数据，该数据也会成为首包。后续若需要模型生成速度比较，应另行采集首个有效内容时间和输出 token 吞吐量，不能混入当前延迟指标。
 
 ## 验证
 
@@ -82,6 +85,10 @@
 - 任务匹配、上下文、缓存、会话亲和和重置窗口评分。
 - 健康状态转换、指数冷却、半开恢复、并发安全和渠道/模型隔离。
 - 半开单探针门禁、健康状态 TTL 清理和真实请求延迟 EWMA。
+- 重试之间的逐尝试计时隔离、流式首包 TTFT、非流式完整尝试耗时，以及无首包流式成功不产生延迟样本。
+- HTTP 流式响应体只在首次读取到非空数据时标记首包，空读取和 EOF 不产生首包记录。
+- 首次失败尝试的错误正文只标记该尝试，第二次流式成功后请求级首包时间指向成功流；请求级首包时间统一通过并发安全快照读取。
+- 讯飞流式 WebSocket 和火山 TTS WebSocket 在首个有效响应/音频负载到达时记录首包。
 - 多 Key 可用比例和运行时可靠性合并。
 - 始终隔离 `open`，并始终拒绝全部 Key 不可用的渠道。
 - 会话稳定性只在已选真实模型内部、健康且分差有界时优先亲和渠道。
@@ -90,5 +97,6 @@
 验证命令：
 
 ```bash
-GOCACHE=/private/tmp/new-api-person-go-cache go test ./service/smartrouting ./service ./middleware ./controller
+go test ./relay/common ./relay/channel ./controller ./service/smartrouting
+go test -race ./relay/common ./relay/channel ./controller ./service/smartrouting -run 'Test(UpstreamAttempt|RelayInfoRequestFirstResponse|FirstResponseReadCloser|RecordRuntimeHealthSuccessForAttempt|GetChannel|ShouldRecordRuntimeHealthFailure|RuntimeHealth)' -count=1
 ```

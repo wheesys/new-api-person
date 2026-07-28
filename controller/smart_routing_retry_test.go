@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -37,6 +38,34 @@ func TestShouldRecordRuntimeHealthFailureUsesRetryableChannelErrors(t *testing.T
 			assert.Equal(t, test.expected, shouldRecordRuntimeHealthFailure(err))
 		})
 	}
+}
+
+func TestRecordRuntimeHealthSuccessForAttemptUsesValidScoringLatency(t *testing.T) {
+	smartrouting.ClearRuntimeHealth()
+	t.Cleanup(smartrouting.ClearRuntimeHealth)
+
+	recordRuntimeHealthSuccessForAttempt(3901, "stream-without-ttft", true, relaycommon.UpstreamAttemptSample{
+		Latency:    2 * time.Second,
+		HasLatency: true,
+	})
+	streamWithoutTTFT := smartrouting.GetRuntimeHealthSnapshot(3901, "stream-without-ttft")
+	assert.Equal(t, 0, streamWithoutTTFT.LatencySampleCount)
+
+	recordRuntimeHealthSuccessForAttempt(3902, "stream-with-ttft", true, relaycommon.UpstreamAttemptSample{
+		Latency:    2 * time.Second,
+		HasLatency: true,
+		TTFT:       200 * time.Millisecond,
+		HasTTFT:    true,
+	})
+	streamWithTTFT := smartrouting.GetRuntimeHealthSnapshot(3902, "stream-with-ttft")
+	assert.Equal(t, 1, streamWithTTFT.LatencySampleCount)
+
+	recordRuntimeHealthSuccessForAttempt(3903, "non-stream", false, relaycommon.UpstreamAttemptSample{
+		Latency:    750 * time.Millisecond,
+		HasLatency: true,
+	})
+	nonStream := smartrouting.GetRuntimeHealthSnapshot(3903, "non-stream")
+	assert.Equal(t, 1, nonStream.LatencySampleCount)
 }
 
 func setupSmartRoutingRetryTestDB(t *testing.T) *gorm.DB {

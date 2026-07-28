@@ -659,6 +659,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		))
 	}
 
+	if info.IsStream && resp.Body != nil {
+		attempt := info.CurrentUpstreamAttempt()
+		resp.Body = newFirstResponseReadCloser(resp.Body, func() {
+			info.MarkUpstreamAttemptFirstResponse(attempt)
+		})
+	}
+
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
 		c.Set(common2.UpstreamRequestIdKey, upID)
 	}

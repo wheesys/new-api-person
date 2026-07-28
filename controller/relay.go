@@ -226,7 +226,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			continue
 		}
 
-		attemptStartedAt := time.Now()
+		attempt := relayInfo.BeginUpstreamAttempt(channel.Id, retryParam.GetRetry(), time.Now())
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -237,9 +237,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		attemptSample := attempt.Finish(time.Now())
 
 		if newAPIError == nil {
-			smartrouting.RecordRuntimeHealthSuccessWithLatency(channel.Id, relayInfo.OriginModelName, time.Since(attemptStartedAt))
+			recordRuntimeHealthSuccessForAttempt(channel.Id, relayInfo.OriginModelName, relayInfo.IsStream, attemptSample)
 			relayInfo.LastError = nil
 			return
 		}
@@ -510,6 +511,15 @@ func tryAcquireSmartRoutingHealthProbe(c *gin.Context, channelID int, modelName 
 	return smartrouting.TryAcquireRuntimeHealthProbe(channelID, modelName)
 }
 
+func recordRuntimeHealthSuccessForAttempt(channelID int, modelName string, isStream bool, sample relaycommon.UpstreamAttemptSample) {
+	latency, ok := sample.ScoringLatency(isStream)
+	if !ok {
+		smartrouting.RecordRuntimeHealthSuccess(channelID, modelName)
+		return
+	}
+	smartrouting.RecordRuntimeHealthSuccessWithLatency(channelID, modelName, latency)
+}
+
 func RelayMidjourney(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatMjProxy, nil, nil)
 
@@ -665,10 +675,11 @@ func RelayTask(c *gin.Context) {
 			continue
 		}
 
-		attemptStartedAt := time.Now()
+		attempt := relayInfo.BeginUpstreamAttempt(channel.Id, retryParam.GetRetry(), time.Now())
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		attemptSample := attempt.Finish(time.Now())
 		if taskErr == nil {
-			smartrouting.RecordRuntimeHealthSuccessWithLatency(channel.Id, relayInfo.OriginModelName, time.Since(attemptStartedAt))
+			recordRuntimeHealthSuccessForAttempt(channel.Id, relayInfo.OriginModelName, false, attemptSample)
 			break
 		}
 

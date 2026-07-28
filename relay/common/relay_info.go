@@ -93,6 +93,7 @@ type RelayInfo struct {
 	StartTime         time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
+	timingState       *relayTimingState
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -313,9 +314,10 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "Token{ Id: %d, Unlimited: %t, Key: ***masked*** }, ", info.TokenId, info.TokenUnlimited)
 
 	// Time info
-	latencyMs := info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
+	firstResponseTime, _ := info.FirstResponseTimeSnapshot()
+	latencyMs := firstResponseTime.Sub(info.StartTime).Milliseconds()
 	fmt.Fprintf(b, "Timing{ Start: %s, FirstResponse: %s, LatencyMs: %d }, ",
-		info.StartTime.Format(time.RFC3339Nano), info.FirstResponseTime.Format(time.RFC3339Nano), latencyMs)
+		info.StartTime.Format(time.RFC3339Nano), firstResponseTime.Format(time.RFC3339Nano), latencyMs)
 
 	// Audio / realtime
 	if info.InputAudioFormat != "" || info.OutputAudioFormat != "" || len(info.RealtimeTools) > 0 || info.AudioUsage {
@@ -528,6 +530,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		TokenGroup:     tokenGroup,
 
 		isFirstResponse: true,
+		timingState:     &relayTimingState{},
 		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),
 		RequestURLPath:  c.Request.URL.String(),
 		RequestHeaders:  cloneRequestHeaders(c),
@@ -875,14 +878,12 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {
-	if info.isFirstResponse {
-		info.FirstResponseTime = time.Now()
-		info.isFirstResponse = false
-	}
+	info.SetFirstResponseTimeForAttempt(nil)
 }
 
 func (info *RelayInfo) HasSendResponse() bool {
-	return info.FirstResponseTime.After(info.StartTime)
+	_, hasSendResponse := info.FirstResponseTimeSnapshot()
+	return hasSendResponse
 }
 
 type TaskRelayInfo struct {
