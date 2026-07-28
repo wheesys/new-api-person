@@ -366,6 +366,7 @@ func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate,
 
 func (decision Decision) LogFields() map[string]interface{} {
 	fields := map[string]interface{}{
+		"schema_version":      1,
 		"enabled":             decision.Enabled,
 		"policy":              string(decision.Policy),
 		"complexity":          string(decision.TaskComplexity),

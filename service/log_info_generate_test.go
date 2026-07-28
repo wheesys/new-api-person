@@ -76,6 +76,7 @@ func TestGenerateTextOtherInfoIncludesSmartRoutingDecision(t *testing.T) {
 	require.True(t, ok)
 
 	assert.Equal(t, true, smartRouting["enabled"])
+	assert.Equal(t, 1, smartRouting["schema_version"])
 	assert.Equal(t, "quality_first", smartRouting["policy"])
 	assert.Equal(t, "complex", smartRouting["complexity"])
 	assert.Equal(t, "coding", smartRouting["task_type"])

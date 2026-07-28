@@ -73,12 +73,23 @@
 
 日志只记录枚举、数值和渠道 ID，不记录请求正文、缓存原值、API Key、Token 或 Secret。
 
+### 日志指标聚合
+
+- `other.smart_routing` 增加 `schema_version: 1`，缺少版本但满足当前字段契约的历史日志按 legacy 决策兼容统计。
+- 新增管理员只读接口 `GET /api/smart-routing/metrics`，默认聚合最近 24 小时，可通过 `start_timestamp`、`end_timestamp` 查询，时间窗最大 7 天。
+- 指标从成功消费审计日志按需聚合，返回有效性计数、成功消费决策数、候选回退数/比例/跳数、平均候选数、评分因子均值，以及策略、复杂度、任务类型、原始模型、选中模型、渠道、健康状态和固定小时趋势。
+- 聚合前校验日志版本、启用状态、枚举、模型、渠道、候选/回退边界和全部评分值；选中模型、渠道必须与消费日志顶层终态一致，非法或不完整数据只计入 `invalid_decisions`，不污染业务指标。
+- 查询使用应用层 JSON 解析，不依赖数据库 JSON 函数；只读投影同时兼容 SQLite、MySQL、PostgreSQL 和 ClickHouse。单次最多读取 250000 条匹配日志，超限时整体失败并要求缩小时间窗，不返回有偏差的截断结果。
+- 接口使用管理员认证与关键接口限流；本轮没有增加外部路由配置、后台配置页面、聚合表或定时任务。
+
 ## 限制
 
 - 运行时健康画像当前为单进程状态，多实例之间可能暂时不同；数据库渠道状态和渠道缓存仍负责全局硬隔离。
 - `reset_window` 当前表示本地健康熔断冷却，不表示供应商账户配额重置时间；后者需要可靠的上游配额元数据，本轮按范围不引入外部配置。
 - 吞吐画像当前只覆盖具有权威输出 usage 和有效首包的流式文本请求；不满足口径的协议保持中性分。吞吐 EWMA 与健康状态一样是单进程数据，多实例间可能暂时不同。
 - 流式 TTFT 当前定义为首个上游响应数据，不保证等同于首个可见文本 token；若供应商先发送心跳或协议控制数据，该数据也会成为首包。后续若需要模型生成速度比较，应另行采集首个有效内容时间和输出 token 吞吐量，不能混入当前延迟指标。
+- 当前指标只统计已成功写入的消费审计决策，不能解释为智能路由总请求数或全请求成功率；消费日志关闭、写入失败和终态错误请求不在该数据集内。
+- 当前聚合为有界按需查询。若后续实际日志量长期超过限制，再设计闭合小时桶的幂等持久化聚合；ClickHouse 日志不能使用固定为 `0` 的 `id` 作为增量游标。
 
 ## 验证
 
@@ -95,6 +106,7 @@
 - 权威流式文本 usage 的逐尝试 output token、首包至 usage 到达的生成时长和 token/s 计算；结算/日志延迟不计入生成时长，本地估算、短样本、小样本及图像 SSE 等非文本请求不采集。
 - 吞吐 EWMA 的渠道/模型隔离、无效值拒绝、并发安全、3 样本门槛，以及至少两个有效候选时的集合内相对归一化。
 - 成功请求在一次运行时健康观测中同时更新可靠性、延迟和吞吐，不重复计算成功 EWMA。
+- 智能路由日志版本、legacy 兼容、无效数据隔离、终态模型/渠道一致性、指标聚合、小时趋势、查询上限和时间窗校验。
 - 多 Key 可用比例和运行时可靠性合并。
 - 始终隔离 `open`，并始终拒绝全部 Key 不可用的渠道。
 - 会话稳定性只在已选真实模型内部、健康且分差有界时优先亲和渠道。
@@ -103,6 +115,6 @@
 验证命令：
 
 ```bash
-go test ./relay/common ./relay/channel ./controller ./service ./service/smartrouting
-go test -race ./relay/common ./relay/channel ./controller ./service ./service/smartrouting -run 'Test(UpstreamAttempt|RelayInfoRequestFirstResponse|FirstResponseReadCloser|RecordSmartRoutingOutputTokens|RecordRuntimeHealthSuccessForAttempt|GetChannel|ShouldRecordRuntimeHealthFailure|RuntimeHealth|BuildCandidates)' -count=1
+go test ./model ./relay/common ./relay/channel ./controller ./router ./service ./service/smartrouting
+go test -race ./model ./relay/common ./relay/channel ./controller ./router ./service ./service/smartrouting -run 'Test(UpstreamAttempt|RelayInfoRequestFirstResponse|FirstResponseReadCloser|RecordSmartRoutingOutputTokens|RecordRuntimeHealthSuccessForAttempt|GetChannel|ShouldRecordRuntimeHealthFailure|RuntimeHealth|BuildCandidates|SmartRoutingMetrics|IterateSmartRouting)' -count=1
 ```

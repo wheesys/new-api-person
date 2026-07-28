@@ -60,6 +60,7 @@
 - [x] 参考 OmniRoute 智能路由思路补充请求复杂度、任务匹配、上下文/缓存亲和、重置窗口、评分数据有效性、运行时健康隔离和会话稳定性；未引入外部配置体系，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 - [x] 将智能路由延迟评分改为逐上游尝试的有效样本：流式使用首个上游响应数据 TTFT，非流式使用完整尝试耗时，并隔离重试、忽略无首包流式延迟，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 - [x] 将智能路由吞吐评分改为按“渠道 + 模型”采集的权威流式文本 output token/s，过滤本地估算和非文本请求，达到有效样本门槛后在候选集合内相对归一化，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
+- [x] 新增智能路由成功消费日志指标聚合与管理员只读接口，包含日志版本、有效性校验、回退/评分/模型/渠道/健康状态和小时趋势，并限制为最大 7 天、250000 条匹配日志的有界查询；未增加外部配置或后台页面，见 `doc/auto-smart-routing-omniroute-alignment-implementation-2026-07-28.md`。
 
 ## 待办
 
@@ -83,7 +84,7 @@
 - [ ] 修复全包 `go test -race` 已暴露的既有竞态：流扫描结束信号、Gemini 测试并发修改 Gin 全局模式、任务轮询日志时间状态及异步任务对象读取。
 - [ ] 审计并迁移仍使用非指针输出上限字段的旧渠道适配器（Baidu、Cloudflare、Cohere、Ollama、Xunfei 等），统一保留字段缺失与显式 `0` 的差异。
 - [ ] 阶段 B 完成后，实现阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL 和 provider state 绑定映射。
-- [ ] 如需继续推进，设计智能路由日志、指标聚合和后台配置页面。
+- [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。
 - [ ] 如需继续推进，检查后台页面是否需要增加渠道能力预览说明。
