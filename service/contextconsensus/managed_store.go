@@ -46,8 +46,20 @@ func (state ManagedConsensusState) Validate() error {
 	if state.TaskConsensus.Version != ConsensusSummaryVersion {
 		return fmt.Errorf("managed task consensus version must be %d", ConsensusSummaryVersion)
 	}
+	if state.TaskConsensus.TaskGoal == nil || state.TaskConsensus.Decisions == nil || state.TaskConsensus.MustPreserve == nil ||
+		state.TaskConsensus.OpenQuestions == nil || state.TaskConsensus.UserPreferences == nil || state.TaskConsensus.DomainTerms == nil ||
+		state.TaskConsensus.CompletedSteps == nil || state.TaskConsensus.PendingSteps == nil || state.TaskConsensus.ArtifactRefs == nil ||
+		state.TaskConsensus.ToolResultSummaries == nil || state.TaskConsensus.SourceRanges == nil {
+		return fmt.Errorf("managed task consensus collection fields must not be null")
+	}
+	if len(state.TaskConsensus.ToolResultSummaries) > 0 {
+		return fmt.Errorf("managed task consensus tool result summaries are not supported")
+	}
 	if strings.TrimSpace(state.SourceDigest) == "" {
 		return fmt.Errorf("managed consensus source digest is required")
+	}
+	if state.TaskConsensus.SourceDigest != state.SourceDigest {
+		return fmt.Errorf("managed task consensus source digest does not match state metadata")
 	}
 	if strings.TrimSpace(state.PolicyVersion) == "" {
 		return fmt.Errorf("managed consensus policy version is required")

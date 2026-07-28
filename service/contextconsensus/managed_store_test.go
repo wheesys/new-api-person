@@ -369,10 +369,24 @@ func TestManagedProviderStateBindingValidationRequiresPinnedTarget(t *testing.T)
 
 func TestManagedConsensusStateValidationRejectsUnversionedOrStaleState(t *testing.T) {
 	state := ManagedConsensusState{
-		Version:       ManagedConsensusStateVersion,
-		Revision:      4,
-		Mode:          "managed_consensus",
-		TaskConsensus: ConsensusSummary{Version: ConsensusSummaryVersion},
+		Version:  ManagedConsensusStateVersion,
+		Revision: 4,
+		Mode:     "managed_consensus",
+		TaskConsensus: ConsensusSummary{
+			Version:             ConsensusSummaryVersion,
+			TaskGoal:            []ConsensusFact{},
+			Decisions:           []ConsensusFact{},
+			MustPreserve:        []ConsensusFact{},
+			OpenQuestions:       []ConsensusFact{},
+			UserPreferences:     []ConsensusFact{},
+			DomainTerms:         map[string]ConsensusFact{},
+			CompletedSteps:      []ConsensusFact{},
+			PendingSteps:        []ConsensusFact{},
+			ArtifactRefs:        []ConsensusFact{},
+			ToolResultSummaries: []ConsensusFact{},
+			SourceRanges:        []SummarySourceRange{},
+			SourceDigest:        "source-digest",
+		},
 		SourceDigest:  "source-digest",
 		PolicyVersion: "policy-v1",
 		CreatedAtUnix: 1_800_000_000,
