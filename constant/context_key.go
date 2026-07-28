@@ -7,10 +7,11 @@ const (
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel               ContextKey = "original_model"
-	ContextKeyRequestStartTime            ContextKey = "request_start_time"
-	ContextKeySmartRoutingDecision        ContextKey = "smart_routing_decision"
-	ContextKeySmartRoutingRetryCandidates ContextKey = "smart_routing_retry_candidates"
+	ContextKeyOriginalModel                ContextKey = "original_model"
+	ContextKeyRequestStartTime             ContextKey = "request_start_time"
+	ContextKeySmartRoutingDecision         ContextKey = "smart_routing_decision"
+	ContextKeySmartRoutingRetryCandidates  ContextKey = "smart_routing_retry_candidates"
+	ContextKeySmartRoutingFrozenCandidates ContextKey = "smart_routing_frozen_candidates"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"

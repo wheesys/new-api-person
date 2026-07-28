@@ -28,6 +28,59 @@ func TestRankCandidatesRejectsModelSwitchForProviderBoundContext(t *testing.T) {
 	assert.Contains(t, rejections[0].Reasons, "context_state_switch_not_allowed")
 }
 
+func TestRankCandidatesForAuthoritativeValidationKeepsEstimatedSmallContextCandidate(t *testing.T) {
+	request := SmartRouteRequest{
+		OriginalModel:         "auto:balanced",
+		ContextTokensRequired: 200000,
+	}
+	candidate := SmartRouteCandidate{
+		ModelName:        "gpt-4o",
+		ChannelID:        17,
+		MaxContextTokens: 128000,
+		HealthState:      ChannelHealthHealthy,
+		Reliability:      1,
+	}
+
+	regular, regularRejections := RankCandidates(request, []SmartRouteCandidate{candidate}, PolicyBalanced)
+	authoritative, authoritativeRejections := RankCandidatesForAuthoritativeValidation(request, []SmartRouteCandidate{candidate}, PolicyBalanced)
+
+	assert.Empty(t, regular)
+	require.Len(t, regularRejections, 1)
+	assert.Contains(t, regularRejections[0].Reasons, "context_too_small")
+	require.Len(t, authoritative, 1)
+	assert.Empty(t, authoritativeRejections)
+}
+
+func TestDecisionLogFieldsRecordsCompactionMetadataWithoutPayload(t *testing.T) {
+	decision := Decision{
+		ContextConsensus: ContextConsensusLog{
+			Mode:                    "stateless_compacted",
+			Version:                 1,
+			ValidationMode:          "authoritative",
+			Compacted:               true,
+			InputTokensBefore:       120000,
+			InputTokensAfter:        24000,
+			SummaryDigest:           "summary-digest",
+			CompactionModel:         "gpt-4o-mini",
+			CompactionChannelID:     17,
+			CompactionRequestID:     "child-request",
+			CompactionQuota:         42,
+			CompactionResultCode:    "success",
+			PreservedRecentMessages: 6,
+		},
+	}
+
+	fields := decision.LogFields()
+	contextLog, ok := fields["context_consensus"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 120000, contextLog["input_tokens_before"])
+	assert.Equal(t, 24000, contextLog["input_tokens_after"])
+	assert.Equal(t, "summary-digest", contextLog["summary_digest"])
+	assert.Equal(t, "child-request", contextLog["compaction_request_id"])
+	assert.NotContains(t, contextLog, "summary")
+	assert.NotContains(t, contextLog, "request_body")
+}
+
 func TestResolveVirtualModel(t *testing.T) {
 	profile, ok := ResolveVirtualModel("auto")
 	require.True(t, ok)

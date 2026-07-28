@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type InternalCompactionExecutorRequest struct {
 	PolicyVersion     string
 	SourceDigest      string
 	MaxOutputTokens   int
+	MaxInputTokens    int
 	SummaryRequest    *dto.GeneralOpenAIRequest
 	Plan              contextconsensus.CompactionPlan
 	MaxQuota          int
@@ -51,8 +53,9 @@ type InternalCompactionExecutorRequest struct {
 }
 
 type InternalCompactionExecutor struct {
-	executor *contextconsensus.CompactionChildExecutor
-	request  contextconsensus.CompactionChildRequest
+	executor  *contextconsensus.CompactionChildExecutor
+	request   contextconsensus.CompactionChildRequest
+	lifecycle *internalCompactionLifecycle
 }
 
 type internalCompactionIdentity struct {
@@ -97,6 +100,7 @@ type internalCompactionLifecycle struct {
 	summaryRequest    *dto.GeneralOpenAIRequest
 	plan              contextconsensus.CompactionPlan
 	maxQuota          int
+	maxInputTokens    int
 	timeout           time.Duration
 	maxResponseBytes  int64
 	dependencies      internalCompactionDependencies
@@ -135,6 +139,9 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 	}
 	if request.MaxQuota <= 0 {
 		return nil, fmt.Errorf("compaction max quota must be positive")
+	}
+	if request.MaxInputTokens <= 0 {
+		return nil, fmt.Errorf("compaction max input tokens must be positive")
 	}
 	if request.PolicyVersion != request.Plan.PolicyVersion || request.SourceDigest != request.Plan.SourceDigest || request.MaxOutputTokens != request.Plan.MaxSummaryTokens {
 		return nil, fmt.Errorf("compaction request does not match its frozen plan")
@@ -175,6 +182,7 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 		summaryRequest:    summaryRequest,
 		plan:              request.Plan,
 		maxQuota:          request.MaxQuota,
+		maxInputTokens:    request.MaxInputTokens,
 		timeout:           request.Timeout,
 		maxResponseBytes:  request.MaxResponseBytes,
 		dependencies:      dependencies,
@@ -190,7 +198,8 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 		return nil, err
 	}
 	return &InternalCompactionExecutor{
-		executor: executor,
+		executor:  executor,
+		lifecycle: lifecycle,
 		request: contextconsensus.CompactionChildRequest{
 			ParentRequestID: parentRequestId,
 			Model:           strings.TrimSpace(request.Model),
@@ -199,6 +208,17 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 			MaxOutputTokens: request.MaxOutputTokens,
 		},
 	}, nil
+}
+
+func (executor *InternalCompactionExecutor) SelectedChannelID() int {
+	if executor == nil || executor.lifecycle == nil {
+		return 0
+	}
+	runtime, err := executor.lifecycle.getRuntime()
+	if err != nil || runtime.relayInfo == nil {
+		return 0
+	}
+	return runtime.relayInfo.ChannelId
 }
 
 func (executor *InternalCompactionExecutor) Execute(ctx context.Context) (contextconsensus.CompactionChildResult, error) {
@@ -268,14 +288,21 @@ func (lifecycle *internalCompactionLifecycle) PrepareCompactionChild(ctx context
 	lifecycle.mutex.Unlock()
 
 	selectedChannel, selectedGroup, err := lifecycle.dependencies.selectChannel(childContext, descriptor.Model, lifecycle.identity.tokenGroup)
+	selectedOutsideAuthorization := false
+	if err != nil || selectedChannel == nil {
+		selectedChannel, selectedGroup, err = lifecycle.selectFrozenCompactionChannel(descriptor.Model)
+	} else if _, allowed := lifecycle.allowedChannelIDs[selectedChannel.Id]; !allowed {
+		selectedOutsideAuthorization = true
+		selectedChannel, selectedGroup, err = lifecycle.selectFrozenCompactionChannel(descriptor.Model)
+	}
 	if err != nil {
+		if selectedOutsideAuthorization {
+			return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("selected compaction channel is outside the frozen authorization set")
+		}
 		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("select compaction channel: %w", err)
 	}
 	if selectedChannel == nil {
-		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("no compaction channel is available")
-	}
-	if _, ok := lifecycle.allowedChannelIDs[selectedChannel.Id]; !ok {
-		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("selected compaction channel is outside the frozen authorization set")
+		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("no authorized compaction channel is available")
 	}
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || selectedChannel.GetSetting().PassThroughBodyEnabled {
 		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("pass-through channels are not allowed for internal compaction")
@@ -304,6 +331,9 @@ func (lifecycle *internalCompactionLifecycle) PrepareCompactionChild(ctx context
 	if err != nil {
 		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("estimate compaction tokens: %w", err)
 	}
+	if promptTokens > lifecycle.maxInputTokens {
+		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("compaction input exceeds configured maximum")
+	}
 	relayInfo.SetEstimatePromptTokens(promptTokens)
 	priceData, err := lifecycle.dependencies.priceRequest(childContext, relayInfo, promptTokens, meta)
 	if err != nil {
@@ -321,6 +351,33 @@ func (lifecycle *internalCompactionLifecycle) PrepareCompactionChild(ctx context
 		PreparationID:         descriptor.ChildRequestID,
 		PreparedRequestDigest: hex.EncodeToString(common.Sha256Raw(preparedBody)),
 	}, nil
+}
+
+func (lifecycle *internalCompactionLifecycle) selectFrozenCompactionChannel(modelName string) (*model.Channel, string, error) {
+	if model.DB == nil {
+		return nil, "", fmt.Errorf("channel repository is unavailable")
+	}
+	channelIDs := make([]int, 0, len(lifecycle.allowedChannelIDs))
+	for channelID := range lifecycle.allowedChannelIDs {
+		channelIDs = append(channelIDs, channelID)
+	}
+	sort.Ints(channelIDs)
+	groups := []string{lifecycle.identity.tokenGroup}
+	if lifecycle.identity.tokenGroup == "auto" {
+		groups = service.GetUserAutoGroup(lifecycle.identity.userGroup)
+	}
+	for _, channelID := range channelIDs {
+		channel, err := model.GetChannelById(channelID, true)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		for _, group := range groups {
+			if group != "" && model.IsChannelEnabledForGroupModel(group, modelName, channelID) {
+				return channel, group, nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("no enabled channel in the frozen compaction authorization set supports model %s", modelName)
 }
 
 func (lifecycle *internalCompactionLifecycle) PreconsumeCompactionChild(_ context.Context, descriptor contextconsensus.CompactionChildDescriptor, _ contextconsensus.PreparedCompactionChild) (*contextconsensus.CompactionBillingReceipt, error) {

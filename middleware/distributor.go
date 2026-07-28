@@ -476,10 +476,32 @@ func getTaskOriginModelName(c *gin.Context) string {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
-	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+	key, index, newAPIError := channel.GetNextEnabledKey()
+	if newAPIError != nil {
+		return newAPIError
+	}
+	return setupContextForSelectedChannel(c, channel, modelName, key, index)
+}
+
+// SetupContextForSelectedChannelSnapshot installs a caller-frozen credential
+// without advancing a multi-key polling cursor. It is used only by offline
+// authoritative request preparation; the selected snapshot is later committed
+// with the exact same credential slot.
+func SetupContextForSelectedChannelSnapshot(c *gin.Context, channel *model.Channel, modelName, key string, index int) *types.NewAPIError {
+	if channel == nil {
+		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if strings.TrimSpace(key) == "" {
+		return types.NewError(errors.New("channel key snapshot is empty"), types.ErrorCodeChannelNoAvailableKey, types.ErrOptionWithSkipRetry())
+	}
+	return setupContextForSelectedChannel(c, channel, modelName, key, index)
+}
+
+func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName, key string, index int) *types.NewAPIError {
+	c.Set("original_model", modelName) // for retry
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
@@ -501,10 +523,6 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
-	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)

@@ -147,13 +147,37 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
-	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
-	if err != nil {
-		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
+	var preparedContextConsensusAttempt *relay.PreparedTextRelayAttempt
+	var preparedContextConsensusChannel *model.Channel
+	tokens := 0
+	contextConsensusCommit, consensusErr := prepareContextConsensusMainRequest(c, relayFormat)
+	if consensusErr != nil {
+		newAPIError = contextConsensusAPIError(consensusErr)
 		return
 	}
-
-	relayInfo.SetEstimatePromptTokens(tokens)
+	if contextConsensusCommit != nil {
+		defer contextConsensusCommit.Close()
+		if err := commitContextConsensusMainRequest(c, contextConsensusCommit); err != nil {
+			newAPIError = contextConsensusAPIError(err)
+			return
+		}
+		request = contextConsensusCommit.request
+		relayInfo = contextConsensusCommit.relayInfo
+		preparedContextConsensusAttempt = contextConsensusCommit.attempt
+		preparedContextConsensusChannel = contextConsensusCommit.channel
+		defer preparedContextConsensusAttempt.Close()
+		meta = request.GetTokenCountMeta()
+		tokens = contextConsensusCommit.budget.PromptTokens
+		common.SetContextKey(c, constant.ContextKeyPromptTokens, tokens)
+		relayInfo.SetEstimatePromptTokens(tokens)
+	} else {
+		tokens, err = service.EstimateRequestToken(c, meta, relayInfo)
+		if err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
+			return
+		}
+		relayInfo.SetEstimatePromptTokens(tokens)
+	}
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
@@ -193,13 +217,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	maximumRetryTimes := common.RetryTimes
+	if preparedContextConsensusAttempt != nil {
+		maximumRetryTimes = 0
+	}
+	for ; retryParam.GetRetry() <= maximumRetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
-		channel, channelErr := getChannel(c, relayInfo, retryParam)
-		if channelErr != nil {
-			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
-			break
+		channel := preparedContextConsensusChannel
+		if preparedContextConsensusAttempt == nil {
+			var channelErr *types.NewAPIError
+			channel, channelErr = getChannel(c, relayInfo, retryParam)
+			if channelErr != nil {
+				logger.LogError(c, channelErr.Error())
+				newAPIError = channelErr
+				break
+			}
 		}
 		addUsedChannel(c, channel.Id)
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
@@ -227,15 +259,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		attempt := relayInfo.BeginUpstreamAttempt(channel.Id, retryParam.GetRetry(), time.Now())
-		switch relayFormat {
-		case types.RelayFormatOpenAIRealtime:
-			newAPIError = relay.WssHelper(c, relayInfo)
-		case types.RelayFormatClaude:
-			newAPIError = relay.ClaudeHelper(c, relayInfo)
-		case types.RelayFormatGemini:
-			newAPIError = geminiRelayHandler(c, relayInfo)
-		default:
-			newAPIError = relayHandler(c, relayInfo)
+		if preparedContextConsensusAttempt != nil {
+			newAPIError = relay.ExecutePreparedTextAttemptWithQuota(c, relayInfo, preparedContextConsensusAttempt)
+		} else {
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				newAPIError = relay.WssHelper(c, relayInfo)
+			case types.RelayFormatClaude:
+				newAPIError = relay.ClaudeHelper(c, relayInfo)
+			case types.RelayFormatGemini:
+				newAPIError = geminiRelayHandler(c, relayInfo)
+			default:
+				newAPIError = relayHandler(c, relayInfo)
+			}
 		}
 		attemptSample := attempt.Finish(time.Now())
 
@@ -250,7 +286,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if relayInfo.HasSendResponse() || !shouldRetry(c, newAPIError, maximumRetryTimes-retryParam.GetRetry()) {
 			break
 		}
 	}

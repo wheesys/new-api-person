@@ -72,9 +72,16 @@ func resolveSmartRoutingSelection(c *gin.Context, modelRequest *ModelRequest, us
 		return nil, true, fmt.Errorf("no smart routing candidate for virtual model %s after applying configured model pool", modelRequest.Model)
 	}
 	candidates = applySmartRoutingAffinity(c, candidates)
+	authoritativeCandidates, _ := smartrouting.RankCandidatesForAuthoritativeValidation(routeRequest, candidates, profile.Policy)
+	authoritativeCandidates = filterSmartRoutingCandidatesByTokenLimit(c, authoritativeCandidates)
+	authoritativeCandidates = stabilizeSmartRoutingSession(authoritativeCandidates)
+	freezeSmartRoutingCandidates(c, authoritativeCandidates)
 	ranked, _ := smartrouting.RankCandidates(routeRequest, candidates, profile.Policy)
 	ranked = filterSmartRoutingCandidatesByTokenLimit(c, ranked)
 	ranked = stabilizeSmartRoutingSession(ranked)
+	if len(ranked) == 0 && contextConsensusPreparationEnabled(c) {
+		ranked = append([]smartrouting.SmartRouteCandidate(nil), authoritativeCandidates...)
+	}
 	if len(ranked) == 0 {
 		return nil, true, fmt.Errorf("no smart routing candidate for virtual model %s", modelRequest.Model)
 	}
@@ -146,9 +153,15 @@ func resolveExplicitModelChannelSelection(c *gin.Context, modelRequest *ModelReq
 		return nil, false, nil
 	}
 	candidates = applySmartRoutingAffinity(c, candidates)
+	authoritativeCandidates, _ := smartrouting.RankCandidatesForAuthoritativeValidation(routeRequest, candidates, smartrouting.PolicyBalanced)
+	authoritativeCandidates = stabilizeSmartRoutingSession(authoritativeCandidates)
+	freezeSmartRoutingCandidates(c, authoritativeCandidates)
 
 	ranked, _ := smartrouting.RankCandidates(routeRequest, candidates, smartrouting.PolicyBalanced)
 	ranked = stabilizeSmartRoutingSession(ranked)
+	if len(ranked) == 0 && contextConsensusPreparationEnabled(c) {
+		ranked = append([]smartrouting.SmartRouteCandidate(nil), authoritativeCandidates...)
+	}
 	if len(ranked) == 0 {
 		return nil, false, nil
 	}
@@ -432,6 +445,18 @@ func setSmartRoutingRetryCandidates(c *gin.Context, candidates []smartrouting.Sm
 	if len(retryCandidates) > 0 {
 		common.SetContextKey(c, constant.ContextKeySmartRoutingRetryCandidates, retryCandidates)
 	}
+}
+
+func freezeSmartRoutingCandidates(c *gin.Context, candidates []smartrouting.SmartRouteCandidate) {
+	if !contextConsensusPreparationEnabled(c) || len(candidates) == 0 {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeySmartRoutingFrozenCandidates, append([]smartrouting.SmartRouteCandidate(nil), candidates...))
+}
+
+func contextConsensusPreparationEnabled(c *gin.Context) bool {
+	policy, ok := common.GetContextKeyType[contextconsensus.CompactionPolicySnapshot](c, constant.ContextKeyContextConsensusPolicy)
+	return ok && policy.SystemEnabled
 }
 
 func smartRoutingContextProtocol(c *gin.Context) (types.RelayFormat, bool) {

@@ -188,6 +188,13 @@ type ContextConsensusLog struct {
 	PreservedSegmentCount   int
 	ToolExchangeCount       int
 	InputTokensBefore       int
+	InputTokensAfter        int
+	SummaryDigest           string
+	CompactionModel         string
+	CompactionChannelID     int
+	CompactionRequestID     string
+	CompactionQuota         int
+	CompactionResultCode    string
 	BindingLevel            string
 	BindingReasonCodes      []string
 	SwitchAllowed           bool
@@ -328,6 +335,17 @@ func AnalyzeRequest(request SmartRouteRequest) SmartRouteAnalysis {
 }
 
 func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate, policy RoutePolicy) ([]SmartRouteCandidate, []CandidateRejection) {
+	return rankCandidates(request, candidates, policy, false)
+}
+
+// RankCandidatesForAuthoritativeValidation keeps candidates whose inferred
+// context window is too small. ContextConsensus validates those candidates
+// later with final request bytes and authoritative context-limit evidence.
+func RankCandidatesForAuthoritativeValidation(request SmartRouteRequest, candidates []SmartRouteCandidate, policy RoutePolicy) ([]SmartRouteCandidate, []CandidateRejection) {
+	return rankCandidates(request, candidates, policy, true)
+}
+
+func rankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate, policy RoutePolicy, skipEstimatedContextLimit bool) ([]SmartRouteCandidate, []CandidateRejection) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -337,7 +355,7 @@ func RankCandidates(request SmartRouteRequest, candidates []SmartRouteCandidate,
 	maxQuota := maxEstimatedQuota(candidates)
 	analysis := AnalyzeRequest(request)
 	for _, candidate := range candidates {
-		reasons := rejectCandidate(request, candidate)
+		reasons := rejectCandidate(request, candidate, skipEstimatedContextLimit)
 		if len(reasons) > 0 {
 			rejections = append(rejections, CandidateRejection{
 				Candidate: candidate,
@@ -409,6 +427,15 @@ func (decision Decision) LogFields() map[string]interface{} {
 			contextConsensus["preserved_segment_count"] = decision.ContextConsensus.PreservedSegmentCount
 			contextConsensus["tool_exchange_count"] = decision.ContextConsensus.ToolExchangeCount
 			contextConsensus["input_tokens_before"] = decision.ContextConsensus.InputTokensBefore
+			if decision.ContextConsensus.Compacted {
+				contextConsensus["input_tokens_after"] = decision.ContextConsensus.InputTokensAfter
+				contextConsensus["summary_digest"] = decision.ContextConsensus.SummaryDigest
+				contextConsensus["compaction_model"] = decision.ContextConsensus.CompactionModel
+				contextConsensus["compaction_channel_id"] = decision.ContextConsensus.CompactionChannelID
+				contextConsensus["compaction_request_id"] = decision.ContextConsensus.CompactionRequestID
+				contextConsensus["compaction_quota"] = decision.ContextConsensus.CompactionQuota
+				contextConsensus["result_code"] = decision.ContextConsensus.CompactionResultCode
+			}
 			contextConsensus["binding_level"] = decision.ContextConsensus.BindingLevel
 			contextConsensus["binding_reason_codes"] = append([]string(nil), decision.ContextConsensus.BindingReasonCodes...)
 			contextConsensus["switch_allowed"] = decision.ContextConsensus.SwitchAllowed
@@ -603,7 +630,7 @@ func recommendedTier(complexity TaskComplexity, taskType TaskType, request Smart
 	return tier
 }
 
-func rejectCandidate(request SmartRouteRequest, candidate SmartRouteCandidate) []string {
+func rejectCandidate(request SmartRouteRequest, candidate SmartRouteCandidate, skipEstimatedContextLimit bool) []string {
 	reasons := make([]string, 0)
 	if candidate.HardUnavailable {
 		reasons = append(reasons, "channel_hard_unavailable")
@@ -614,7 +641,7 @@ func rejectCandidate(request SmartRouteRequest, candidate SmartRouteCandidate) [
 		candidate.ModelName != request.OriginalModel {
 		reasons = append(reasons, "context_state_switch_not_allowed")
 	}
-	if request.ContextTokensRequired > 0 && candidate.MaxContextTokens > 0 && request.ContextTokensRequired > candidate.MaxContextTokens {
+	if !skipEstimatedContextLimit && request.ContextTokensRequired > 0 && candidate.MaxContextTokens > 0 && request.ContextTokensRequired > candidate.MaxContextTokens {
 		reasons = append(reasons, "context_too_small")
 	}
 	if request.Stream && !candidate.SupportsStream {

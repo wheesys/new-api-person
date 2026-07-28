@@ -42,6 +42,7 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 		SystemEnabled:        settings.ContextConsensusEnabled && settings.AutoCompactionEnabled,
 		PolicyVersion:        "context-consensus-v1",
 		PreservedRecentTurns: settings.PreservedRecentTurns,
+		TargetInputTokens:    settings.MaxCompactionInputTokens,
 		MaxSummaryTokens:     settings.MaxSummaryTokens,
 	}
 	snapshot := policy.Snapshot(

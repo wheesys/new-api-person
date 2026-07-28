@@ -363,6 +363,27 @@ func TestInternalCompactionExecutorRequiresPositiveQuotaCap(t *testing.T) {
 	assert.Nil(t, executor)
 }
 
+func TestInternalCompactionExecutorRequiresPositiveInputCap(t *testing.T) {
+	parent, _ := newInternalCompactionParent(t)
+	request, _ := validInternalCompactionRequest(t, parent)
+	request.MaxInputTokens = 0
+
+	executor, err := newInternalCompactionExecutor(request, successfulInternalCompactionDependencies(t, nil))
+	require.ErrorContains(t, err, "max input tokens must be positive")
+	assert.Nil(t, executor)
+}
+
+func TestInternalCompactionExecutorRejectsInputAboveFrozenCap(t *testing.T) {
+	parent, _ := newInternalCompactionParent(t)
+	request, summaryBody := validInternalCompactionRequest(t, parent)
+	request.MaxInputTokens = 19
+
+	executor, err := newInternalCompactionExecutor(request, successfulInternalCompactionDependencies(t, summaryBody))
+	require.NoError(t, err)
+	_, err = executor.Execute(context.Background())
+	require.ErrorContains(t, err, "compaction input exceeds configured maximum")
+}
+
 func TestInternalCompactionExecutorRejectsModelOutsideFrozenPool(t *testing.T) {
 	parent, _ := newInternalCompactionParent(t)
 	request, _ := validInternalCompactionRequest(t, parent)
@@ -474,6 +495,7 @@ func validInternalCompactionRequest(t *testing.T, parent *gin.Context) (Internal
 		PolicyVersion:     "policy-v1",
 		SourceDigest:      "source-digest",
 		MaxOutputTokens:   128,
+		MaxInputTokens:    128000,
 		SummaryRequest: &dto.GeneralOpenAIRequest{Messages: []dto.Message{
 			{Role: "system", Content: "Return the required JSON summary."},
 			{Role: "user", Content: "Summarize the frozen source range."},

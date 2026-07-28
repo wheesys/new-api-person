@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -106,4 +107,22 @@ func TestBuildSmartRouteRequestAuditsProviderBoundExplicitModelWithoutRetryCandi
 	bodyBytes, err := storage.Bytes()
 	require.NoError(t, err)
 	assert.Contains(t, string(bodyBytes), "file-sensitive-reference")
+}
+
+func TestFreezeSmartRoutingCandidatesOnlyWhenSystemPreparationEnabled(t *testing.T) {
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	candidates := []smartrouting.SmartRouteCandidate{{ModelName: "gpt-4o", ChannelID: 17}}
+
+	freezeSmartRoutingCandidates(context, candidates)
+	_, exists := common.GetContextKey(context, constant.ContextKeySmartRoutingFrozenCandidates)
+	assert.False(t, exists)
+
+	common.SetContextKey(context, constant.ContextKeyContextConsensusPolicy, contextconsensus.CompactionPolicySnapshot{SystemEnabled: true})
+	freezeSmartRoutingCandidates(context, candidates)
+	frozen, exists := common.GetContextKeyType[[]smartrouting.SmartRouteCandidate](context, constant.ContextKeySmartRoutingFrozenCandidates)
+	require.True(t, exists)
+	require.Len(t, frozen, 1)
+
+	candidates[0].ChannelID = 99
+	assert.Equal(t, 17, frozen[0].ChannelID)
 }
