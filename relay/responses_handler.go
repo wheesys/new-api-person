@@ -20,12 +20,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	defer attempt.Close()
 
-	usageDto, newAPIError := ExecutePreparedTextRelayAttempt(c, info, attempt)
-	if newAPIError != nil {
-		return newAPIError
-	}
-
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+		usageDto, executeError := ExecutePreparedTextRelayAttempt(c, info, attempt)
+		if executeError != nil {
+			return executeError
+		}
 		originModelName := info.OriginModelName
 		originPriceData := info.PriceData
 
@@ -35,7 +34,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			info.PriceData = originPriceData
 			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		}
-		service.PostTextConsumeQuota(c, info, usageDto, nil)
+		_ = SettleTextRelayUsage(c, info, usageDto)
 
 		info.OriginModelName = originModelName
 		info.PriceData = originPriceData
@@ -43,9 +42,13 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+		usageDto, executeError := ExecutePreparedTextRelayAttempt(c, info, attempt)
+		if executeError != nil {
+			return executeError
+		}
 		service.PostAudioConsumeQuota(c, info, usageDto, "")
-	} else {
-		service.PostTextConsumeQuota(c, info, usageDto, nil)
+		return nil
 	}
-	return nil
+	_, newAPIError = ExecutePreparedTextAttemptWithSettlement(c, info, attempt)
+	return newAPIError
 }

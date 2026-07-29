@@ -72,7 +72,9 @@
 - [x] 已重放并验证模型定价、渠道倍率计费、SQLite 数据迁移、累计用量重置和智能路由第一阶段选择。相关前端类型检查、i18n 同步、Compose 配置检查及定向 Go 测试已通过。
 - [x] 已完成提交 `51193a87`（智能路由模型画像刷新）的重放，cherry-pick 结果为 `8f51426c`；`controller/relay.go` 导入冲突按上游 `relaykit/types` 迁移和本项目智能路由行为合并，智能路由相关测试已通过。
 - [x] 已重放 `6ffd30d7`（可配置模型池）：落地 `smart_routing.virtual_model_pools` 后端配置、`auto:*` / `smart:*` 候选池过滤、前端 `Smart Routing` 入口与六语言 i18n；冲突保留上游 `relaykit/types` 迁移和本项目智能路由行为。
-- [ ] 随后按顺序继续重放上下文共识和文件能力提交：`d9287816 33f2ccf1 40097959 d48a9f5c 9f56e5da 6a1498b9 0e8bfeac f512e49a 0ede84bf a36df420 13785e7f 0cbcabd8 9f522b2a 7bfb37be 38ae39f6 549d39ac 44fb418b ad105847 69881574 f7cbb392 761834e0 c627a5b3 49f3c7cd 6516aa23 d09b95b5 5bae9bd3 3e83b42e eb88752c 732894e3 2d1c6466 86453b91 4b25be32 3a3569cd ba1f0329 c1aee3ae 574b3934 1c0bd4a5 67fe50b5`。
+- [x] 已重放上下文共识提交 `d9287816` 至 `69881574` 的完整序列（13785e7f→73d846d1、0cbcabd8→282cc561、9f522b2a→a9d5c5be、7bfb37be→c2f838ae、38ae39f6→5850b24a、549d39ac→069c9577、44fb418b→06ac1bbe、ad105847→c32045ab、69881574→d4de8627）。
+- [ ] 正在重放 `f7cbb392`（ContextConsensus managed lifecycle，冲突已解决、待提交），随后继续：`761834e0 c627a5b3 49f3c7cd 6516aa23 d09b95b5 5bae9bd3 3e83b42e eb88752c 732894e3 2d1c6466 86453b91 4b25be32 3a3569cd ba1f0329 c1aee3ae 574b3934 1c0bd4a5 67fe50b5`。
+- [x] 重放期间完成上游 `relaykit` 迁移适配：将 `relay/helper/stream_scanner.go` 自动合并产生的双 `wg.Done()` 缺陷修正为独立 `defer wg.Done()`，并把新旧提交残留的根 `dto`/`types` 包引用（`GeneralOpenAIRequest`、`RelayFormat*`、`NewAPIError`、`PriceData` 等）统一迁移到 `relaykit/dto`、`relaykit/types`；`go build ./...`、`go vet ./...` 与受影响包测试均通过。
 - [ ] 完成重放后统一审计：不得恢复 classic、vendor、用户钱包、充值、支付、兑换码、订阅购买及上游发布宣传模块；其他上游前后端更新均应保留，特别是由前端改动引发的后端接口和类型调整。
 - [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
@@ -87,7 +89,7 @@
   - [x] 完成阶段 C-1：owner/HMAC 隔离、AES-256-GCM、真实 Redis Lua 仓储、revision CAS、lease/fencing、TTL、provider binding 记录契约、网关头解析及失败关闭；未增加管理员接口或页面，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`。
   - [ ] 完成阶段 C-2：在渠道选择前加载并安全注入托管摘要，接入 lease 续租、非流式响应缓冲、显式结算结果和 commit-before-write revision 提交屏障。
     - [x] 完成阶段 C-2a：实现托管会话 acquire/load/decrypt/renew/commit 状态机、四协议 user-level 安全摘要注入和有界非流式响应缓冲；尚未接入请求生命周期，门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`。
-    - [ ] 完成阶段 C-2b：冻结增量/完整历史正文契约，在渠道选择前接入会话加载与续租，并统一主调用的规范化输出和显式结算结果。
+    - [x] 完成阶段 C-2b：冻结 managed 增量 current turn 契约，在渠道选择前接入会话加载、安全摘要注入和 lease 续租，并建立主调用规范化输出、显式结算及非流式缓冲执行边界；门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`。
     - [ ] 完成阶段 C-2c：生成下一 revision L2/L3，接入 commit-before-write、Redis 提交失败恢复及端到端故障矩阵，完成后移除非流式 503 门禁。
   - [ ] 完成阶段 C-3：冻结稳定客户端幂等键，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。

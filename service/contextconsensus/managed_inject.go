@@ -1,12 +1,12 @@
 package contextconsensus
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type InjectManagedConsensusRequest struct {
@@ -43,24 +43,43 @@ func InjectManagedConsensus(request InjectManagedConsensusRequest) ([]byte, erro
 }
 
 func injectManagedChat(body []byte, summaryText string) ([]byte, error) {
-	var request dto.GeneralOpenAIRequest
+	var request map[string]json.RawMessage
 	if err := common.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("decode managed Chat request: %w", err)
 	}
-	userIndex := firstManagedUserIndex(len(request.Messages), func(index int) string { return request.Messages[index].Role })
+	var messages []map[string]json.RawMessage
+	if err := common.Unmarshal(request["messages"], &messages); err != nil {
+		return nil, fmt.Errorf("decode managed Chat messages: %w", err)
+	}
+	userIndex := firstManagedUserIndex(len(messages), func(index int) string {
+		role, _ := managedRawString(messages[index]["role"])
+		return role
+	})
 	if userIndex < 0 {
 		return nil, fmt.Errorf("managed Chat request requires a user message")
 	}
-	rewritten := make([]dto.Message, 0, len(request.Messages)+1)
-	rewritten = append(rewritten, request.Messages[:userIndex]...)
-	rewritten = append(rewritten, dto.Message{Role: "user", Content: summaryText})
-	rewritten = append(rewritten, request.Messages[userIndex:]...)
-	request.Messages = rewritten
+	summaryMessage, err := common.Marshal(map[string]any{"role": "user", "content": summaryText})
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Chat summary: %w", err)
+	}
+	var encodedSummary map[string]json.RawMessage
+	if err := common.Unmarshal(summaryMessage, &encodedSummary); err != nil {
+		return nil, fmt.Errorf("decode managed Chat summary: %w", err)
+	}
+	rewritten := make([]map[string]json.RawMessage, 0, len(messages)+1)
+	rewritten = append(rewritten, messages[:userIndex]...)
+	rewritten = append(rewritten, encodedSummary)
+	rewritten = append(rewritten, messages[userIndex:]...)
+	encodedMessages, err := common.Marshal(rewritten)
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Chat messages: %w", err)
+	}
+	request["messages"] = encodedMessages
 	return marshalManagedRequest(request)
 }
 
 func injectManagedResponses(body []byte, summaryText string) ([]byte, error) {
-	var request dto.OpenAIResponsesRequest
+	var request map[string]json.RawMessage
 	if err := common.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("decode managed Responses request: %w", err)
 	}
@@ -69,10 +88,10 @@ func injectManagedResponses(body []byte, summaryText string) ([]byte, error) {
 		"role":    "user",
 		"content": []any{map[string]any{"type": "input_text", "text": summaryText}},
 	}
-	switch common.GetJsonType(request.Input) {
+	switch common.GetJsonType(request["input"]) {
 	case "string":
 		var currentInput string
-		if err := common.Unmarshal(request.Input, &currentInput); err != nil {
+		if err := common.Unmarshal(request["input"], &currentInput); err != nil {
 			return nil, fmt.Errorf("decode managed Responses string input: %w", err)
 		}
 		input, err := common.Marshal([]any{
@@ -82,25 +101,36 @@ func injectManagedResponses(body []byte, summaryText string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("encode managed Responses input: %w", err)
 		}
-		request.Input = input
+		request["input"] = input
 	case "array":
-		var inputItems []map[string]any
-		if err := common.Unmarshal(request.Input, &inputItems); err != nil {
+		var inputItems []json.RawMessage
+		if err := common.Unmarshal(request["input"], &inputItems); err != nil {
 			return nil, fmt.Errorf("decode managed Responses input items: %w", err)
 		}
-		userIndex := firstManagedUserIndex(len(inputItems), func(index int) string { return fmt.Sprint(inputItems[index]["role"]) })
+		userIndex := firstManagedUserIndex(len(inputItems), func(index int) string {
+			var item map[string]json.RawMessage
+			if err := common.Unmarshal(inputItems[index], &item); err != nil {
+				return ""
+			}
+			role, _ := managedRawString(item["role"])
+			return role
+		})
 		if userIndex < 0 {
 			return nil, fmt.Errorf("managed Responses request requires a user input item")
 		}
-		rewritten := make([]map[string]any, 0, len(inputItems)+1)
+		encodedSummary, err := common.Marshal(summaryItem)
+		if err != nil {
+			return nil, fmt.Errorf("encode managed Responses summary item: %w", err)
+		}
+		rewritten := make([]json.RawMessage, 0, len(inputItems)+1)
 		rewritten = append(rewritten, inputItems[:userIndex]...)
-		rewritten = append(rewritten, summaryItem)
+		rewritten = append(rewritten, encodedSummary)
 		rewritten = append(rewritten, inputItems[userIndex:]...)
 		input, err := common.Marshal(rewritten)
 		if err != nil {
 			return nil, fmt.Errorf("encode managed Responses input items: %w", err)
 		}
-		request.Input = input
+		request["input"] = input
 	default:
 		return nil, fmt.Errorf("managed Responses request requires string or array input")
 	}
@@ -108,44 +138,92 @@ func injectManagedResponses(body []byte, summaryText string) ([]byte, error) {
 }
 
 func injectManagedClaude(body []byte, summaryText string) ([]byte, error) {
-	var request dto.ClaudeRequest
+	var request map[string]json.RawMessage
 	if err := common.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("decode managed Claude request: %w", err)
 	}
-	userIndex := firstManagedUserIndex(len(request.Messages), func(index int) string { return request.Messages[index].Role })
+	var messages []map[string]json.RawMessage
+	if err := common.Unmarshal(request["messages"], &messages); err != nil {
+		return nil, fmt.Errorf("decode managed Claude messages: %w", err)
+	}
+	userIndex := firstManagedUserIndex(len(messages), func(index int) string {
+		role, _ := managedRawString(messages[index]["role"])
+		return role
+	})
 	if userIndex < 0 {
 		return nil, fmt.Errorf("managed Claude request requires a user message")
 	}
-	message := request.Messages[userIndex]
-	summaryBlock := dto.ClaudeMediaMessage{Type: "text"}
-	summaryBlock.SetText(summaryText)
-	contents := []dto.ClaudeMediaMessage{summaryBlock}
-	if message.IsStringContent() {
-		originalBlock := dto.ClaudeMediaMessage{Type: "text"}
-		originalBlock.SetText(message.GetStringContent())
-		contents = append(contents, originalBlock)
-	} else {
-		originalContents, err := message.ParseContent()
-		if err != nil {
+	message := messages[userIndex]
+	summaryBlock := map[string]any{"type": "text", "text": summaryText}
+	var contents []any
+	if common.GetJsonType(message["content"]) == "string" {
+		var currentText string
+		if err := common.Unmarshal(message["content"], &currentText); err != nil {
+			return nil, fmt.Errorf("decode managed Claude user text: %w", err)
+		}
+		contents = []any{summaryBlock, map[string]any{"type": "text", "text": currentText}}
+	} else if common.GetJsonType(message["content"]) == "array" {
+		var originalContents []json.RawMessage
+		if err := common.Unmarshal(message["content"], &originalContents); err != nil {
 			return nil, fmt.Errorf("decode managed Claude user content: %w", err)
 		}
-		contents = append(contents, originalContents...)
+		contents = make([]any, 0, len(originalContents)+1)
+		contents = append(contents, summaryBlock)
+		for _, content := range originalContents {
+			contents = append(contents, content)
+		}
+	} else {
+		return nil, fmt.Errorf("managed Claude user content must be text or an array")
 	}
-	message.Content = contents
-	request.Messages[userIndex] = message
+	encodedContents, err := common.Marshal(contents)
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Claude user content: %w", err)
+	}
+	message["content"] = encodedContents
+	messages[userIndex] = message
+	encodedMessages, err := common.Marshal(messages)
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Claude messages: %w", err)
+	}
+	request["messages"] = encodedMessages
 	return marshalManagedRequest(request)
 }
 
 func injectManagedGemini(body []byte, summaryText string) ([]byte, error) {
-	var request dto.GeminiChatRequest
+	var request map[string]json.RawMessage
 	if err := common.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("decode managed Gemini request: %w", err)
 	}
-	userIndex := firstManagedUserIndex(len(request.Contents), func(index int) string { return request.Contents[index].Role })
+	var contents []map[string]json.RawMessage
+	if err := common.Unmarshal(request["contents"], &contents); err != nil {
+		return nil, fmt.Errorf("decode managed Gemini contents: %w", err)
+	}
+	userIndex := firstManagedUserIndex(len(contents), func(index int) string {
+		role, _ := managedRawString(contents[index]["role"])
+		return role
+	})
 	if userIndex < 0 {
 		return nil, fmt.Errorf("managed Gemini request requires user content")
 	}
-	request.Contents[userIndex].Parts = append([]dto.GeminiPart{{Text: summaryText}}, request.Contents[userIndex].Parts...)
+	var parts []json.RawMessage
+	if err := common.Unmarshal(contents[userIndex]["parts"], &parts); err != nil {
+		return nil, fmt.Errorf("decode managed Gemini parts: %w", err)
+	}
+	summaryPart, err := common.Marshal(map[string]any{"text": summaryText})
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Gemini summary: %w", err)
+	}
+	parts = append([]json.RawMessage{summaryPart}, parts...)
+	encodedParts, err := common.Marshal(parts)
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Gemini parts: %w", err)
+	}
+	contents[userIndex]["parts"] = encodedParts
+	encodedContents, err := common.Marshal(contents)
+	if err != nil {
+		return nil, fmt.Errorf("encode managed Gemini contents: %w", err)
+	}
+	request["contents"] = encodedContents
 	return marshalManagedRequest(request)
 }
 

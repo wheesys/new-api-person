@@ -578,7 +578,7 @@ allow_tool_result_compaction=false
 - 首批仅支持非流式请求。
 - Redis/加密密钥不可用时 fail closed。
 
-实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`。托管请求仍保持关闭并返回 503；只有完成 C-2 请求生命周期/响应提交屏障和 C-3 幂等/provider state 运行时闭环后，才允许启用并标记阶段 C 完成。
+实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`；阶段 C-2b 已冻结增量 current turn 契约，在渠道选择前接入会话加载、摘要注入和 lease 续租，并建立规范化输出/显式结算/缓冲执行边界，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`。托管请求仍保持关闭并返回 503；只有完成 C-2c revision 生成与 commit-before-write，以及 C-3 幂等/provider state 运行时闭环后，才允许启用并标记阶段 C 完成。
 
 ### 阶段 D：工具结果压缩和可视化
 

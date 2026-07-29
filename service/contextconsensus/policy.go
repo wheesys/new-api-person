@@ -1,5 +1,7 @@
 package contextconsensus
 
+import "github.com/QuantumNous/new-api/relaykit/types"
+
 type CompactionPolicy struct {
 	SystemEnabled        bool
 	PolicyVersion        string
@@ -12,8 +14,10 @@ type CompactionPolicy struct {
 // from request headers. ExternalContextID must remain request-local and must not
 // be persisted or written to logs.
 type ManagedContextRequest struct {
-	ExternalContextID string
-	ExpectedRevision  uint64
+	ExternalContextID       string
+	ExpectedRevision        uint64
+	Protocol                types.RelayFormat
+	IncrementalSourceDigest string
 }
 
 type CompactionPolicySnapshot struct {

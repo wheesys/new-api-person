@@ -38,6 +38,16 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, err.Error(), types.ErrorCodeInvalidRequest)
 			return
 		}
+		managedLifecycle, managedStatus, err := prepareManagedConsensusRequest(c)
+		if err != nil {
+			abortWithOpenAiMessage(c, managedStatus, err.Error(), types.ErrorCodeInvalidRequest)
+			return
+		}
+		if managedLifecycle != nil {
+			defer func() {
+				_ = managedLifecycle.Close(c.Request.Context())
+			}()
+		}
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))

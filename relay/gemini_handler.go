@@ -38,18 +38,8 @@ func trimModelThinking(modelName string) string {
 }
 
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
-	attempt, newAPIError := PrepareTextRelayAttempt(c, info)
-	if newAPIError != nil {
-		return newAPIError
-	}
-	defer attempt.Close()
-
-	usage, newAPIError := ExecutePreparedTextRelayAttempt(c, info, attempt)
-	if newAPIError != nil {
-		return newAPIError
-	}
-	service.PostTextConsumeQuota(c, info, usage, nil)
-	return nil
+	_, newAPIError = ExecuteTextAttemptWithSettlement(c, info)
+	return newAPIError
 }
 
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {

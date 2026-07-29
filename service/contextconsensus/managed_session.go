@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type BeginManagedConsensusSessionRequest struct {
@@ -29,6 +29,7 @@ type ManagedConsensusSession struct {
 	state            *ManagedConsensusState
 	closed           bool
 	committed        bool
+	released         bool
 }
 
 func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensusRuntime, request BeginManagedConsensusSessionRequest) (*ManagedConsensusSession, error) {
@@ -115,10 +116,7 @@ func (session *ManagedConsensusSession) Inject(body []byte, protocol types.Relay
 	if err != nil {
 		return nil, err
 	}
-	if state == nil {
-		return append([]byte(nil), body...), nil
-	}
-	return InjectManagedConsensus(InjectManagedConsensusRequest{Protocol: protocol, Body: body, State: *state})
+	return PrepareManagedIncrementalRequest(protocol, body, state)
 }
 
 func (session *ManagedConsensusSession) Renew(ctx context.Context, ttl time.Duration) error {
@@ -185,11 +183,15 @@ func (session *ManagedConsensusSession) Close(ctx context.Context) error {
 	}
 	session.mutex.Lock()
 	defer session.mutex.Unlock()
-	if session.closed || session.committed {
+	if session.released {
 		return nil
 	}
 	session.closed = true
-	return session.runtime.Repository.ReleaseConsensusLease(ctx, session.lease)
+	err := session.runtime.Repository.ReleaseConsensusLease(ctx, session.lease)
+	if err == nil || errors.Is(err, ErrManagedConsensusLeaseInvalid) {
+		session.released = true
+	}
+	return err
 }
 
 func (session *ManagedConsensusSession) releaseAfterFailedBegin(ctx context.Context) {
@@ -204,5 +206,7 @@ func (session *ManagedConsensusSession) releaseAfterFailedBegin(ctx context.Cont
 func (session *ManagedConsensusSession) releaseLeaseWithoutChangingCommit(ctx context.Context) {
 	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	_ = session.runtime.Repository.ReleaseConsensusLease(releaseContext, session.lease)
+	if err := session.runtime.Repository.ReleaseConsensusLease(releaseContext, session.lease); err == nil || errors.Is(err, ErrManagedConsensusLeaseInvalid) {
+		session.released = true
+	}
 }
