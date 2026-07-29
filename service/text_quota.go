@@ -612,14 +612,15 @@ func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 			billingMode = "tiered_expr"
 		}
 		durableResult := durableSession.settleTextBillingOperation(ctx, model.BillingOperationSettlement{
-			ActualQuota:      summary.Quota,
-			PromptTokens:     summary.PromptTokens,
-			CompletionTokens: summary.CompletionTokens,
-			TotalTokens:      summary.TotalTokens,
-			BillingMode:      billingMode,
-			CountUsage:       summary.TotalTokens != 0,
-			LogUserId:        relayInfo.UserId,
-			LogParams:        logParams,
+			ActualQuota:       summary.Quota,
+			PromptTokens:      summary.PromptTokens,
+			CompletionTokens:  summary.CompletionTokens,
+			TotalTokens:       summary.TotalTokens,
+			BillingMode:       billingMode,
+			CountUsage:        summary.TotalTokens != 0,
+			LogUserId:         relayInfo.UserId,
+			LogParams:         logParams,
+			OutcomeCheckpoint: managedOutcomeCheckpoint(relayInfo.ManagedOutcomeCheckpoint),
 		})
 		settlementErr = durableResult.SettlementError
 		logErr = durableResult.LogError

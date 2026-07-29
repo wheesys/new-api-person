@@ -38,6 +38,22 @@ type managedConsensusPreviousKey struct {
 // from an independent, base64-encoded 32-byte key. It never falls back to any
 // session, API, channel, or process-local secret.
 func NewManagedConsensusRuntimeFromEnvironment(client *redis.Client, maximumRetention time.Duration) (*ManagedConsensusRuntime, error) {
+	runtime, err := NewManagedConsensusCryptoRuntimeFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	repository, err := NewRedisManagedConsensusRepository(client, maximumRetention)
+	if err != nil {
+		return nil, err
+	}
+	runtime.Repository = repository
+	return runtime, nil
+}
+
+// NewManagedConsensusCryptoRuntimeFromEnvironment builds only the durable
+// encryption and lookup runtime. Committed outcome replay intentionally does
+// not require Redis to be available.
+func NewManagedConsensusCryptoRuntimeFromEnvironment() (*ManagedConsensusRuntime, error) {
 	encodedKey := strings.TrimSpace(os.Getenv(managedConsensusEncryptionKeyEnvironment))
 	if encodedKey == "" {
 		return nil, fmt.Errorf("%s is required", managedConsensusEncryptionKeyEnvironment)
@@ -57,11 +73,7 @@ func NewManagedConsensusRuntimeFromEnvironment(client *redis.Client, maximumRete
 	if err != nil {
 		return nil, err
 	}
-	repository, err := NewRedisManagedConsensusRepository(client, maximumRetention)
-	if err != nil {
-		return nil, err
-	}
-	return newManagedConsensusRuntime(key, keyVersion, previousKeys, repository)
+	return newManagedConsensusRuntime(key, keyVersion, previousKeys, nil)
 }
 
 func decodeManagedConsensusPreviousKeys(rawValue, activeVersion string) ([]managedConsensusPreviousKey, error) {
@@ -94,9 +106,6 @@ func decodeManagedConsensusPreviousKeys(rawValue, activeVersion string) ([]manag
 }
 
 func newManagedConsensusRuntime(activeKey []byte, activeVersion string, previousKeys []managedConsensusPreviousKey, repository ManagedConsensusRepository) (*ManagedConsensusRuntime, error) {
-	if repository == nil {
-		return nil, fmt.Errorf("managed consensus repository is required")
-	}
 	activeVersion = strings.TrimSpace(activeVersion)
 	activeCipher, activeDeriver, err := buildManagedConsensusKeyVersion(activeKey, activeVersion)
 	if err != nil {
@@ -122,6 +131,29 @@ func newManagedConsensusRuntime(activeKey []byte, activeVersion string, previous
 		runtime.readKeyDerivers = append(runtime.readKeyDerivers, deriver)
 	}
 	return runtime, nil
+}
+
+func (runtime *ManagedConsensusRuntime) AttachRepository(repository ManagedConsensusRepository) error {
+	if runtime == nil || repository == nil {
+		return fmt.Errorf("managed consensus repository is required")
+	}
+	runtime.Repository = repository
+	return nil
+}
+
+func (runtime *ManagedConsensusRuntime) outcomeStorageKeys(owner ManagedConsensusOwner, externalContextID, idempotencyKey string, expectedRevision uint64) ([]ManagedOutcomeStorageKey, error) {
+	if runtime == nil || len(runtime.readKeyDerivers) == 0 {
+		return nil, fmt.Errorf("managed consensus runtime is unavailable")
+	}
+	keys := make([]ManagedOutcomeStorageKey, 0, len(runtime.readKeyDerivers))
+	for _, deriver := range runtime.readKeyDerivers {
+		key, err := deriver.DeriveOutcomeStorageKey(owner, externalContextID, idempotencyKey, expectedRevision)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
 }
 
 func buildManagedConsensusKeyVersion(key []byte, keyVersion string) (*ManagedConsensusCipher, *ManagedConsensusKeyDeriver, error) {

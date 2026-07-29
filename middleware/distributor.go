@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -40,13 +41,35 @@ func Distribute() func(c *gin.Context) {
 		}
 		managedLifecycle, managedStatus, err := prepareManagedConsensusRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, managedStatus, err.Error(), types.ErrorCodeInvalidRequest)
+			errorCode := types.ErrorCodeInvalidRequest
+			if errors.Is(err, contextconsensus.ErrManagedOutcomeUnknown) {
+				errorCode = types.ErrorCodeManagedContextOutcomeUnknown
+			}
+			abortWithOpenAiMessage(c, managedStatus, err.Error(), errorCode)
 			return
 		}
 		if managedLifecycle != nil {
 			defer func() {
 				_ = managedLifecycle.Close(c.Request.Context())
 			}()
+		}
+		if replay, ok := common.GetContextKeyType[contextconsensus.ManagedOutcomeResponse](c, constant.ContextKeyManagedContextReplay); ok {
+			for key := range c.Writer.Header() {
+				c.Writer.Header().Del(key)
+			}
+			c.Header("Content-Type", replay.ContentType)
+			c.Header("Content-Length", strconv.Itoa(len(replay.Body)))
+			managedRequest, _ := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest)
+			c.Header("X-New-Api-Context-Revision", strconv.FormatUint(managedRequest.ExpectedRevision+1, 10))
+			c.Data(replay.Status, replay.ContentType, replay.Body)
+			c.Abort()
+			return
+		}
+		if outcome, ok := common.GetContextKeyType[*contextconsensus.ManagedOutcomeSession](c, constant.ContextKeyManagedContextOutcome); ok &&
+			(outcome.Phase() == contextconsensus.ManagedOutcomePhaseMainSettled || outcome.Phase() == contextconsensus.ManagedOutcomePhaseSettledPendingCommit) {
+			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+			c.Next()
+			return
 		}
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {

@@ -228,6 +228,62 @@ func TestBillingOperationConcurrentReplayAndRefundAreIdempotent(t *testing.T) {
 	assert.Zero(t, token.UsedQuota)
 }
 
+func TestBillingOperationConcurrentSettlementMutatesAccountingOnce(t *testing.T) {
+	user, token, channel := prepareBillingOperationTest(t)
+	identity := billingOperationTestIdentity("fingerprint-concurrent-settle")
+	operation, err := ReserveBillingOperation(context.Background(), BillingOperationReserveRequest{
+		Identity: identity, UserId: user.Id, TokenId: token.Id, ChannelId: channel.Id,
+		ReservedQuota: 25, PricingSnapshot: `{}`,
+	})
+	require.NoError(t, err)
+	settlement := BillingOperationSettlement{
+		ActualQuota: 15, PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15,
+		BillingMode: "fixed", CountUsage: true, LogUserId: user.Id,
+		LogParams: RecordConsumeLogParams{
+			ChannelId: channel.Id, TokenId: token.Id, Quota: 15,
+			PromptTokens: 10, CompletionTokens: 5, Other: map[string]interface{}{},
+		},
+	}
+
+	const workers = 8
+	errorsChannel := make(chan error, workers)
+	settledNowChannel := make(chan bool, workers)
+	var waitGroup sync.WaitGroup
+	for range workers {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			_, settledNow, settleErr := SettleBillingOperation(context.Background(), operation.Id, identity.Fingerprint, settlement)
+			errorsChannel <- settleErr
+			settledNowChannel <- settledNow
+		}()
+	}
+	waitGroup.Wait()
+	close(errorsChannel)
+	close(settledNowChannel)
+	for settleErr := range errorsChannel {
+		require.NoError(t, settleErr)
+	}
+	settledCount := 0
+	for settledNow := range settledNowChannel {
+		if settledNow {
+			settledCount++
+		}
+	}
+	assert.Equal(t, 1, settledCount)
+	require.NoError(t, DB.First(token, token.Id).Error)
+	assert.Equal(t, 85, token.RemainQuota)
+	assert.Equal(t, 15, token.UsedQuota)
+	require.NoError(t, DB.First(user, user.Id).Error)
+	assert.Equal(t, 15, user.UsedQuota)
+	assert.Equal(t, 1, user.RequestCount)
+	require.NoError(t, DB.First(channel, channel.Id).Error)
+	assert.Equal(t, int64(15), channel.UsedQuota)
+	var outboxCount int64
+	require.NoError(t, DB.Model(&BillingOperationLogOutbox{}).Where("billing_operation_id = ?", operation.Id).Count(&outboxCount).Error)
+	assert.Equal(t, int64(1), outboxCount)
+}
+
 func TestBillingOperationLookupCandidatesMigrateAndRejectDuplicates(t *testing.T) {
 	user, token, channel := prepareBillingOperationTest(t)
 	oldIdentity := BillingOperationIdentity{

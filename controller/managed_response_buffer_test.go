@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,8 @@ func TestManagedResponseBufferDelaysHeadersStatusAndBodyUntilCommit(t *testing.T
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
 	context.Writer.Header().Set("X-Existing", "preserved")
+	context.Writer.Header().Set("Set-Cookie", "secret=value")
+	context.Writer.Header().Set("X-Request-Id", "upstream-request")
 	buffer, err := newManagedResponseBuffer(context.Writer, 1024)
 	require.NoError(t, err)
 
@@ -30,8 +33,11 @@ func TestManagedResponseBufferDelaysHeadersStatusAndBodyUntilCommit(t *testing.T
 	require.NoError(t, buffer.FlushToClient())
 	assert.Equal(t, http.StatusCreated, recorder.Code)
 	assert.JSONEq(t, `{"ok":true}`, recorder.Body.String())
-	assert.Equal(t, "preserved", recorder.Header().Get("X-Existing"))
+	assert.Empty(t, recorder.Header().Get("X-Existing"))
+	assert.Empty(t, recorder.Header().Get("Set-Cookie"))
+	assert.Empty(t, recorder.Header().Get("X-Request-Id"))
 	assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+	assert.Equal(t, strconv.Itoa(len(`{"ok":true}`)), recorder.Header().Get("Content-Length"))
 	require.ErrorIs(t, buffer.FlushToClient(), errManagedResponseAlreadyWritten)
 	assert.JSONEq(t, `{"ok":true}`, recorder.Body.String())
 }

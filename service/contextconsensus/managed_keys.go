@@ -13,6 +13,7 @@ import (
 const (
 	managedConsensusRepositoryKeyPrefix  = "new-api:context_consensus:v1"
 	managedProviderStateRepositoryPrefix = "new-api:context_consensus:provider_state:v1"
+	managedOutcomeRepositoryKeyPrefix    = "new-api:context_consensus:outcome:v1"
 )
 
 type ManagedConsensusOwner struct {
@@ -33,6 +34,16 @@ type ManagedProviderStateStorageKey struct {
 	OwnerHMAC          string
 	StateReferenceHMAC string
 	KeyVersion         string
+}
+
+type ManagedOutcomeStorageKey struct {
+	RepositoryKey      string
+	LookupHMAC         string
+	RevisionIntentHMAC string
+	OwnerHMAC          string
+	ConversationHMAC   string
+	KeyVersion         string
+	BillingLookupHMAC  string
 }
 
 type ManagedConsensusKeyDeriver struct {
@@ -102,6 +113,38 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderStateStorageKey(owner M
 		OwnerHMAC:          ownerHMAC,
 		StateReferenceHMAC: stateReferenceHMAC,
 		KeyVersion:         deriver.keyVersion,
+	}, nil
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveOutcomeStorageKey(owner ManagedConsensusOwner, externalContextID, idempotencyKey string, expectedRevision uint64) (ManagedOutcomeStorageKey, error) {
+	conversationKey, err := deriver.DeriveConversationStorageKey(owner, externalContextID)
+	if err != nil {
+		return ManagedOutcomeStorageKey{}, err
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return ManagedOutcomeStorageKey{}, fmt.Errorf("managed context idempotency key is required")
+	}
+	lookupHMAC, err := deriver.calculateHMAC("idempotency_key", struct {
+		OwnerHMAC      string `json:"owner_hmac"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}{OwnerHMAC: conversationKey.OwnerHMAC, IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return ManagedOutcomeStorageKey{}, err
+	}
+	revisionIntentHMAC, err := deriver.calculateHMAC("revision_intent", struct {
+		OwnerHMAC        string `json:"owner_hmac"`
+		ConversationHMAC string `json:"conversation_hmac"`
+		ExpectedRevision uint64 `json:"expected_revision"`
+	}{OwnerHMAC: conversationKey.OwnerHMAC, ConversationHMAC: conversationKey.ConversationHMAC, ExpectedRevision: expectedRevision})
+	if err != nil {
+		return ManagedOutcomeStorageKey{}, err
+	}
+	return ManagedOutcomeStorageKey{
+		RepositoryKey: managedOutcomeRepositoryKeyPrefix + ":" + conversationKey.OwnerHMAC + ":" + lookupHMAC,
+		LookupHMAC:    lookupHMAC, RevisionIntentHMAC: revisionIntentHMAC,
+		OwnerHMAC: conversationKey.OwnerHMAC, ConversationHMAC: conversationKey.ConversationHMAC,
+		KeyVersion:        conversationKey.KeyVersion,
+		BillingLookupHMAC: digestBytes([]byte(conversationKey.RepositoryKey)),
 	}, nil
 }
 

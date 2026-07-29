@@ -380,15 +380,15 @@ CompactionPlan
 
 - 阶段 A/B：不持久化 L0 正文；请求内对象只存在于内存。
 - 阶段 C：Redis 保存加密的 L2/L3、revision、TTL 和绑定映射。
-- 不使用主数据库承载高频会话状态；持久化数据库留作以后单独评审。
+- 主数据库不承载高频 L2/L3 会话正文；只持久化计费 operation、日志 outbox、revision intent、恢复阶段和 AEAD outcome checkpoint，用于跨请求恢复数据库结算事实与已提交响应。
 
 ### 15.2 Redis 约束
 
 - 会话 key：`new-api:context_consensus:v1:<owner_hmac>:<conversation_hmac>`。
 - 使用 revision CAS、短期 lease、fencing token 和续租。
 - 同一会话默认串行；revision 不符返回 409，lease 占用返回 409/429。
-- 幂等键包含 owner、conversation、revision、source_digest、policy_version、request_id。
-- Redis 不可用时，只有客户端本次带完整历史且无需压缩，才允许明确降级到 stateless。
+- revision intent 绑定 owner、conversation、expected revision、客户端幂等键 HMAC、source digest、协议和 policy version；同一 revision 或幂等键的语义变化必须冲突。
+- Redis 不可用时，managed 新请求和未提交恢复必须失败关闭；只有数据库已标记 `committed` 的 outcome 可以直接回放。非 managed 且客户端携带完整历史的请求仍按 stateless 规则处理。
 - 托管状态或上游绑定无法恢复时必须 fail closed，不使用进程内缓存伪装多实例一致性。
 
 `pkg/cachex.HybridCache` 当前没有 CAS 语义，不能直接承担托管会话 revision 更新。`common.RedisSet` 在 Debug 模式会打印 value，也不能保存共识 payload。应实现不输出值的专用 repository，并使用 Redis 原子脚本完成 CAS/lease。
@@ -581,7 +581,7 @@ allow_tool_result_compaction=false
 - 首批仅支持非流式请求。
 - Redis/加密密钥不可用时 fail closed。
 
-实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`；阶段 C-2b 已冻结增量 current turn 契约，在渠道选择前接入会话加载、摘要注入和 lease 续租，并建立规范化输出/显式结算/缓冲执行边界，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`；阶段 C-2c 已完成下一 revision L2/L3、固定 2 MiB 缓冲、同请求 CAS 恢复和 commit-before-write，非流式统一 503 门禁已移除，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`；阶段 C-3a 已完成托管会话 state 的有界旧密钥读取、双 namespace 冲突隔离和 revision 原子迁移，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`；阶段 C-3b1 已完成主调用与摘要子调用的持久化计费 operation、冻结结算结果和消费日志 outbox，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`。`managed_context_enabled` 仍默认关闭；C-3b2 的稳定客户端幂等键、revision intent、跨请求 outcome/响应回放及 C-3c 的 provider state 运行时闭环完成前，不允许 provider-owned state，也不能标记阶段 C 完成。
+实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`；阶段 C-2b 已冻结增量 current turn 契约，在渠道选择前接入会话加载、摘要注入和 lease 续租，并建立规范化输出/显式结算/缓冲执行边界，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`；阶段 C-2c 已完成下一 revision L2/L3、固定 2 MiB 缓冲、同请求 CAS 恢复和 commit-before-write，非流式统一 503 门禁已移除，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`；阶段 C-3a 已完成托管会话 state 的有界旧密钥读取、双 namespace 冲突隔离和 revision 原子迁移，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`；阶段 C-3b 已完成主调用与摘要子调用的持久化计费 operation、稳定客户端幂等键、revision intent、跨请求 outcome、结算后提交恢复和已提交响应回放，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`、`doc/auto-smart-routing-context-consensus-stage-c3b2-implementation-2026-07-29.md`。`managed_context_enabled` 仍默认关闭；C-3c 的 provider state 运行时闭环完成前，不允许 provider-owned state，也不能标记阶段 C 完成。
 
 ### 阶段 D：工具结果压缩和可视化
 
@@ -640,6 +640,6 @@ allow_tool_result_compaction=false
 
 ## 25. 推荐下一步
 
-先实现阶段 A：`ContextEnvelope`、provider-bound 状态检测、工具图验证、精确预算接口和 `validate_only` 审计。
+下一步完成阶段 C-3c：从 adaptor 的真实成功响应提取 provider state report，首批只闭环原生 OpenAI Responses `id -> previous_response_id`，并在请求前校验 owner、最终模型、协议、渠道、精确凭据槽和 credential fingerprint。
 
-当前最大风险不是摘要质量，而是 `previous_response_id`、Claude/Gemini opaque state、工具链和媒体引用在跨模型/跨协议后发生语义断裂。阶段 A 可以在不改变用户请求正文、不新增计费调用的前提下先关闭这类安全缺口，并为后续自动压缩提供稳定边界。
+当前最大剩余风险不是摘要质量，而是 provider-owned state 在渠道、凭据或协议变化后被错误复用。C-3c 完成前，`previous_response_id`、Claude/Gemini opaque state、provider file 和签名引用继续失败关闭。

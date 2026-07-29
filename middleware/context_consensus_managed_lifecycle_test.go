@@ -11,17 +11,21 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"gorm.io/gorm"
 )
 
 func TestPrepareManagedConsensusRequestLoadsInjectsReplacesAndReleasesBeforeRouting(t *testing.T) {
+	prepareManagedOutcomeTestDatabase(t)
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	originalClient, originalEnabled := common.RDB, common.RedisEnabled
@@ -52,8 +56,9 @@ func TestPrepareManagedConsensusRequestLoadsInjectsReplacesAndReleasesBeforeRout
 	common.SetContextKey(contextValue, constant.ContextKeyUserId, 7)
 	common.SetContextKey(contextValue, constant.ContextKeyTokenId, 11)
 	common.SetContextKey(contextValue, constant.ContextKeyManagedContextRequest, contextconsensus.ManagedContextRequest{
-		ExternalContextID: "opaque", ExpectedRevision: 1,
+		ExternalContextID: "opaque", IdempotencyKey: "request-key-1234567890", ExpectedRevision: 1,
 	})
+	common.SetContextKey(contextValue, constant.ContextKeyContextConsensusPolicy, contextconsensus.CompactionPolicySnapshot{PolicyVersion: "context-consensus-v1"})
 
 	lifecycle, status, err := prepareManagedConsensusRequest(contextValue)
 	require.NoError(t, err)
@@ -87,12 +92,16 @@ func TestPrepareManagedConsensusRequestLoadsInjectsReplacesAndReleasesBeforeRout
 }
 
 func TestPrepareManagedConsensusRequestMapsRevisionAndRuntimeFailures(t *testing.T) {
+	prepareManagedOutcomeTestDatabase(t)
+	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("m", 32))))
+	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY_VERSION", "v1")
 	contextValue, _ := gin.CreateTestContext(httptest.NewRecorder())
 	contextValue.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"current"}]}`))
 	contextValue.Request.Header.Set("Content-Type", "application/json")
 	common.SetContextKey(contextValue, constant.ContextKeyUserId, 1)
 	common.SetContextKey(contextValue, constant.ContextKeyTokenId, 2)
-	common.SetContextKey(contextValue, constant.ContextKeyManagedContextRequest, contextconsensus.ManagedContextRequest{ExternalContextID: "opaque", ExpectedRevision: 1})
+	common.SetContextKey(contextValue, constant.ContextKeyManagedContextRequest, contextconsensus.ManagedContextRequest{ExternalContextID: "opaque", IdempotencyKey: "request-key-1234567890", ExpectedRevision: 1})
+	common.SetContextKey(contextValue, constant.ContextKeyContextConsensusPolicy, contextconsensus.CompactionPolicySnapshot{PolicyVersion: "context-consensus-v1"})
 
 	originalClient, originalEnabled := common.RDB, common.RedisEnabled
 	common.RDB, common.RedisEnabled = nil, false
@@ -142,4 +151,14 @@ func managedMiddlewareState() contextconsensus.ManagedConsensusState {
 		TaskConsensus: summary, SourceDigest: "source", PolicyVersion: "context-consensus-v1",
 		CreatedAtUnix: now, UpdatedAtUnix: now,
 	}
+}
+
+func prepareManagedOutcomeTestDatabase(t *testing.T) {
+	t.Helper()
+	originalDB := model.DB
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, database.AutoMigrate(&model.ManagedContextOutcome{}, &model.BillingOperation{}))
+	model.DB = database
+	t.Cleanup(func() { model.DB = originalDB })
 }

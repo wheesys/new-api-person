@@ -321,6 +321,8 @@ docker run --name new-api -d --restart always \
 
 </details>
 
+Managed non-streaming ContextConsensus requests must send `X-New-Api-Context-Mode: managed`, `X-New-Api-Context-Id`, `X-New-Api-Context-Revision`, and a unique `X-New-Api-Context-Idempotency-Key`. The idempotency key must contain 16-128 ASCII characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, and `-`; retries must reuse the same key and request intent.
+
 ### 🔧 Deployment Methods
 
 <details>

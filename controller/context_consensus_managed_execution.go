@@ -20,8 +20,10 @@ type managedMainExecutionResult struct {
 }
 
 type managedMainExecutionDependencies struct {
-	execute func(*gin.Context, *relaycommon.RelayInfo, *relay.PreparedTextRelayAttempt) (*dto.Usage, *types.NewAPIError)
-	settle  func(*gin.Context, *relaycommon.RelayInfo, *dto.Usage) relay.TextRelayExecutionResult
+	execute        func(*gin.Context, *relaycommon.RelayInfo, *relay.PreparedTextRelayAttempt) (*dto.Usage, *types.NewAPIError)
+	settle         func(*gin.Context, *relaycommon.RelayInfo, *dto.Usage) relay.TextRelayExecutionResult
+	beforeDispatch func(*gin.Context) error
+	beforeSettle   func(*gin.Context, *relaycommon.RelayInfo, *managedResponseBuffer, contextconsensus.ManagedAssistantOutput) error
 }
 
 // executeManagedPreparedTextAttempt creates the C-2b execution boundary. It
@@ -48,6 +50,12 @@ func executeManagedPreparedTextAttempt(
 	}
 	parentWriter := c.Writer
 	c.Writer = buffer
+	if dependencies.beforeDispatch != nil {
+		if err := dependencies.beforeDispatch(c); err != nil {
+			c.Writer = parentWriter
+			return managedMainExecutionResult{}, managedExecutionError(err)
+		}
+	}
 	usage, newAPIError := dependencies.execute(c, info, attempt)
 	c.Writer = parentWriter
 	body, err := buffer.Body()
@@ -71,6 +79,11 @@ func executeManagedPreparedTextAttempt(
 	}
 	if err := validateManagedRelayUsage(usage); err != nil {
 		return managedMainExecutionResult{}, managedExecutionError(err)
+	}
+	if dependencies.beforeSettle != nil {
+		if err := dependencies.beforeSettle(c, info, buffer, output); err != nil {
+			return managedMainExecutionResult{}, managedExecutionError(err)
+		}
 	}
 	relayResult := dependencies.settle(c, info, usage)
 	if err := validateManagedRelayResult(relayResult); err != nil {

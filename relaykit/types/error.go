@@ -81,6 +81,7 @@ const (
 	ErrorCodeManagedContextRevisionFailed       ErrorCode = "managed_context_revision_failed"
 	ErrorCodeManagedContextCommitFailed         ErrorCode = "managed_context_commit_failed"
 	ErrorCodeManagedContextCommitOutcomeUnknown ErrorCode = "managed_context_commit_outcome_unknown"
+	ErrorCodeManagedContextOutcomeUnknown       ErrorCode = "managed_context_outcome_unknown"
 
 	// sql error
 	ErrorCodeQueryDataError  ErrorCode = "query_data_error"

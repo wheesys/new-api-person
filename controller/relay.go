@@ -134,6 +134,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	managedContextRequest, managedContext := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest)
+	if managedContext {
+		resumed, resumeError := resumeManagedContextOutcome(c, managedContextRequest)
+		if resumed {
+			newAPIError = resumeError
+			return
+		}
+	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
@@ -186,6 +193,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.SetEstimatePromptTokens(tokens)
 	}
 
+	if managedContext && relayInfo.BillingRequestInput == nil {
+		billingInput, billingInputErr := helper.BuildBillingExprRequestInputFromRequest(request, relayInfo.RequestHeaders)
+		if billingInputErr != nil {
+			newAPIError = managedExecutionError(fmt.Errorf("build managed billing request fingerprint: %w", billingInputErr))
+			return
+		}
+		relayInfo.BillingRequestInput = &billingInput
+	}
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))

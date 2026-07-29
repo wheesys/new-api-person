@@ -82,20 +82,6 @@ type TokenCountMeta struct {
 	estimatePromptTokens int
 }
 
-type BillingOperationLookupCandidate struct {
-	LookupHMAC       string
-	OwnerHMAC        string
-	ConversationHMAC string
-	KeyVersion       string
-}
-
-type BillingOperationIdentity struct {
-	Candidates       []BillingOperationLookupCandidate
-	ExpectedRevision uint64
-	Purpose          string
-	Fingerprint      string
-}
-
 type RelayInfo struct {
 	TokenId           int
 	TokenKey          string
@@ -142,8 +128,9 @@ type RelayInfo struct {
 	// 初始免费组可为 nil；若 auto 重试切换到付费组，会在发送前创建。
 	Billing BillingSettler
 	// BillingOperation enables the durable accounting path for managed context.
-	BillingOperation   *BillingOperationIdentity
-	BillingOperationId int64
+	BillingOperation         *BillingOperationIdentity
+	BillingOperationId       int64
+	ManagedOutcomeCheckpoint *ManagedOutcomeBillingCheckpoint
 	// BillingSource indicates whether this request is billed from wallet quota or subscription.
 	// "" or "wallet" => wallet; "subscription" => subscription
 	BillingSource string

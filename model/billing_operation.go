@@ -93,14 +93,15 @@ type BillingOperationReserveRequest struct {
 }
 
 type BillingOperationSettlement struct {
-	ActualQuota      int
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	BillingMode      string
-	CountUsage       bool
-	LogUserId        int
-	LogParams        RecordConsumeLogParams
+	ActualQuota       int
+	PromptTokens      int
+	CompletionTokens  int
+	TotalTokens       int
+	BillingMode       string
+	CountUsage        bool
+	LogUserId         int
+	LogParams         RecordConsumeLogParams
+	OutcomeCheckpoint *ManagedContextOutcomeCheckpoint
 }
 
 type BillingOperationFrozenResult struct {
@@ -396,6 +397,9 @@ func SettleBillingOperation(ctx context.Context, operationId int64, fingerprint 
 			Payload:            string(payload),
 		}
 		if err := tx.Create(&outbox).Error; err != nil {
+			return err
+		}
+		if err := applyManagedContextOutcomeCheckpoint(tx, operation.Id, settlement.OutcomeCheckpoint); err != nil {
 			return err
 		}
 		operation.State = BillingOperationStateSettled

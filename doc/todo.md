@@ -93,9 +93,9 @@
     - [x] 完成阶段 C-2c：生成下一 revision L2/L3，接入固定 2 MiB 缓冲、同请求 CAS 恢复、commit-before-write 及故障矩阵，并移除非流式 503 门禁，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`。
   - [ ] 完成阶段 C-3：冻结稳定客户端幂等键和结算后提交失败的跨请求恢复契约，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
     - [x] 完成阶段 C-3a：为托管会话 state 增加最多 4 个旧版本的 AEAD/HMAC 读取窗口，唯一定位 current/previous namespace，并在下一 revision CAS 时原子迁移到 active namespace；双 namespace 冲突失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`。
-    - [ ] 完成阶段 C-3b：建立托管请求的持久化计费去重与跨请求提交恢复闭环；不得仅靠 Redis phase 推断扣费结果。
+    - [x] 完成阶段 C-3b：建立托管请求的持久化计费去重与跨请求提交恢复闭环；不得仅靠 Redis phase 推断扣费结果。
       - [x] 完成阶段 C-3b1：为主调用与摘要子调用增加数据库持久化计费 operation，原子处理 API Key 额度、用户/渠道统计、冻结价格结果及消费日志 outbox；支持 active/previous key 定位迁移和独立 SQL 日志库，ClickHouse 托管计费失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`。
-      - [ ] 完成阶段 C-3b2：增加稳定客户端幂等键、revision intent、`settled_pending_commit`/`committed` outcome 和已提交响应回放，闭合上游成功但客户端重试时的跨请求恢复。
+      - [x] 完成阶段 C-3b2：增加稳定客户端幂等键、revision intent、`settled_pending_commit`/`committed` outcome 和已提交响应回放，闭合上游成功但客户端重试时的跨请求恢复，见 `doc/auto-smart-routing-context-consensus-stage-c3b2-implementation-2026-07-29.md`。
     - [ ] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。

@@ -37,21 +37,23 @@ const (
 )
 
 type InternalCompactionExecutorRequest struct {
-	ParentContext        *gin.Context
-	Model                string
-	ModelPool            []string
-	AllowedChannelIDs    []int
-	PolicyVersion        string
-	SourceDigest         string
-	MaxOutputTokens      int
-	MaxInputTokens       int
-	SummaryRequest       *dto.GeneralOpenAIRequest
-	Plan                 contextconsensus.CompactionPlan
-	ManagedRevisionPlan  *contextconsensus.ManagedRevisionPlan
-	BillingOperationSeed *managedBillingOperationSeed
-	MaxQuota             int
-	Timeout              time.Duration
-	MaxResponseBytes     int64
+	ParentContext          *gin.Context
+	Model                  string
+	ModelPool              []string
+	AllowedChannelIDs      []int
+	PolicyVersion          string
+	SourceDigest           string
+	MaxOutputTokens        int
+	MaxInputTokens         int
+	SummaryRequest         *dto.GeneralOpenAIRequest
+	Plan                   contextconsensus.CompactionPlan
+	ManagedRevisionPlan    *contextconsensus.ManagedRevisionPlan
+	BillingOperationSeed   *managedBillingOperationSeed
+	MaxQuota               int
+	Timeout                time.Duration
+	MaxResponseBytes       int64
+	ManagedOutcome         *contextconsensus.ManagedOutcomeSession
+	ManagedSummarySnapshot *contextconsensus.ManagedSummaryExecutionSnapshot
 }
 
 type InternalCompactionExecutor struct {
@@ -96,18 +98,20 @@ type internalCompactionDependencies struct {
 }
 
 type internalCompactionLifecycle struct {
-	identity             internalCompactionIdentity
-	modelPool            map[string]struct{}
-	allowedChannelIDs    map[int]struct{}
-	summaryRequest       *dto.GeneralOpenAIRequest
-	plan                 contextconsensus.CompactionPlan
-	managedRevisionPlan  *contextconsensus.ManagedRevisionPlan
-	billingOperationSeed *managedBillingOperationSeed
-	maxQuota             int
-	maxInputTokens       int
-	timeout              time.Duration
-	maxResponseBytes     int64
-	dependencies         internalCompactionDependencies
+	identity               internalCompactionIdentity
+	modelPool              map[string]struct{}
+	allowedChannelIDs      map[int]struct{}
+	summaryRequest         *dto.GeneralOpenAIRequest
+	plan                   contextconsensus.CompactionPlan
+	managedRevisionPlan    *contextconsensus.ManagedRevisionPlan
+	billingOperationSeed   *managedBillingOperationSeed
+	maxQuota               int
+	maxInputTokens         int
+	timeout                time.Duration
+	maxResponseBytes       int64
+	managedOutcome         *contextconsensus.ManagedOutcomeSession
+	managedSummarySnapshot *contextconsensus.ManagedSummaryExecutionSnapshot
+	dependencies           internalCompactionDependencies
 
 	mutex                sync.Mutex
 	runtime              *internalCompactionRuntime
@@ -180,18 +184,20 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 		request.MaxResponseBytes = defaultInternalCompactionResponseBytes
 	}
 	lifecycle := &internalCompactionLifecycle{
-		identity:             identity,
-		modelPool:            modelPool,
-		allowedChannelIDs:    allowedChannelIDs,
-		summaryRequest:       summaryRequest,
-		plan:                 request.Plan,
-		managedRevisionPlan:  request.ManagedRevisionPlan,
-		billingOperationSeed: request.BillingOperationSeed,
-		maxQuota:             request.MaxQuota,
-		maxInputTokens:       request.MaxInputTokens,
-		timeout:              request.Timeout,
-		maxResponseBytes:     request.MaxResponseBytes,
-		dependencies:         dependencies,
+		identity:               identity,
+		modelPool:              modelPool,
+		allowedChannelIDs:      allowedChannelIDs,
+		summaryRequest:         summaryRequest,
+		plan:                   request.Plan,
+		managedRevisionPlan:    request.ManagedRevisionPlan,
+		billingOperationSeed:   request.BillingOperationSeed,
+		maxQuota:               request.MaxQuota,
+		maxInputTokens:         request.MaxInputTokens,
+		timeout:                request.Timeout,
+		maxResponseBytes:       request.MaxResponseBytes,
+		managedOutcome:         request.ManagedOutcome,
+		managedSummarySnapshot: request.ManagedSummarySnapshot,
+		dependencies:           dependencies,
 	}
 	executor, err := contextconsensus.NewCompactionChildExecutor(contextconsensus.CompactionChildDependencies{
 		RequestIDGenerator: internalCompactionRequestIdGenerator{newRequestId: dependencies.newRequestId},
@@ -431,6 +437,20 @@ func (lifecycle *internalCompactionLifecycle) SettleCompactionChild(_ context.Co
 	if runtime.usage == nil {
 		return contextconsensus.CompactionSettlement{}, fmt.Errorf("compaction usage is unavailable")
 	}
+	if lifecycle.managedOutcome != nil && output.Summary.Version != 0 {
+		if lifecycle.managedSummarySnapshot == nil {
+			return contextconsensus.CompactionSettlement{}, fmt.Errorf("managed summary outcome snapshot is unavailable")
+		}
+		nextState, buildErr := contextconsensus.BuildNextManagedConsensusState(lifecycle.managedSummarySnapshot.Plan, output.Summary, time.Now())
+		if buildErr != nil {
+			return contextconsensus.CompactionSettlement{}, buildErr
+		}
+		checkpoint, checkpointErr := lifecycle.managedOutcome.SummaryCheckpoint(runtime.context.Request.Context(), output.Summary, nextState)
+		if checkpointErr != nil {
+			return contextconsensus.CompactionSettlement{}, checkpointErr
+		}
+		runtime.relayInfo.ManagedOutcomeCheckpoint = managedOutcomeRelayCheckpoint(checkpoint)
+	}
 	consumeResult, consumeError := lifecycle.dependencies.postConsume(runtime.context, runtime.relayInfo, runtime.usage)
 	lifecycle.mutex.Lock()
 	lifecycle.postConsumeAttempted = true
@@ -464,6 +484,11 @@ func (lifecycle *internalCompactionLifecycle) ExecuteCompactionChild(_ context.C
 	runtime, err := lifecycle.getRuntime()
 	if err != nil {
 		return contextconsensus.CompactionExecutionOutput{}, err
+	}
+	if lifecycle.managedOutcome != nil {
+		if err := lifecycle.managedOutcome.MarkSummaryDispatched(runtime.context.Request.Context()); err != nil {
+			return contextconsensus.CompactionExecutionOutput{}, fmt.Errorf("persist managed summary dispatch: %w", err)
+		}
 	}
 	usage, apiError := lifecycle.dependencies.executeAttempt(runtime.context, runtime.relayInfo)
 	if apiError != nil {

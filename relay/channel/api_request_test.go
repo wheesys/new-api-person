@@ -227,6 +227,8 @@ func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
 		{name: "regex", override: map[string]any{"regex:^x-new-api-context": ""}},
 		{name: "explicit override", override: map[string]any{"X-New-Api-Context-Mode": "auto_compact"}},
 		{name: "client header placeholder", override: map[string]any{"X-Context-Alias": "{client_header:X-New-Api-Context-Mode}"}},
+		{name: "idempotency explicit override", override: map[string]any{"X-New-Api-Context-Idempotency-Key": "forced"}},
+		{name: "idempotency placeholder", override: map[string]any{"X-Context-Alias": "{client_header:X-New-Api-Context-Idempotency-Key}"}},
 	}
 
 	for _, test := range tests {
@@ -237,6 +239,7 @@ func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
 			ctx.Request.Header.Set("X-New-Api-Context-Id", "context-sensitive")
 			ctx.Request.Header.Set("X-New-Api-Context-Mode", "auto_compact")
 			ctx.Request.Header.Set("X-New-Api-Context-Revision", "7")
+			ctx.Request.Header.Set("X-New-Api-Context-Idempotency-Key", "request-key-1234567890")
 
 			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: test.override}}
 			headers, err := processHeaderOverride(info, ctx)
@@ -244,6 +247,7 @@ func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
 			require.NotContains(t, headers, "x-new-api-context-id")
 			require.NotContains(t, headers, "x-new-api-context-mode")
 			require.NotContains(t, headers, "x-new-api-context-revision")
+			require.NotContains(t, headers, "x-new-api-context-idempotency-key")
 			require.NotContains(t, headers, "x-context-alias")
 		})
 	}
@@ -252,6 +256,7 @@ func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
 	upstreamRequest.Header.Set("X-New-Api-Context-Id", "context-sensitive")
 	upstreamRequest.Header.Set("X-New-Api-Context-Mode", "auto_compact")
 	upstreamRequest.Header.Set("X-New-Api-Context-Revision", "7")
+	upstreamRequest.Header.Set("X-New-Api-Context-Idempotency-Key", "request-key-1234567890")
 	applyHeaderOverrideToRequest(upstreamRequest, map[string]string{
 		"X-New-Api-Context-Mode": "forced",
 		"X-Trace-Id":             "trace-123",
@@ -259,17 +264,20 @@ func TestGatewayContextHeadersNeverReachUpstream(t *testing.T) {
 	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Id"))
 	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Mode"))
 	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Revision"))
+	require.Empty(t, upstreamRequest.Header.Get("X-New-Api-Context-Idempotency-Key"))
 	require.Equal(t, "trace-123", upstreamRequest.Header.Get("X-Trace-Id"))
 
 	websocketHeader := http.Header{
-		"X-New-Api-Context-Id":       []string{"context-sensitive"},
-		"X-New-Api-Context-Mode":     []string{"auto_compact"},
-		"X-New-Api-Context-Revision": []string{"7"},
-		"X-Trace-Id":                 []string{"trace-123"},
+		"X-New-Api-Context-Id":              []string{"context-sensitive"},
+		"X-New-Api-Context-Mode":            []string{"auto_compact"},
+		"X-New-Api-Context-Revision":        []string{"7"},
+		"X-New-Api-Context-Idempotency-Key": []string{"request-key-1234567890"},
+		"X-Trace-Id":                        []string{"trace-123"},
 	}
 	removeGatewayContextHeaders(websocketHeader)
 	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Id"))
 	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Mode"))
 	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Revision"))
+	require.Empty(t, websocketHeader.Get("X-New-Api-Context-Idempotency-Key"))
 	require.Equal(t, "trace-123", websocketHeader.Get("X-Trace-Id"))
 }

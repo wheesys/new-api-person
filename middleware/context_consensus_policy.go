@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,10 +20,11 @@ import (
 )
 
 const (
-	contextIDHeader        = "X-New-Api-Context-Id"
-	contextModeHeader      = "X-New-Api-Context-Mode"
-	contextRevisionHeader  = "X-New-Api-Context-Revision"
-	managedLeaseMaximumTTL = 30 * time.Second
+	contextIDHeader          = "X-New-Api-Context-Id"
+	contextModeHeader        = "X-New-Api-Context-Mode"
+	contextRevisionHeader    = "X-New-Api-Context-Revision"
+	contextIdempotencyHeader = "X-New-Api-Context-Idempotency-Key"
+	managedLeaseMaximumTTL   = 30 * time.Second
 )
 
 func captureContextConsensusPolicy(c *gin.Context) error {
@@ -33,10 +35,16 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 	mode := strings.ToLower(strings.TrimSpace(c.Request.Header.Get(contextModeHeader)))
 	contextID := strings.TrimSpace(c.Request.Header.Get(contextIDHeader))
 	revisionValue := strings.TrimSpace(c.Request.Header.Get(contextRevisionHeader))
+	idempotencyValues := c.Request.Header.Values(contextIdempotencyHeader)
+	idempotencyKey := ""
+	if len(idempotencyValues) == 1 {
+		idempotencyKey = idempotencyValues[0]
+	}
 
 	c.Request.Header.Del(contextIDHeader)
 	c.Request.Header.Del(contextModeHeader)
 	c.Request.Header.Del(contextRevisionHeader)
+	c.Request.Header.Del(contextIdempotencyHeader)
 
 	if mode != "" && mode != "full" && mode != "auto_compact" {
 		if mode != "managed" {
@@ -46,8 +54,8 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 
 	settings := model_setting.GetSmartRoutingSettings()
 	if mode == "managed" {
-		if contextID == "" || revisionValue == "" {
-			return fmt.Errorf("managed context requires context ID and revision")
+		if contextID == "" || revisionValue == "" || len(idempotencyValues) != 1 || !validManagedContextIdempotencyKey(idempotencyKey) {
+			return fmt.Errorf("managed context requires a valid context ID, revision, and idempotency key")
 		}
 		if !settings.ContextConsensusEnabled || !settings.ManagedContextEnabled {
 			return fmt.Errorf("managed context is disabled")
@@ -61,10 +69,11 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 		}
 		common.SetContextKey(c, constant.ContextKeyManagedContextRequest, contextconsensus.ManagedContextRequest{
 			ExternalContextID: contextID,
+			IdempotencyKey:    idempotencyKey,
 			ExpectedRevision:  expectedRevision,
 		})
-	} else if contextID != "" || revisionValue != "" {
-		return fmt.Errorf("context ID and revision require managed context mode")
+	} else if contextID != "" || revisionValue != "" || len(idempotencyValues) != 0 {
+		return fmt.Errorf("context ID, revision, and idempotency key require managed context mode")
 	}
 	policy := contextconsensus.CompactionPolicy{
 		SystemEnabled:        settings.ContextConsensusEnabled && settings.AutoCompactionEnabled,
@@ -79,6 +88,21 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 	)
 	common.SetContextKey(c, constant.ContextKeyContextConsensusPolicy, snapshot)
 	return nil
+}
+
+func validManagedContextIdempotencyKey(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') || character == '.' || character == '_' || character == '~' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedConsensusLeaseGuard, int, error) {
@@ -109,6 +133,9 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 		return nil, http.StatusBadRequest, err
 	}
 	managedRequest.Protocol = protocol
+	if managedRequest.ExpectedRevision >= math.MaxInt64 {
+		return nil, http.StatusConflict, fmt.Errorf("managed context revision cannot advance")
+	}
 	managedRequest.IncrementalSourceDigest = contextconsensus.DigestManagedIncrementalRequest(body)
 	managedRequest.CurrentUserText = currentUserText
 	common.SetContextKey(c, constant.ContextKeyManagedContextRequest, managedRequest)
@@ -124,12 +151,75 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 	if stateTTL <= 0 {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context state TTL is unavailable")
 	}
+	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
+	if err != nil {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context runtime is unavailable")
+	}
+	policy, policyFound := common.GetContextKeyType[contextconsensus.CompactionPolicySnapshot](c, constant.ContextKeyContextConsensusPolicy)
+	if !policyFound {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context policy is unavailable")
+	}
+	owner := contextconsensus.ManagedConsensusOwner{
+		UserID: common.GetContextKeyInt(c, constant.ContextKeyUserId), TokenID: common.GetContextKeyInt(c, constant.ContextKeyTokenId), EndpointFamily: endpointFamily,
+	}
+	outcome, err := contextconsensus.ReserveManagedOutcome(c.Request.Context(), runtime, contextconsensus.ManagedOutcomeRequest{
+		Owner: owner, ExternalContextID: managedRequest.ExternalContextID, IdempotencyKey: managedRequest.IdempotencyKey,
+		ExpectedRevision: managedRequest.ExpectedRevision, Protocol: protocol,
+		IncrementalSourceDigest: managedRequest.IncrementalSourceDigest, PolicyVersion: policy.PolicyVersion, TTL: stateTTL,
+	})
+	if err != nil {
+		if contextconsensus.IsManagedOutcomeConflict(err) {
+			return nil, http.StatusConflict, fmt.Errorf("managed context idempotency intent conflicts with an existing request")
+		}
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context outcome is unavailable")
+	}
+	common.SetContextKey(c, constant.ContextKeyManagedContextOutcome, outcome)
+	managedRequest.IdempotencyKey = ""
+	common.SetContextKey(c, constant.ContextKeyManagedContextRequest, managedRequest)
+	if outcome.Phase() == contextconsensus.ManagedOutcomePhaseCommitted {
+		replay, replayErr := outcome.Response(c.Request.Context())
+		if replayErr != nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context committed outcome is unavailable")
+		}
+		common.SetContextKey(c, constant.ContextKeyManagedContextReplay, replay)
+		return nil, 0, nil
+	}
+	if outcome.Phase() == contextconsensus.ManagedOutcomePhaseMainDispatched || outcome.Phase() == contextconsensus.ManagedOutcomePhaseSummaryDispatched {
+		return nil, http.StatusServiceUnavailable, contextconsensus.ErrManagedOutcomeUnknown
+	}
+	if outcome.Phase() == contextconsensus.ManagedOutcomePhaseTerminalFailed || outcome.Phase() == contextconsensus.ManagedOutcomePhaseExpired {
+		return nil, http.StatusConflict, fmt.Errorf("managed context outcome is no longer reusable")
+	}
 	if !common.RedisEnabled || common.RDB == nil {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context Redis is unavailable")
 	}
-	runtime, err := contextconsensus.NewManagedConsensusRuntimeFromEnvironment(common.RDB, stateTTL)
-	if err != nil {
-		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context runtime is unavailable")
+	repository, err := contextconsensus.NewRedisManagedConsensusRepository(common.RDB, stateTTL)
+	if err != nil || runtime.AttachRepository(repository) != nil {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context Redis repository is unavailable")
+	}
+	if outcome.Phase() == contextconsensus.ManagedOutcomePhaseSettledPendingCommit {
+		nextState, nextStateErr := outcome.NextState(c.Request.Context())
+		if nextStateErr != nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context pending outcome is unavailable")
+		}
+		committed, currentAtExpected, confirmErr := runtime.ConfirmManagedOutcomeCommit(c.Request.Context(), owner, managedRequest.ExternalContextID, managedRequest.ExpectedRevision, nextState)
+		if confirmErr != nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context commit outcome is unavailable")
+		}
+		if committed {
+			if err := outcome.MarkCommitted(c.Request.Context()); err != nil {
+				return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context committed outcome is unavailable")
+			}
+			replay, replayErr := outcome.Response(c.Request.Context())
+			if replayErr != nil {
+				return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context committed response is unavailable")
+			}
+			common.SetContextKey(c, constant.ContextKeyManagedContextReplay, replay)
+			return nil, 0, nil
+		}
+		if !currentAtExpected {
+			return nil, http.StatusServiceUnavailable, contextconsensus.ErrManagedOutcomeUnknown
+		}
 	}
 	leaseTTL := min(stateTTL, managedLeaseMaximumTTL)
 	holderID := strings.TrimSpace(c.GetString(common.RequestIdKey))
@@ -137,11 +227,7 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 		holderID = common.NewRequestId()
 	}
 	session, err := contextconsensus.BeginManagedConsensusSession(c.Request.Context(), runtime, contextconsensus.BeginManagedConsensusSessionRequest{
-		Owner: contextconsensus.ManagedConsensusOwner{
-			UserID:         common.GetContextKeyInt(c, constant.ContextKeyUserId),
-			TokenID:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
-			EndpointFamily: endpointFamily,
-		},
+		Owner:             owner,
 		ExternalContextID: managedRequest.ExternalContextID,
 		ExpectedRevision:  managedRequest.ExpectedRevision,
 		HolderID:          holderID,

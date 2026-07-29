@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -112,6 +113,7 @@ func TestCaptureContextConsensusPolicyCapturesManagedContract(t *testing.T) {
 	context.Request.Header.Set(contextModeHeader, "managed")
 	context.Request.Header.Set(contextIDHeader, "opaque-context")
 	context.Request.Header.Set(contextRevisionHeader, "7")
+	context.Request.Header.Set(contextIdempotencyHeader, "request-key-1234567890")
 	common.SetContextKey(context, constant.ContextKeyTokenContextCompaction, true)
 
 	require.NoError(t, captureContextConsensusPolicy(context))
@@ -119,9 +121,46 @@ func TestCaptureContextConsensusPolicyCapturesManagedContract(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "opaque-context", managedRequest.ExternalContextID)
 	assert.Equal(t, uint64(7), managedRequest.ExpectedRevision)
+	assert.Equal(t, "request-key-1234567890", managedRequest.IdempotencyKey)
 	assert.Empty(t, context.Request.Header.Get(contextIDHeader))
 	assert.Empty(t, context.Request.Header.Get(contextModeHeader))
 	assert.Empty(t, context.Request.Header.Get(contextRevisionHeader))
+	assert.Empty(t, context.Request.Header.Get(contextIdempotencyHeader))
+}
+
+func TestManagedContextIdempotencyKeyContract(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "minimum", value: strings.Repeat("a", 16), valid: true},
+		{name: "maximum and alphabet", value: strings.Repeat("A0._~-z", 18) + "ab", valid: true},
+		{name: "too short", value: strings.Repeat("a", 15)},
+		{name: "too long", value: strings.Repeat("a", 129)},
+		{name: "space", value: "invalid key value"},
+		{name: "leading space", value: " request-key-1234567890"},
+		{name: "trailing space", value: "request-key-1234567890 "},
+		{name: "non ascii", value: "请求幂等键-1234567890"},
+		{name: "separator", value: "invalid,key-123456"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.valid, validManagedContextIdempotencyKey(test.value))
+		})
+	}
+}
+
+func TestCaptureContextConsensusPolicyRejectsDuplicateIdempotencyHeaderAndStripsIt(t *testing.T) {
+	contextValue, _ := gin.CreateTestContext(httptest.NewRecorder())
+	contextValue.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	contextValue.Request.Header.Set(contextModeHeader, "managed")
+	contextValue.Request.Header.Set(contextIDHeader, "opaque-context")
+	contextValue.Request.Header.Set(contextRevisionHeader, "0")
+	contextValue.Request.Header.Add(contextIdempotencyHeader, "request-key-1234567890")
+	contextValue.Request.Header.Add(contextIdempotencyHeader, "request-key-0987654321")
+
+	require.Error(t, captureContextConsensusPolicy(contextValue))
+	assert.Empty(t, contextValue.Request.Header.Values(contextIdempotencyHeader))
 }
 
 func boolString(value bool) string {

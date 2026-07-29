@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -67,6 +68,14 @@ func executeManagedContextAttempt(
 		return false, managedExecutionError(err)
 	}
 
+	outcome, outcomeFound := common.GetContextKeyType[*contextconsensus.ManagedOutcomeSession](c, constant.ContextKeyManagedContextOutcome)
+	if !outcomeFound || outcome == nil || outcome.Phase() != contextconsensus.ManagedOutcomePhaseIntent {
+		return false, managedExecutionError(fmt.Errorf("managed context outcome intent is unavailable"))
+	}
+	var evidence contextconsensus.ManagedRevisionEvidence
+	var plan contextconsensus.ManagedRevisionPlan
+	var summaryRequest *dto.GeneralOpenAIRequest
+	var summarySnapshot contextconsensus.ManagedSummaryExecutionSnapshot
 	mainResult, newAPIError := executeManagedPreparedTextAttempt(
 		c,
 		info,
@@ -74,6 +83,9 @@ func executeManagedContextAttempt(
 		managedRequest.Protocol,
 		managedMainResponseMaximumBytes,
 		managedMainExecutionDependencies{
+			beforeDispatch: func(contextValue *gin.Context) error {
+				return outcome.MarkMainDispatched(contextValue.Request.Context())
+			},
 			execute: func(contextValue *gin.Context, relayInfo *relaycommon.RelayInfo, preparedAttempt *relay.PreparedTextRelayAttempt) (*dto.Usage, *types.NewAPIError) {
 				if preparedAttempt != nil {
 					return relay.ExecutePreparedTextRelayAttempt(contextValue, relayInfo, preparedAttempt)
@@ -81,6 +93,41 @@ func executeManagedContextAttempt(
 				return relay.ExecuteTextAttemptWithoutQuota(contextValue, relayInfo)
 			},
 			settle: relay.SettleTextRelayUsage,
+			beforeSettle: func(contextValue *gin.Context, relayInfo *relaycommon.RelayInfo, responseBuffer *managedResponseBuffer, output contextconsensus.ManagedAssistantOutput) error {
+				evidence = contextconsensus.ManagedRevisionEvidence{
+					Protocol: managedRequest.Protocol, PreviousState: previousState,
+					IncrementalSourceDigest: managedRequest.IncrementalSourceDigest,
+					CurrentUserText:         managedRequest.CurrentUserText, AssistantOutput: output,
+					PolicyVersion: policy.PolicyVersion,
+				}
+				var buildErr error
+				plan, buildErr = contextconsensus.BuildManagedRevisionPlan(evidence)
+				if buildErr != nil {
+					return buildErr
+				}
+				summaryRequest, buildErr = contextconsensus.BuildManagedRevisionPrompt(compactionModel, evidence, plan, settings.MaxSummaryTokens)
+				if buildErr != nil {
+					return buildErr
+				}
+				summarySnapshot = contextconsensus.ManagedSummaryExecutionSnapshot{
+					Evidence: evidence, Plan: plan, SummaryRequest: summaryRequest, CompactionModel: compactionModel,
+					ModelPool: append([]string(nil), settings.CompactionModelPool...), AllowedChannelIDs: append([]int(nil), settings.CompactionChannelIDs...),
+					MaximumSummaryTokens: settings.MaxSummaryTokens, MaximumInputTokens: settings.MaxCompactionInputTokens,
+					MaximumQuota: settings.MaxCompactionQuota, TimeoutSeconds: settings.CompactionTimeoutSeconds,
+				}
+				body, bodyErr := responseBuffer.Body()
+				if bodyErr != nil {
+					return bodyErr
+				}
+				checkpoint, checkpointErr := outcome.MainCheckpoint(contextValue.Request.Context(), contextconsensus.ManagedOutcomeResponse{
+					Status: responseBuffer.Status(), ContentType: responseBuffer.Header().Get("Content-Type"), Body: body,
+				}, output, summarySnapshot)
+				if checkpointErr != nil {
+					return checkpointErr
+				}
+				relayInfo.ManagedOutcomeCheckpoint = managedOutcomeRelayCheckpoint(checkpoint)
+				return nil
+			},
 		},
 	)
 	if finishMainAttempt != nil {
@@ -89,21 +136,8 @@ func executeManagedContextAttempt(
 	if newAPIError != nil {
 		return true, newAPIError
 	}
-	evidence := contextconsensus.ManagedRevisionEvidence{
-		Protocol:                managedRequest.Protocol,
-		PreviousState:           previousState,
-		IncrementalSourceDigest: managedRequest.IncrementalSourceDigest,
-		CurrentUserText:         managedRequest.CurrentUserText,
-		AssistantOutput:         mainResult.Output,
-		PolicyVersion:           policy.PolicyVersion,
-	}
-	plan, err := contextconsensus.BuildManagedRevisionPlan(evidence)
-	if err != nil {
-		return true, managedExecutionError(err)
-	}
-	summaryRequest, err := contextconsensus.BuildManagedRevisionPrompt(compactionModel, evidence, plan, settings.MaxSummaryTokens)
-	if err != nil {
-		return true, managedExecutionError(err)
+	if err := outcome.Reload(c.Request.Context()); err != nil || outcome.Phase() != contextconsensus.ManagedOutcomePhaseMainSettled {
+		return true, managedExecutionError(fmt.Errorf("managed context main outcome checkpoint is unavailable"))
 	}
 	executor, err := NewInternalCompactionExecutor(InternalCompactionExecutorRequest{
 		ParentContext:     c,
@@ -130,9 +164,11 @@ func executeManagedContextAttempt(
 			SourceDigest:     plan.SourceDigest,
 			PolicyVersion:    policy.PolicyVersion,
 		},
-		MaxQuota:         settings.MaxCompactionQuota,
-		Timeout:          time.Duration(settings.CompactionTimeoutSeconds) * time.Second,
-		MaxResponseBytes: defaultInternalCompactionResponseBytes,
+		MaxQuota:               settings.MaxCompactionQuota,
+		Timeout:                time.Duration(settings.CompactionTimeoutSeconds) * time.Second,
+		MaxResponseBytes:       defaultInternalCompactionResponseBytes,
+		ManagedOutcome:         outcome,
+		ManagedSummarySnapshot: &summarySnapshot,
 	})
 	if err != nil {
 		return true, managedExecutionError(err)
@@ -147,7 +183,24 @@ func executeManagedContextAttempt(
 	if err := errors.Join(c.Request.Context().Err(), guard.RenewalError()); err != nil {
 		return true, managedExecutionError(fmt.Errorf("managed consensus lease is unhealthy: %w", err))
 	}
-	return true, commitAndFlushManagedRevision(c, session, plan, *childResult.Summary, mainResult.buffer, stateTTL, time.Now())
+	if err := outcome.Reload(c.Request.Context()); err != nil || outcome.Phase() != contextconsensus.ManagedOutcomePhaseSettledPendingCommit {
+		return true, managedExecutionError(fmt.Errorf("managed context summary outcome checkpoint is unavailable"))
+	}
+	return true, commitAndFlushManagedRevision(c, session, plan, *childResult.Summary, mainResult.buffer, stateTTL, time.Now(), outcome)
+}
+
+func managedOutcomeRelayCheckpoint(checkpoint *model.ManagedContextOutcomeCheckpoint) *relaycommon.ManagedOutcomeBillingCheckpoint {
+	if checkpoint == nil {
+		return nil
+	}
+	return &relaycommon.ManagedOutcomeBillingCheckpoint{
+		OutcomeId: checkpoint.OutcomeId, RequestFingerprint: checkpoint.RequestFingerprint,
+		ExpectedPhase: checkpoint.ExpectedPhase, NextPhase: checkpoint.NextPhase,
+		ResponseStatus: checkpoint.ResponseStatus, ResponseContentType: checkpoint.ResponseContentType,
+		ResponsePayload: checkpoint.ResponsePayload, AssistantPayload: checkpoint.AssistantPayload,
+		SummaryExecutionPayload: checkpoint.SummaryExecutionPayload, NextStatePayload: checkpoint.NextStatePayload,
+		SummaryResultPayload: checkpoint.SummaryResultPayload,
+	}
 }
 
 func commitAndFlushManagedRevision(
@@ -158,16 +211,34 @@ func commitAndFlushManagedRevision(
 	buffer *managedResponseBuffer,
 	stateTTL time.Duration,
 	now time.Time,
+	outcomes ...*contextconsensus.ManagedOutcomeSession,
 ) *types.NewAPIError {
 	if c == nil || c.Request == nil || committer == nil || buffer == nil {
 		return managedExecutionError(fmt.Errorf("managed consensus commit barrier is incomplete"))
 	}
-	nextState, err := contextconsensus.BuildNextManagedConsensusState(plan, summary, now)
+	var nextState contextconsensus.ManagedConsensusState
+	var err error
+	if len(outcomes) > 0 && outcomes[0] != nil {
+		nextState, err = outcomes[0].NextState(c.Request.Context())
+	} else {
+		nextState, err = contextconsensus.BuildNextManagedConsensusState(plan, summary, now)
+	}
 	if err != nil {
 		return managedExecutionError(err)
 	}
 	if _, err := committer.CommitWithRecovery(c.Request.Context(), nextState, stateTTL); err != nil {
 		return managedCommitAPIError(err)
+	}
+	if len(outcomes) > 0 && outcomes[0] != nil {
+		if err := outcomes[0].MarkCommitted(c.Request.Context()); err != nil {
+			return managedCommitAPIError(fmt.Errorf("persist managed context committed outcome: %w", err))
+		}
+		response, err := outcomes[0].Response(c.Request.Context())
+		if err != nil {
+			return managedExecutionError(fmt.Errorf("load committed managed context response: %w", err))
+		}
+		writeManagedOutcomeResponse(c, nextState.Revision, response)
+		return nil
 	}
 	buffer.Header().Set("X-New-Api-Context-Revision", fmt.Sprintf("%d", nextState.Revision))
 	if err := buffer.FlushToClient(); err != nil {

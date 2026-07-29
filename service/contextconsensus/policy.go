@@ -15,6 +15,7 @@ type CompactionPolicy struct {
 // be persisted or written to logs.
 type ManagedContextRequest struct {
 	ExternalContextID       string
+	IdempotencyKey          string
 	ExpectedRevision        uint64
 	Protocol                types.RelayFormat
 	IncrementalSourceDigest string

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -131,8 +133,14 @@ func (writer *managedResponseBuffer) FlushToClient() error {
 	for key := range destinationHeader {
 		destinationHeader.Del(key)
 	}
-	for key, values := range writer.header {
-		destinationHeader[key] = append([]string(nil), values...)
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(writer.header.Get("Content-Type"), ";")[0]))
+	if contentType != "application/json" && contentType != "application/problem+json" {
+		contentType = "application/json"
+	}
+	destinationHeader.Set("Content-Type", contentType)
+	destinationHeader.Set("Content-Length", strconv.Itoa(writer.body.Len()))
+	if revision := strings.TrimSpace(writer.header.Get("X-New-Api-Context-Revision")); revision != "" {
+		destinationHeader.Set("X-New-Api-Context-Revision", revision)
 	}
 	writer.parent.WriteHeader(writer.status)
 	if writer.body.Len() == 0 {
