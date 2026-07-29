@@ -37,20 +37,21 @@ const (
 )
 
 type InternalCompactionExecutorRequest struct {
-	ParentContext       *gin.Context
-	Model               string
-	ModelPool           []string
-	AllowedChannelIDs   []int
-	PolicyVersion       string
-	SourceDigest        string
-	MaxOutputTokens     int
-	MaxInputTokens      int
-	SummaryRequest      *dto.GeneralOpenAIRequest
-	Plan                contextconsensus.CompactionPlan
-	ManagedRevisionPlan *contextconsensus.ManagedRevisionPlan
-	MaxQuota            int
-	Timeout             time.Duration
-	MaxResponseBytes    int64
+	ParentContext        *gin.Context
+	Model                string
+	ModelPool            []string
+	AllowedChannelIDs    []int
+	PolicyVersion        string
+	SourceDigest         string
+	MaxOutputTokens      int
+	MaxInputTokens       int
+	SummaryRequest       *dto.GeneralOpenAIRequest
+	Plan                 contextconsensus.CompactionPlan
+	ManagedRevisionPlan  *contextconsensus.ManagedRevisionPlan
+	BillingOperationSeed *managedBillingOperationSeed
+	MaxQuota             int
+	Timeout              time.Duration
+	MaxResponseBytes     int64
 }
 
 type InternalCompactionExecutor struct {
@@ -95,17 +96,18 @@ type internalCompactionDependencies struct {
 }
 
 type internalCompactionLifecycle struct {
-	identity            internalCompactionIdentity
-	modelPool           map[string]struct{}
-	allowedChannelIDs   map[int]struct{}
-	summaryRequest      *dto.GeneralOpenAIRequest
-	plan                contextconsensus.CompactionPlan
-	managedRevisionPlan *contextconsensus.ManagedRevisionPlan
-	maxQuota            int
-	maxInputTokens      int
-	timeout             time.Duration
-	maxResponseBytes    int64
-	dependencies        internalCompactionDependencies
+	identity             internalCompactionIdentity
+	modelPool            map[string]struct{}
+	allowedChannelIDs    map[int]struct{}
+	summaryRequest       *dto.GeneralOpenAIRequest
+	plan                 contextconsensus.CompactionPlan
+	managedRevisionPlan  *contextconsensus.ManagedRevisionPlan
+	billingOperationSeed *managedBillingOperationSeed
+	maxQuota             int
+	maxInputTokens       int
+	timeout              time.Duration
+	maxResponseBytes     int64
+	dependencies         internalCompactionDependencies
 
 	mutex                sync.Mutex
 	runtime              *internalCompactionRuntime
@@ -178,17 +180,18 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 		request.MaxResponseBytes = defaultInternalCompactionResponseBytes
 	}
 	lifecycle := &internalCompactionLifecycle{
-		identity:            identity,
-		modelPool:           modelPool,
-		allowedChannelIDs:   allowedChannelIDs,
-		summaryRequest:      summaryRequest,
-		plan:                request.Plan,
-		managedRevisionPlan: request.ManagedRevisionPlan,
-		maxQuota:            request.MaxQuota,
-		maxInputTokens:      request.MaxInputTokens,
-		timeout:             request.Timeout,
-		maxResponseBytes:    request.MaxResponseBytes,
-		dependencies:        dependencies,
+		identity:             identity,
+		modelPool:            modelPool,
+		allowedChannelIDs:    allowedChannelIDs,
+		summaryRequest:       summaryRequest,
+		plan:                 request.Plan,
+		managedRevisionPlan:  request.ManagedRevisionPlan,
+		billingOperationSeed: request.BillingOperationSeed,
+		maxQuota:             request.MaxQuota,
+		maxInputTokens:       request.MaxInputTokens,
+		timeout:              request.Timeout,
+		maxResponseBytes:     request.MaxResponseBytes,
+		dependencies:         dependencies,
 	}
 	executor, err := contextconsensus.NewCompactionChildExecutor(contextconsensus.CompactionChildDependencies{
 		RequestIDGenerator: internalCompactionRequestIdGenerator{newRequestId: dependencies.newRequestId},
@@ -346,6 +349,12 @@ func (lifecycle *internalCompactionLifecycle) PrepareCompactionChild(ctx context
 		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("compaction pre-consume quota exceeds configured maximum")
 	}
 	relayInfo.PriceData = priceData
+	if lifecycle.billingOperationSeed != nil {
+		relayInfo.BillingOperation, err = buildManagedBillingOperationIdentity(*lifecycle.billingOperationSeed, relayInfo)
+		if err != nil {
+			return contextconsensus.PreparedCompactionChild{}, err
+		}
+	}
 	preparedBody, err := common.Marshal(childRequest)
 	if err != nil {
 		return contextconsensus.PreparedCompactionChild{}, fmt.Errorf("marshal prepared compaction request: %w", err)
@@ -388,7 +397,7 @@ func (lifecycle *internalCompactionLifecycle) PreconsumeCompactionChild(_ contex
 	if err != nil {
 		return nil, err
 	}
-	if runtime.relayInfo.PriceData.FreeModel {
+	if runtime.relayInfo.PriceData.FreeModel && runtime.relayInfo.BillingOperation == nil {
 		return &contextconsensus.CompactionBillingReceipt{BillingReference: descriptor.ChildRequestID}, nil
 	}
 	session, apiError := lifecycle.dependencies.preconsume(runtime.context, runtime.relayInfo.PriceData.QuotaToPreConsume, runtime.relayInfo)

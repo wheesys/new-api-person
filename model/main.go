@@ -324,6 +324,8 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&BillingOperation{},
+		&BillingOperationLogOutbox{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -393,6 +395,8 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+		{&BillingOperation{}, "BillingOperation"},
+		{&BillingOperationLogOutbox{}, "BillingOperationLogOutbox"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -454,6 +458,9 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
+	if err := LOG_DB.Exec("ALTER TABLE logs ADD COLUMN IF NOT EXISTS billing_operation_id Nullable(Int64) DEFAULT NULL COMMENT 'Durable billing operation owning this consume log'").Error; err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
 }
 
@@ -502,6 +509,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	ip String DEFAULT '',
 	request_id String DEFAULT '',
 	upstream_request_id String DEFAULT '',
+	billing_operation_id Nullable(Int64) DEFAULT NULL COMMENT 'Durable billing operation owning this consume log',
 	other String DEFAULT ''
 )
 ENGINE = MergeTree()

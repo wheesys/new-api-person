@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,20 +24,23 @@ import (
 // BillingSession 封装单次请求的预扣费/结算/退款生命周期。
 // 实现 relaycommon.BillingSettler 接口。
 type BillingSession struct {
-	relayInfo        *relaycommon.RelayInfo
-	funding          FundingSource
-	preConsumedQuota int  // 实际预扣额度（信任用户可能为 0）
-	tokenConsumed    int  // 令牌额度实际扣减量
-	extraReserved    int  // 发送前补充预扣的额度（订阅退款时需要单独回滚）
-	trusted          bool // 是否命中信任额度旁路
-	fundingSettled   bool // funding.Settle 已成功，资金来源已提交
-	settled          bool // Settle 全部完成（资金 + 令牌）
-	refunded         bool // Refund 的资金来源和令牌步骤均已完成
-	refundStarted    bool
-	refundInProgress bool
-	fundingRefunded  bool
-	tokenRefunded    bool
-	mu               sync.Mutex
+	relayInfo                   *relaycommon.RelayInfo
+	funding                     FundingSource
+	preConsumedQuota            int  // 实际预扣额度（信任用户可能为 0）
+	tokenConsumed               int  // 令牌额度实际扣减量
+	extraReserved               int  // 发送前补充预扣的额度（订阅退款时需要单独回滚）
+	trusted                     bool // 是否命中信任额度旁路
+	fundingSettled              bool // funding.Settle 已成功，资金来源已提交
+	settled                     bool // Settle 全部完成（资金 + 令牌）
+	refunded                    bool // Refund 的资金来源和令牌步骤均已完成
+	billingOperationId          int64
+	billingOperationFingerprint string
+	billingOperationState       string
+	refundStarted               bool
+	refundInProgress            bool
+	fundingRefunded             bool
+	tokenRefunded               bool
+	mu                          sync.Mutex
 }
 
 type billingRefundOperation struct {
@@ -61,6 +65,9 @@ type billingRefundResult struct {
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.billingOperationId != 0 {
+		return fmt.Errorf("durable billing operation requires an atomic settlement payload")
+	}
 	if s.settled {
 		return nil
 	}
@@ -96,6 +103,18 @@ func (s *BillingSession) Settle(actualQuota int) error {
 
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
+	if s.hasBillingOperation() {
+		refundContext := context.Background()
+		if c != nil && c.Request != nil {
+			refundContext = context.WithoutCancel(c.Request.Context())
+		}
+		gopool.Go(func() {
+			if err := s.refundBillingOperation(refundContext); err != nil {
+				common.SysLog("error refunding durable billing operation: " + err.Error())
+			}
+		})
+		return
+	}
 	operation, _ := s.beginRefund(c)
 	if operation == nil {
 		return
@@ -111,6 +130,9 @@ func (s *BillingSession) Refund(c *gin.Context) {
 // used by internal child requests that must know the refund outcome before the
 // parent request can continue.
 func (s *BillingSession) RefundSync(c *gin.Context) error {
+	if s.hasBillingOperation() {
+		return s.refundBillingOperation(billingOperationContext(c))
+	}
 	operation, err := s.beginRefund(c)
 	if err != nil {
 		return err
@@ -190,6 +212,9 @@ func (s *BillingSession) finishRefund(result billingRefundResult) error {
 func (s *BillingSession) NeedsRefund() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.billingOperationId != 0 {
+		return s.billingOperationState == model.BillingOperationStateReserved && !s.refundInProgress
+	}
 	return s.needsRefundLocked()
 }
 
@@ -216,6 +241,12 @@ func (s *BillingSession) GetPreConsumedQuota() int {
 func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.billingOperationId != 0 {
+		if targetQuota <= s.preConsumedQuota {
+			return nil
+		}
+		return fmt.Errorf("durable billing operation cannot change its frozen reservation")
+	}
 
 	if s.settled || s.refunded || s.trusted || targetQuota <= s.preConsumedQuota {
 		return nil
@@ -367,6 +398,21 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	session := &BillingSession{
 		relayInfo: relayInfo,
 		funding:   &WalletFunding{userId: relayInfo.UserId},
+	}
+	if relayInfo.BillingOperation != nil {
+		if err := session.reserveBillingOperation(c, preConsumedQuota); err != nil {
+			statusCode := http.StatusServiceUnavailable
+			errorCode := types.ErrorCodeUpdateDataError
+			if errors.Is(err, model.ErrBillingOperationQuotaInsufficient) {
+				statusCode = http.StatusForbidden
+				errorCode = types.ErrorCodePreConsumeTokenQuotaFailed
+			} else if errors.Is(err, model.ErrBillingOperationFingerprintConflict) ||
+				errors.Is(err, model.ErrBillingOperationLookupConflict) || errors.Is(err, model.ErrBillingOperationRefunded) {
+				statusCode = http.StatusConflict
+			}
+			return nil, types.NewErrorWithStatusCode(err, errorCode, statusCode, types.ErrOptionWithSkipRetry())
+		}
+		return session, nil
 	}
 	if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 		return nil, apiErr

@@ -191,10 +191,30 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
+	relayInfo.PriceData = priceData
+	if managedContext {
+		policy, policyFound := common.GetContextKeyType[contextconsensus.CompactionPolicySnapshot](c, constant.ContextKeyContextConsensusPolicy)
+		if !policyFound {
+			newAPIError = managedExecutionError(fmt.Errorf("managed consensus policy snapshot is unavailable"))
+			return
+		}
+		relayInfo.BillingOperation, err = buildManagedBillingOperationIdentity(managedBillingOperationSeed{
+			Candidates:       managedContextRequest.BillingLookupCandidates,
+			ExpectedRevision: managedContextRequest.ExpectedRevision,
+			Purpose:          managedBillingPurposeMain,
+			Protocol:         managedContextRequest.Protocol,
+			SourceDigest:     managedContextRequest.IncrementalSourceDigest,
+			PolicyVersion:    policy.PolicyVersion,
+		}, relayInfo)
+		if err != nil {
+			newAPIError = managedExecutionError(err)
+			return
+		}
+	}
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
-	if priceData.FreeModel {
+	if priceData.FreeModel && !managedContext {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 	} else {
 		newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)

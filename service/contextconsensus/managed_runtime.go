@@ -157,6 +157,26 @@ func (runtime *ManagedConsensusRuntime) conversationStorageKeys(owner ManagedCon
 	return keys, nil
 }
 
+func (runtime *ManagedConsensusRuntime) readConversationStorageKeys(storageKey, activeStorageKey ManagedConversationStorageKey) []ManagedConversationStorageKey {
+	if runtime == nil {
+		return nil
+	}
+	keys := make([]ManagedConversationStorageKey, 0, len(runtime.readKeyDerivers))
+	seen := make(map[string]struct{}, len(runtime.readKeyDerivers))
+	for _, key := range []ManagedConversationStorageKey{activeStorageKey, storageKey} {
+		if key.RepositoryKey == "" {
+			continue
+		}
+		identity := key.OwnerHMAC + "\x00" + key.ConversationHMAC
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func (runtime *ManagedConsensusRuntime) decryptJSON(ctx context.Context, encryptionContext ManagedEncryptionContext, envelope ManagedEncryptedEnvelope, destination any) error {
 	if runtime == nil || runtime.Cipher == nil {
 		return fmt.Errorf("managed consensus runtime is unavailable")

@@ -150,6 +150,13 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 	if err != nil {
 		return nil, managedConsensusBeginStatus(err), managedConsensusBeginError(err)
 	}
+	billingLookupCandidates, billingExpectedRevision, err := session.BillingOperationLookupCandidates()
+	if err != nil || billingExpectedRevision != managedRequest.ExpectedRevision {
+		_ = session.Close(c.Request.Context())
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context billing identity is unavailable")
+	}
+	managedRequest.BillingLookupCandidates = billingLookupCandidates
+	common.SetContextKey(c, constant.ContextKeyManagedContextRequest, managedRequest)
 	preparedSuccessfully := false
 	defer func() {
 		if preparedSuccessfully {

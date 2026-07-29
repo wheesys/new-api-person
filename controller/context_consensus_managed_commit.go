@@ -122,9 +122,17 @@ func executeManagedContextAttempt(
 			PolicyVersion:    policy.PolicyVersion,
 		},
 		ManagedRevisionPlan: &plan,
-		MaxQuota:            settings.MaxCompactionQuota,
-		Timeout:             time.Duration(settings.CompactionTimeoutSeconds) * time.Second,
-		MaxResponseBytes:    defaultInternalCompactionResponseBytes,
+		BillingOperationSeed: &managedBillingOperationSeed{
+			Candidates:       managedRequest.BillingLookupCandidates,
+			ExpectedRevision: managedRequest.ExpectedRevision,
+			Purpose:          managedBillingPurposeSummary,
+			Protocol:         managedRequest.Protocol,
+			SourceDigest:     plan.SourceDigest,
+			PolicyVersion:    policy.PolicyVersion,
+		},
+		MaxQuota:         settings.MaxCompactionQuota,
+		Timeout:          time.Duration(settings.CompactionTimeoutSeconds) * time.Second,
+		MaxResponseBytes: defaultInternalCompactionResponseBytes,
 	})
 	if err != nil {
 		return true, managedExecutionError(err)

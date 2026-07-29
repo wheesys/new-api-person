@@ -73,6 +73,10 @@ func TestPrepareManagedConsensusRequestLoadsInjectsReplacesAndReleasesBeforeRout
 	assert.Equal(t, types.RelayFormatOpenAI, managedRequest.Protocol)
 	assert.NotEmpty(t, managedRequest.IncrementalSourceDigest)
 	assert.NotContains(t, managedRequest.IncrementalSourceDigest, "current")
+	require.NotEmpty(t, managedRequest.BillingLookupCandidates)
+	assert.NotEmpty(t, managedRequest.BillingLookupCandidates[0].LookupHMAC)
+	assert.NotEmpty(t, managedRequest.BillingLookupCandidates[0].OwnerHMAC)
+	assert.NotEmpty(t, managedRequest.BillingLookupCandidates[0].ConversationHMAC)
 	require.NoError(t, lifecycle.Close(contextValue.Request.Context()))
 
 	second, err := contextconsensus.BeginManagedConsensusSession(context.Background(), runtime, contextconsensus.BeginManagedConsensusSessionRequest{

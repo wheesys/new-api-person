@@ -19,6 +19,7 @@ type ManagedContextRequest struct {
 	Protocol                types.RelayFormat
 	IncrementalSourceDigest string
 	CurrentUserText         string
+	BillingLookupCandidates []ManagedBillingOperationLookupCandidate
 }
 
 type CompactionPolicySnapshot struct {

@@ -27,6 +27,15 @@ func cacheDeleteToken(key string) error {
 	return nil
 }
 
+// InvalidateTokenQuotaCache synchronously removes a token cache entry after a
+// durable billing transaction changes quota in the primary database.
+func InvalidateTokenQuotaCache(key string) error {
+	if !common.RedisEnabled || key == "" {
+		return nil
+	}
+	return cacheDeleteToken(key)
+}
+
 func cacheIncrTokenQuota(key string, increment int64) error {
 	key = common.GenerateHMAC(key)
 	err := common.RedisHIncrBy(fmt.Sprintf("token:%s", key), constant.TokenFiledRemainQuota, increment)

@@ -419,6 +419,37 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 }
 
 func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) (TextConsumeResult, error) {
+	var durableSession *BillingSession
+	if relayInfo.BillingOperation != nil {
+		if relayInfo.Billing == nil {
+			return TextConsumeResult{}, fmt.Errorf("durable billing operation was not reserved before upstream execution")
+		}
+		var ok bool
+		durableSession, ok = relayInfo.Billing.(*BillingSession)
+		if !ok || !durableSession.hasBillingOperation() {
+			return TextConsumeResult{}, fmt.Errorf("durable billing operation session is unavailable")
+		}
+		frozen, settled, err := durableSession.frozenTextSettlement(ctx)
+		if err != nil {
+			result := TextConsumeResult{}
+			if frozen != nil {
+				result = TextConsumeResult{
+					PromptTokens: frozen.PromptTokens, CompletionTokens: frozen.CompletionTokens,
+					TotalTokens: frozen.TotalTokens, ActualQuota: frozen.ActualQuota,
+					LogRecorded: frozen.LogRecorded, LogError: err,
+				}
+			}
+			return result, err
+		}
+		if settled {
+			return TextConsumeResult{
+				PromptTokens: frozen.PromptTokens, CompletionTokens: frozen.CompletionTokens,
+				TotalTokens: frozen.TotalTokens, ActualQuota: frozen.ActualQuota,
+				LogRecorded: frozen.LogRecorded,
+			}, nil
+		}
+	}
+
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
 	recordSmartRoutingOutputTokens(ctx, relayInfo, originUsage, time.Now())
@@ -468,14 +499,17 @@ func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	if !summary.hasBillableUsage() {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
-	} else {
+	} else if durableSession == nil {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}
 
-	settlementErr := SettleBilling(ctx, relayInfo, summary.Quota)
-	if settlementErr != nil {
-		logger.LogError(ctx, "error settling billing: "+settlementErr.Error())
+	var settlementErr error
+	if durableSession == nil {
+		settlementErr = SettleBilling(ctx, relayInfo, summary.Quota)
+		if settlementErr != nil {
+			logger.LogError(ctx, "error settling billing: "+settlementErr.Error())
+		}
 	}
 
 	logModel := summary.ModelName
@@ -549,7 +583,7 @@ func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 
-	logRecorded, logErr := model.RecordConsumeLogResult(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	logParams := model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
 		CompletionTokens: summary.CompletionTokens,
@@ -562,15 +596,54 @@ func PostTextConsumeQuotaResult(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
-	})
-	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
-	})
+	}
+	logRecorded := false
+	var logErr error
+	resultPromptTokens := summary.PromptTokens
+	resultCompletionTokens := summary.CompletionTokens
+	resultTotalTokens := summary.TotalTokens
+	resultActualQuota := summary.Quota
+	shouldRecordPerformance := true
+	if durableSession != nil {
+		billingMode := "fixed"
+		if relayInfo.PriceData.FreeModel {
+			billingMode = "free"
+		} else if tieredBillingApplied {
+			billingMode = "tiered_expr"
+		}
+		durableResult := durableSession.settleTextBillingOperation(ctx, model.BillingOperationSettlement{
+			ActualQuota:      summary.Quota,
+			PromptTokens:     summary.PromptTokens,
+			CompletionTokens: summary.CompletionTokens,
+			TotalTokens:      summary.TotalTokens,
+			BillingMode:      billingMode,
+			CountUsage:       summary.TotalTokens != 0,
+			LogUserId:        relayInfo.UserId,
+			LogParams:        logParams,
+		})
+		settlementErr = durableResult.SettlementError
+		logErr = durableResult.LogError
+		logRecorded = durableResult.LogRecorded
+		shouldRecordPerformance = durableResult.SettledNow
+		if durableResult.Frozen != nil {
+			resultPromptTokens = durableResult.Frozen.PromptTokens
+			resultCompletionTokens = durableResult.Frozen.CompletionTokens
+			resultTotalTokens = durableResult.Frozen.TotalTokens
+			resultActualQuota = durableResult.Frozen.ActualQuota
+		}
+	} else {
+		logRecorded, logErr = model.RecordConsumeLogResult(ctx, relayInfo.UserId, logParams)
+	}
+	if shouldRecordPerformance {
+		gopool.Go(func() {
+			perfmetrics.RecordRelaySample(relayInfo, true, int64(resultCompletionTokens))
+		})
+	}
 	result := TextConsumeResult{
-		PromptTokens:     summary.PromptTokens,
-		CompletionTokens: summary.CompletionTokens,
-		TotalTokens:      summary.TotalTokens,
-		ActualQuota:      summary.Quota,
+		PromptTokens:     resultPromptTokens,
+		CompletionTokens: resultCompletionTokens,
+		TotalTokens:      resultTotalTokens,
+		ActualQuota:      resultActualQuota,
 		LogRecorded:      logRecorded,
 		SettlementError:  settlementErr,
 		LogError:         logErr,

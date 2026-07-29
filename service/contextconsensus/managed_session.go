@@ -18,6 +18,13 @@ type ManagedConsensusCommitResult struct {
 	Recovered bool
 }
 
+type ManagedBillingOperationLookupCandidate struct {
+	LookupHMAC       string
+	OwnerHMAC        string
+	ConversationHMAC string
+	KeyVersion       string
+}
+
 type BeginManagedConsensusSessionRequest struct {
 	Owner             ManagedConsensusOwner
 	ExternalContextID string
@@ -38,6 +45,26 @@ type ManagedConsensusSession struct {
 	closed           bool
 	committed        bool
 	released         bool
+}
+
+func (session *ManagedConsensusSession) BillingOperationLookupCandidates() ([]ManagedBillingOperationLookupCandidate, uint64, error) {
+	if session == nil || session.runtime == nil {
+		return nil, 0, fmt.Errorf("managed consensus session is unavailable")
+	}
+	storageKeys := session.runtime.readConversationStorageKeys(session.storageKey, session.activeStorageKey)
+	if len(storageKeys) == 0 {
+		return nil, 0, fmt.Errorf("managed consensus billing lookup keys are unavailable")
+	}
+	candidates := make([]ManagedBillingOperationLookupCandidate, 0, len(storageKeys))
+	for _, storageKey := range storageKeys {
+		candidates = append(candidates, ManagedBillingOperationLookupCandidate{
+			LookupHMAC:       digestBytes([]byte(storageKey.RepositoryKey)),
+			OwnerHMAC:        storageKey.OwnerHMAC,
+			ConversationHMAC: storageKey.ConversationHMAC,
+			KeyVersion:       storageKey.KeyVersion,
+		})
+	}
+	return candidates, session.expectedRevision, nil
 }
 
 func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensusRuntime, request BeginManagedConsensusSessionRequest) (*ManagedConsensusSession, error) {
