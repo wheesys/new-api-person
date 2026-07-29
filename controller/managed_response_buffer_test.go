@@ -50,6 +50,39 @@ func TestManagedResponseBufferFailsClosedOnOverflowWithoutPartialClientWrite(t *
 	assert.Empty(t, recorder.Body.String())
 }
 
+func TestManagedResponseBufferAcceptsLimitAndRejectsLimitPlusOne(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		length    int
+		wantError bool
+	}{
+		{name: "limit minus one", length: 7},
+		{name: "limit", length: 8},
+		{name: "limit plus one", length: 9, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			contextValue, _ := gin.CreateTestContext(recorder)
+			buffer, err := newManagedResponseBuffer(contextValue.Writer, 8)
+			require.NoError(t, err)
+
+			_, err = buffer.Write(make([]byte, test.length))
+			if test.wantError {
+				require.ErrorIs(t, err, errManagedResponseBufferOverflow)
+				_, err = buffer.Body()
+				require.ErrorIs(t, err, errManagedResponseBufferOverflow)
+				assert.Empty(t, recorder.Body.Bytes())
+				return
+			}
+			require.NoError(t, err)
+			body, err := buffer.Body()
+			require.NoError(t, err)
+			assert.Len(t, body, test.length)
+			assert.Empty(t, recorder.Body.Bytes())
+		})
+	}
+}
+
 func TestManagedResponseBufferRejectsFlushAndHijack(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)

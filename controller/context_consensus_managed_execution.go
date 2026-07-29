@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/gin-gonic/gin"
@@ -18,12 +20,14 @@ type managedMainExecutionResult struct {
 }
 
 type managedMainExecutionDependencies struct {
-	execute func(*gin.Context, *relaycommon.RelayInfo, *relay.PreparedTextRelayAttempt) (relay.TextRelayExecutionResult, *types.NewAPIError)
+	execute func(*gin.Context, *relaycommon.RelayInfo, *relay.PreparedTextRelayAttempt) (*dto.Usage, *types.NewAPIError)
+	settle  func(*gin.Context, *relaycommon.RelayInfo, *dto.Usage) relay.TextRelayExecutionResult
 }
 
 // executeManagedPreparedTextAttempt creates the C-2b execution boundary. It
-// settles a complete non-streaming upstream response while the client response
-// remains buffered. C-2c owns state generation, CAS, and the eventual flush.
+// validates a complete non-streaming upstream response before settlement while
+// the client response remains buffered. C-2c owns state generation, CAS, and
+// the eventual flush.
 func executeManagedPreparedTextAttempt(
 	c *gin.Context,
 	info *relaycommon.RelayInfo,
@@ -32,7 +36,7 @@ func executeManagedPreparedTextAttempt(
 	maximumResponseBytes int,
 	dependencies managedMainExecutionDependencies,
 ) (managedMainExecutionResult, *types.NewAPIError) {
-	if c == nil || c.Writer == nil || info == nil || dependencies.execute == nil {
+	if c == nil || c.Writer == nil || info == nil || dependencies.execute == nil || dependencies.settle == nil {
 		return managedMainExecutionResult{}, managedExecutionError(fmt.Errorf("managed main execution is incomplete"))
 	}
 	if info.IsStream {
@@ -44,14 +48,19 @@ func executeManagedPreparedTextAttempt(
 	}
 	parentWriter := c.Writer
 	c.Writer = buffer
-	relayResult, newAPIError := dependencies.execute(c, info, attempt)
+	usage, newAPIError := dependencies.execute(c, info, attempt)
 	c.Writer = parentWriter
-	if newAPIError != nil {
-		return managedMainExecutionResult{}, newAPIError
-	}
 	body, err := buffer.Body()
 	if err != nil {
+		if errors.Is(err, errManagedResponseBufferOverflow) {
+			return managedMainExecutionResult{}, types.NewErrorWithStatusCode(
+				err, types.ErrorCodeManagedContextResponseTooLarge, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry(),
+			)
+		}
 		return managedMainExecutionResult{}, managedExecutionError(err)
+	}
+	if newAPIError != nil {
+		return managedMainExecutionResult{}, newAPIError
 	}
 	if buffer.Status() < http.StatusOK || buffer.Status() >= http.StatusMultipleChoices {
 		return managedMainExecutionResult{}, managedExecutionError(fmt.Errorf("managed upstream response status is not successful"))
@@ -60,6 +69,10 @@ func executeManagedPreparedTextAttempt(
 	if err != nil {
 		return managedMainExecutionResult{}, managedExecutionError(err)
 	}
+	if err := validateManagedRelayUsage(usage); err != nil {
+		return managedMainExecutionResult{}, managedExecutionError(err)
+	}
+	relayResult := dependencies.settle(c, info, usage)
 	if err := validateManagedRelayResult(relayResult); err != nil {
 		return managedMainExecutionResult{}, managedExecutionError(err)
 	}
@@ -67,8 +80,8 @@ func executeManagedPreparedTextAttempt(
 }
 
 func validateManagedRelayResult(result relay.TextRelayExecutionResult) error {
-	if result.Usage == nil || result.Usage.PromptTokens < 0 || result.Usage.CompletionTokens < 0 || result.Usage.TotalTokens <= 0 {
-		return fmt.Errorf("managed relay usage is unavailable")
+	if err := validateManagedRelayUsage(result.Usage); err != nil {
+		return err
 	}
 	if result.SettlementError != nil || result.ConsumeResult.SettlementError != nil {
 		return fmt.Errorf("managed relay settlement failed")
@@ -79,10 +92,17 @@ func validateManagedRelayResult(result relay.TextRelayExecutionResult) error {
 	return nil
 }
 
+func validateManagedRelayUsage(usage *dto.Usage) error {
+	if usage == nil || usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens <= 0 {
+		return fmt.Errorf("managed relay usage is unavailable")
+	}
+	return nil
+}
+
 func managedExecutionError(err error) *types.NewAPIError {
 	return types.NewErrorWithStatusCode(
 		err,
-		types.ErrorCodeInvalidRequest,
+		types.ErrorCodeManagedContextRevisionFailed,
 		http.StatusServiceUnavailable,
 		types.ErrOptionWithSkipRetry(),
 	)

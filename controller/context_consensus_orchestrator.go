@@ -67,6 +67,9 @@ func (commit *contextConsensusMainCommit) Close() {
 }
 
 func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayFormat) (*contextConsensusMainCommit, error) {
+	if _, managed := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest); managed {
+		return nil, nil
+	}
 	policy, ok := common.GetContextKeyType[contextconsensus.CompactionPolicySnapshot](c, constant.ContextKeyContextConsensusPolicy)
 	if !ok || !policy.SystemEnabled {
 		return nil, nil

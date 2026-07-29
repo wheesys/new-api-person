@@ -13,6 +13,7 @@ type ManagedAssistantOutput struct {
 	Protocol       types.RelayFormat `json:"protocol"`
 	Text           string            `json:"text"`
 	FinishReason   string            `json:"finish_reason,omitempty"`
+	OutputDigest   string            `json:"output_digest"`
 	ResponseDigest string            `json:"response_digest"`
 }
 
@@ -230,10 +231,21 @@ func managedAssistantTextResult(protocol types.RelayFormat, text, finishReason s
 	if strings.TrimSpace(text) == "" {
 		return ManagedAssistantOutput{}, fmt.Errorf("managed assistant output text is empty")
 	}
+	normalizedOutput := struct {
+		Version      int               `json:"version"`
+		Protocol     types.RelayFormat `json:"protocol"`
+		Text         string            `json:"text"`
+		FinishReason string            `json:"finish_reason"`
+	}{Version: 1, Protocol: protocol, Text: text, FinishReason: finishReason}
+	encodedOutput, err := common.Marshal(normalizedOutput)
+	if err != nil {
+		return ManagedAssistantOutput{}, fmt.Errorf("encode normalized managed assistant output: %w", err)
+	}
 	return ManagedAssistantOutput{
 		Protocol:       protocol,
 		Text:           text,
 		FinishReason:   finishReason,
+		OutputDigest:   digestBytes(append([]byte("new-api:managed-assistant-output:v1\x00"), encodedOutput...)),
 		ResponseDigest: digestBytes(body),
 	}, nil
 }

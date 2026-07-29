@@ -18,6 +18,7 @@ type ManagedContextRequest struct {
 	ExpectedRevision        uint64
 	Protocol                types.RelayFormat
 	IncrementalSourceDigest string
+	CurrentUserText         string
 }
 
 type CompactionPolicySnapshot struct {

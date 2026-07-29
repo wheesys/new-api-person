@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
@@ -17,6 +18,8 @@ var (
 	ErrManagedConsensusRevisionConflict = errors.New("managed consensus revision conflict")
 	ErrManagedConsensusLeaseHeld        = errors.New("managed consensus lease is already held")
 	ErrManagedConsensusLeaseInvalid     = errors.New("managed consensus lease is invalid or expired")
+	ErrManagedConsensusCommitFailed     = errors.New("managed consensus commit failed")
+	ErrManagedConsensusOutcomeUnknown   = errors.New("managed consensus commit outcome is unknown")
 	ErrProviderStateBindingNotFound     = errors.New("provider state binding not found")
 	ErrProviderStateBindingConflict     = errors.New("provider state binding conflict")
 )
@@ -29,6 +32,7 @@ type ManagedConsensusState struct {
 	ProviderBinding *ManagedProviderTargetBinding `json:"provider_binding,omitempty"`
 	SourceDigest    string                        `json:"source_digest"`
 	PolicyVersion   string                        `json:"policy_version"`
+	Lineage         *ManagedConsensusLineage      `json:"lineage,omitempty"`
 	CreatedAtUnix   int64                         `json:"created_at_unix"`
 	UpdatedAtUnix   int64                         `json:"updated_at_unix"`
 }
@@ -64,6 +68,11 @@ func (state ManagedConsensusState) Validate() error {
 	if strings.TrimSpace(state.PolicyVersion) == "" {
 		return fmt.Errorf("managed consensus policy version is required")
 	}
+	if state.Lineage != nil {
+		if err := state.Lineage.Validate(state.Revision, state.SourceDigest, state.PolicyVersion); err != nil {
+			return err
+		}
+	}
 	if state.CreatedAtUnix <= 0 {
 		return fmt.Errorf("managed consensus creation time is required")
 	}
@@ -74,6 +83,37 @@ func (state ManagedConsensusState) Validate() error {
 		if err := state.ProviderBinding.Validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (lineage ManagedConsensusLineage) Validate(revision uint64, sourceDigest, policyVersion string) error {
+	if lineage.Version != managedConsensusLineageVersion || lineage.Protocol == "" {
+		return fmt.Errorf("managed consensus lineage version or protocol is invalid")
+	}
+	if lineage.PreviousRevision == ^uint64(0) || lineage.PreviousRevision+1 != revision {
+		return fmt.Errorf("managed consensus lineage revision is invalid")
+	}
+	if lineage.PreviousRevision == 0 {
+		if lineage.PreviousSummaryDigest != "" || lineage.PreviousSourceDigest != "" {
+			return fmt.Errorf("initial managed consensus lineage must not reference previous state")
+		}
+	} else if strings.TrimSpace(lineage.PreviousSummaryDigest) == "" || strings.TrimSpace(lineage.PreviousSourceDigest) == "" {
+		return fmt.Errorf("managed consensus lineage previous state digests are required")
+	}
+	if strings.TrimSpace(lineage.IncrementalSourceDigest) == "" || strings.TrimSpace(lineage.AssistantOutputDigest) == "" || strings.TrimSpace(lineage.PolicyVersion) == "" {
+		return fmt.Errorf("managed consensus lineage evidence digests are required")
+	}
+	if lineage.PolicyVersion != policyVersion {
+		return fmt.Errorf("managed consensus lineage policy version does not match state metadata")
+	}
+	encoded, err := common.Marshal(lineage)
+	if err != nil {
+		return fmt.Errorf("encode managed consensus lineage: %w", err)
+	}
+	expectedDigest := digestBytes(append([]byte("new-api:managed-consensus-lineage:v1\x00"), encoded...))
+	if expectedDigest != sourceDigest {
+		return fmt.Errorf("managed consensus lineage digest does not match state metadata")
 	}
 	return nil
 }

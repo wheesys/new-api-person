@@ -37,19 +37,20 @@ const (
 )
 
 type InternalCompactionExecutorRequest struct {
-	ParentContext     *gin.Context
-	Model             string
-	ModelPool         []string
-	AllowedChannelIDs []int
-	PolicyVersion     string
-	SourceDigest      string
-	MaxOutputTokens   int
-	MaxInputTokens    int
-	SummaryRequest    *dto.GeneralOpenAIRequest
-	Plan              contextconsensus.CompactionPlan
-	MaxQuota          int
-	Timeout           time.Duration
-	MaxResponseBytes  int64
+	ParentContext       *gin.Context
+	Model               string
+	ModelPool           []string
+	AllowedChannelIDs   []int
+	PolicyVersion       string
+	SourceDigest        string
+	MaxOutputTokens     int
+	MaxInputTokens      int
+	SummaryRequest      *dto.GeneralOpenAIRequest
+	Plan                contextconsensus.CompactionPlan
+	ManagedRevisionPlan *contextconsensus.ManagedRevisionPlan
+	MaxQuota            int
+	Timeout             time.Duration
+	MaxResponseBytes    int64
 }
 
 type InternalCompactionExecutor struct {
@@ -94,16 +95,17 @@ type internalCompactionDependencies struct {
 }
 
 type internalCompactionLifecycle struct {
-	identity          internalCompactionIdentity
-	modelPool         map[string]struct{}
-	allowedChannelIDs map[int]struct{}
-	summaryRequest    *dto.GeneralOpenAIRequest
-	plan              contextconsensus.CompactionPlan
-	maxQuota          int
-	maxInputTokens    int
-	timeout           time.Duration
-	maxResponseBytes  int64
-	dependencies      internalCompactionDependencies
+	identity            internalCompactionIdentity
+	modelPool           map[string]struct{}
+	allowedChannelIDs   map[int]struct{}
+	summaryRequest      *dto.GeneralOpenAIRequest
+	plan                contextconsensus.CompactionPlan
+	managedRevisionPlan *contextconsensus.ManagedRevisionPlan
+	maxQuota            int
+	maxInputTokens      int
+	timeout             time.Duration
+	maxResponseBytes    int64
+	dependencies        internalCompactionDependencies
 
 	mutex                sync.Mutex
 	runtime              *internalCompactionRuntime
@@ -176,16 +178,17 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 		request.MaxResponseBytes = defaultInternalCompactionResponseBytes
 	}
 	lifecycle := &internalCompactionLifecycle{
-		identity:          identity,
-		modelPool:         modelPool,
-		allowedChannelIDs: allowedChannelIDs,
-		summaryRequest:    summaryRequest,
-		plan:              request.Plan,
-		maxQuota:          request.MaxQuota,
-		maxInputTokens:    request.MaxInputTokens,
-		timeout:           request.Timeout,
-		maxResponseBytes:  request.MaxResponseBytes,
-		dependencies:      dependencies,
+		identity:            identity,
+		modelPool:           modelPool,
+		allowedChannelIDs:   allowedChannelIDs,
+		summaryRequest:      summaryRequest,
+		plan:                request.Plan,
+		managedRevisionPlan: request.ManagedRevisionPlan,
+		maxQuota:            request.MaxQuota,
+		maxInputTokens:      request.MaxInputTokens,
+		timeout:             request.Timeout,
+		maxResponseBytes:    request.MaxResponseBytes,
+		dependencies:        dependencies,
 	}
 	executor, err := contextconsensus.NewCompactionChildExecutor(contextconsensus.CompactionChildDependencies{
 		RequestIDGenerator: internalCompactionRequestIdGenerator{newRequestId: dependencies.newRequestId},
@@ -483,7 +486,12 @@ func (lifecycle *internalCompactionLifecycle) ExecuteCompactionChild(_ context.C
 	}
 	summaryBody := []byte(strings.TrimSpace(response.Choices[0].Message.StringContent()))
 	output.SummaryDigest = hex.EncodeToString(common.Sha256Raw(summaryBody))
-	summary, err := contextconsensus.ParseAndValidateConsensusSummaryV1(summaryBody, lifecycle.plan)
+	var summary contextconsensus.ConsensusSummary
+	if lifecycle.managedRevisionPlan != nil {
+		summary, err = contextconsensus.ParseAndValidateManagedRevisionSummary(summaryBody, *lifecycle.managedRevisionPlan)
+	} else {
+		summary, err = contextconsensus.ParseAndValidateConsensusSummaryV1(summaryBody, lifecycle.plan)
+	}
 	if err != nil {
 		return output, contextconsensus.NewBillableCompactionExecutionError(output, fmt.Errorf("validate compaction summary: %w", err))
 	}

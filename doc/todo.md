@@ -87,11 +87,11 @@
 - [x] 审计并迁移旧渠道输出上限字段：Baidu、Cloudflare、Cohere、Ollama、Xunfei 与 AWS Nova 统一保留字段缺失、显式 `0` 和新旧字段优先级；其余渠道按语义完成核查，见 `doc/auto-smart-routing-output-limit-pointer-migration-2026-07-28.md`。
 - [ ] 完成 `ContextConsensus` 阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL、事务提交屏障和 provider state 绑定闭环。
   - [x] 完成阶段 C-1：owner/HMAC 隔离、AES-256-GCM、真实 Redis Lua 仓储、revision CAS、lease/fencing、TTL、provider binding 记录契约、网关头解析及失败关闭；未增加管理员接口或页面，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`。
-  - [ ] 完成阶段 C-2：在渠道选择前加载并安全注入托管摘要，接入 lease 续租、非流式响应缓冲、显式结算结果和 commit-before-write revision 提交屏障。
+  - [x] 完成阶段 C-2：在渠道选择前加载并安全注入托管摘要，接入 lease 续租、非流式响应缓冲、显式结算结果和 commit-before-write revision 提交屏障。
     - [x] 完成阶段 C-2a：实现托管会话 acquire/load/decrypt/renew/commit 状态机、四协议 user-level 安全摘要注入和有界非流式响应缓冲；尚未接入请求生命周期，门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`。
     - [x] 完成阶段 C-2b：冻结 managed 增量 current turn 契约，在渠道选择前接入会话加载、安全摘要注入和 lease 续租，并建立主调用规范化输出、显式结算及非流式缓冲执行边界；门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`。
-    - [ ] 完成阶段 C-2c：生成下一 revision L2/L3，接入 commit-before-write、Redis 提交失败恢复及端到端故障矩阵，完成后移除非流式 503 门禁。
-  - [ ] 完成阶段 C-3：冻结稳定客户端幂等键，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
+    - [x] 完成阶段 C-2c：生成下一 revision L2/L3，接入固定 2 MiB 缓冲、同请求 CAS 恢复、commit-before-write 及故障矩阵，并移除非流式 503 门禁，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`。
+  - [ ] 完成阶段 C-3：冻结稳定客户端幂等键和结算后提交失败的跨请求恢复契约，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。

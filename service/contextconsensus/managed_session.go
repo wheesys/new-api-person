@@ -1,6 +1,7 @@
 package contextconsensus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
+
+type ManagedConsensusCommitResult struct {
+	Record    ManagedConsensusRecord
+	Recovered bool
+}
 
 type BeginManagedConsensusSessionRequest struct {
 	Owner             ManagedConsensusOwner
@@ -26,6 +32,7 @@ type ManagedConsensusSession struct {
 	storageKey       ManagedConversationStorageKey
 	lease            ManagedConsensusLease
 	expectedRevision uint64
+	leaseTTL         time.Duration
 	state            *ManagedConsensusState
 	closed           bool
 	committed        bool
@@ -49,6 +56,7 @@ func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensus
 		storageKey:       storageKey,
 		lease:            lease,
 		expectedRevision: request.ExpectedRevision,
+		leaseTTL:         request.LeaseTTL,
 	}
 	loadedRecord, loadErr := runtime.Repository.LoadConsensus(ctx, storageKey)
 	if request.ExpectedRevision == 0 {
@@ -175,6 +183,135 @@ func (session *ManagedConsensusSession) Commit(ctx context.Context, state Manage
 	session.state = &state
 	session.releaseLeaseWithoutChangingCommit(ctx)
 	return record, nil
+}
+
+// CommitWithRecovery resolves an ambiguous repository error while the same
+// fenced lease is still held. It performs at most one CAS retry and never
+// treats a different payload at the next revision as this request's commit.
+func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, state ManagedConsensusState, ttl time.Duration) (ManagedConsensusCommitResult, error) {
+	if session == nil {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("managed consensus session is required")
+	}
+	session.mutex.Lock()
+	defer session.mutex.Unlock()
+	if session.closed || session.committed {
+		return ManagedConsensusCommitResult{}, ErrManagedConsensusLeaseInvalid
+	}
+	if session.expectedRevision == math.MaxUint64 || state.Revision != session.expectedRevision+1 {
+		return ManagedConsensusCommitResult{}, ErrManagedConsensusRevisionConflict
+	}
+	if err := state.Validate(); err != nil {
+		return ManagedConsensusCommitResult{}, err
+	}
+	payload, err := session.runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: session.storageKey.RepositoryKey,
+		Purpose:       ManagedEncryptionPurposeConsensusState,
+		Revision:      state.Revision,
+	}, state)
+	if err != nil {
+		return ManagedConsensusCommitResult{}, err
+	}
+
+	commit := func(commitContext context.Context) (ManagedConsensusRecord, error) {
+		return session.runtime.Repository.CompareAndSwapConsensus(commitContext, session.storageKey, session.expectedRevision, session.lease, payload, ttl)
+	}
+	record, commitErr := commit(ctx)
+	if commitErr == nil {
+		session.finishCommit(ctx, state)
+		return ManagedConsensusCommitResult{Record: record}, nil
+	}
+	if managedCommitErrorIsDefinitive(commitErr) {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, commitErr)
+	}
+
+	recoveryContext, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancelRecovery()
+	recovered, currentAtExpected, resolvedRecord, resolveErr := session.resolveCommitOutcome(recoveryContext, state)
+	if recovered {
+		session.finishCommit(ctx, state)
+		return ManagedConsensusCommitResult{Record: resolvedRecord, Recovered: true}, nil
+	}
+	if resolveErr != nil || !currentAtExpected {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusOutcomeUnknown, errors.Join(commitErr, resolveErr))
+	}
+	if err := ctx.Err(); err != nil {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, err)
+	}
+
+	renewedLease, renewErr := session.runtime.Repository.RenewConsensusLease(recoveryContext, session.lease, session.leaseTTL)
+	if renewErr != nil {
+		if managedCommitErrorIsDefinitive(renewErr) {
+			return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, renewErr)
+		}
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusOutcomeUnknown, renewErr)
+	}
+	session.lease = renewedLease
+	record, retryErr := commit(recoveryContext)
+	if retryErr == nil {
+		session.finishCommit(ctx, state)
+		return ManagedConsensusCommitResult{Record: record}, nil
+	}
+	if managedCommitErrorIsDefinitive(retryErr) {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, retryErr)
+	}
+	recovered, currentAtExpected, resolvedRecord, resolveErr = session.resolveCommitOutcome(recoveryContext, state)
+	if recovered {
+		session.finishCommit(ctx, state)
+		return ManagedConsensusCommitResult{Record: resolvedRecord, Recovered: true}, nil
+	}
+	if resolveErr == nil && currentAtExpected {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, retryErr)
+	}
+	return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusOutcomeUnknown, errors.Join(retryErr, resolveErr))
+}
+
+func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context, candidate ManagedConsensusState) (bool, bool, ManagedConsensusRecord, error) {
+	record, err := session.runtime.Repository.LoadConsensus(ctx, session.storageKey)
+	if errors.Is(err, ErrManagedConsensusNotFound) && session.expectedRevision == 0 {
+		return false, true, ManagedConsensusRecord{}, nil
+	}
+	if err != nil {
+		return false, false, ManagedConsensusRecord{}, err
+	}
+	if record.Revision == session.expectedRevision {
+		return false, true, record, nil
+	}
+	if record.Revision != candidate.Revision || record.FencingToken != session.lease.FencingToken {
+		return false, false, record, fmt.Errorf("managed consensus repository advanced to an unrelated revision")
+	}
+	var stored ManagedConsensusState
+	if err := session.runtime.Cipher.DecryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: session.storageKey.RepositoryKey,
+		Purpose:       ManagedEncryptionPurposeConsensusState,
+		Revision:      record.Revision,
+	}, record.Payload, &stored); err != nil {
+		return false, false, record, err
+	}
+	if err := stored.Validate(); err != nil {
+		return false, false, record, err
+	}
+	storedJSON, err := common.Marshal(stored)
+	if err != nil {
+		return false, false, record, err
+	}
+	candidateJSON, err := common.Marshal(candidate)
+	if err != nil {
+		return false, false, record, err
+	}
+	if !bytes.Equal(storedJSON, candidateJSON) {
+		return false, false, record, fmt.Errorf("managed consensus next revision payload differs from candidate")
+	}
+	return true, false, record, nil
+}
+
+func managedCommitErrorIsDefinitive(err error) bool {
+	return errors.Is(err, ErrManagedConsensusRevisionConflict) || errors.Is(err, ErrManagedConsensusLeaseInvalid)
+}
+
+func (session *ManagedConsensusSession) finishCommit(ctx context.Context, state ManagedConsensusState) {
+	session.committed = true
+	session.state = &state
+	session.releaseLeaseWithoutChangingCommit(ctx)
 }
 
 func (session *ManagedConsensusSession) Close(ctx context.Context) error {

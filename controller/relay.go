@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -132,6 +133,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = managedContextError
 		return
 	}
+	managedContextRequest, managedContext := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest)
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
@@ -223,9 +225,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 
 	maximumRetryTimes := common.RetryTimes
-	if preparedContextConsensusAttempt != nil {
+	if preparedContextConsensusAttempt != nil || managedContext {
 		maximumRetryTimes = 0
 	}
+	managedRequestReachedUpstream := false
 	for ; retryParam.GetRetry() <= maximumRetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel := preparedContextConsensusChannel
@@ -264,8 +267,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		attempt := relayInfo.BeginUpstreamAttempt(channel.Id, retryParam.GetRetry(), time.Now())
-		if preparedContextConsensusAttempt != nil {
+		managedAttemptCompleted := false
+		var attemptSample relaycommon.UpstreamAttemptSample
+		if managedContext {
+			managedAttemptCompleted, newAPIError = executeManagedContextAttempt(c, relayInfo, preparedContextConsensusAttempt, managedContextRequest, func() {
+				managedRequestReachedUpstream = true
+				attemptSample = attempt.Finish(time.Now())
+			})
+			if !managedAttemptCompleted && newAPIError != nil {
+				_ = attempt.Finish(time.Now())
+			}
+		} else if preparedContextConsensusAttempt != nil {
 			newAPIError = relay.ExecutePreparedTextAttemptWithQuota(c, relayInfo, preparedContextConsensusAttempt)
+			attemptSample = attempt.Finish(time.Now())
 		} else {
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -277,13 +291,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			default:
 				newAPIError = relayHandler(c, relayInfo)
 			}
+			attemptSample = attempt.Finish(time.Now())
 		}
-		attemptSample := attempt.Finish(time.Now())
 
 		if newAPIError == nil {
 			recordRuntimeHealthSuccessForAttempt(channel.Id, relayInfo.OriginModelName, relayInfo.IsStream, attemptSample)
 			relayInfo.LastError = nil
 			return
+		}
+		if managedContext && isManagedPostExecutionError(newAPIError) {
+			if managedAttemptCompleted {
+				recordRuntimeHealthSuccessForAttempt(channel.Id, relayInfo.OriginModelName, relayInfo.IsStream, attemptSample)
+			}
+			relayInfo.LastError = newAPIError
+			break
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
@@ -301,7 +322,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
-	if newAPIError != nil {
+	if newAPIError != nil && (!managedContext || managedRequestReachedUpstream) {
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
@@ -309,7 +330,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 }
 
 func validateManagedContextRelayGate(c *gin.Context, stream bool) *types.NewAPIError {
-	if _, managed := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest); !managed {
+	managedRequest, managed := common.GetContextKeyType[contextconsensus.ManagedContextRequest](c, constant.ContextKeyManagedContextRequest)
+	if !managed {
 		return nil
 	}
 	if stream {
@@ -320,12 +342,30 @@ func validateManagedContextRelayGate(c *gin.Context, stream bool) *types.NewAPIE
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
-	return types.NewErrorWithStatusCode(
-		fmt.Errorf("managed context is unavailable"),
-		types.ErrorCodeInvalidRequest,
-		http.StatusServiceUnavailable,
-		types.ErrOptionWithSkipRetry(),
-	)
+	if managedRequest.ExpectedRevision == math.MaxUint64 {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("managed context revision cannot advance"),
+			types.ErrorCodeManagedContextRevisionFailed,
+			http.StatusConflict,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	return nil
+}
+
+func isManagedPostExecutionError(newAPIError *types.NewAPIError) bool {
+	if newAPIError == nil {
+		return false
+	}
+	switch newAPIError.GetErrorCode() {
+	case types.ErrorCodeManagedContextResponseTooLarge,
+		types.ErrorCodeManagedContextRevisionFailed,
+		types.ErrorCodeManagedContextCommitFailed,
+		types.ErrorCodeManagedContextCommitOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 var upgrader = websocket.Upgrader{

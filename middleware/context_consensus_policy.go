@@ -104,8 +104,13 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 	if err := contextconsensus.ValidateManagedIncrementalRequest(protocol, body); err != nil {
 		return nil, http.StatusBadRequest, err
 	}
+	currentUserText, err := contextconsensus.ExtractManagedCurrentUserText(protocol, body)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
 	managedRequest.Protocol = protocol
 	managedRequest.IncrementalSourceDigest = contextconsensus.DigestManagedIncrementalRequest(body)
+	managedRequest.CurrentUserText = currentUserText
 	common.SetContextKey(c, constant.ContextKeyManagedContextRequest, managedRequest)
 	stream, err := managedRequestStream(body)
 	if err != nil {

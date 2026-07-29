@@ -80,6 +80,17 @@ var summarySourceRangeFields = []string{
 }
 
 func ParseAndValidateConsensusSummaryV1(data []byte, plan CompactionPlan) (ConsensusSummary, error) {
+	summary, err := parseConsensusSummaryV1Shape(data)
+	if err != nil {
+		return ConsensusSummary{}, err
+	}
+	if err := ValidateConsensusSummaryV1(summary, plan); err != nil {
+		return ConsensusSummary{}, err
+	}
+	return summary, nil
+}
+
+func parseConsensusSummaryV1Shape(data []byte) (ConsensusSummary, error) {
 	var rawSummary map[string]json.RawMessage
 	if err := common.Unmarshal(data, &rawSummary); err != nil {
 		return ConsensusSummary{}, fmt.Errorf("decode consensus summary: %w", err)
@@ -153,9 +164,6 @@ func ParseAndValidateConsensusSummaryV1(data []byte, plan CompactionPlan) (Conse
 	var summary ConsensusSummary
 	if err := common.Unmarshal(data, &summary); err != nil {
 		return ConsensusSummary{}, fmt.Errorf("decode typed consensus summary: %w", err)
-	}
-	if err := ValidateConsensusSummaryV1(summary, plan); err != nil {
-		return ConsensusSummary{}, err
 	}
 	return summary, nil
 }
