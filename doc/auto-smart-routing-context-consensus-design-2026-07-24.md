@@ -396,6 +396,9 @@ CompactionPlan
 ### 15.3 加密与删除
 
 - 共识正文使用应用层 AEAD（AES-GCM）加密，配置独立的 `CONTEXT_CONSENSUS_ENCRYPTION_KEY` 和 `key_version`。
+- active key 只负责新写入；最多 4 个旧版本通过 `CONTEXT_CONSENSUS_PREVIOUS_ENCRYPTION_KEYS` 提供有界读取窗口，版本不得重复。
+- key version 同时参与 AEAD envelope 选择和 HMAC namespace。读取旧 namespace 后，下一次 revision CAS 必须在同一 Redis Lua 中写入 active namespace、删除旧 state，并推进 active fencing counter；禁止持续刷新旧 namespace TTL。
+- current/previous namespace 同时存在时视为轮换冲突并失败关闭，不根据 revision 或时间猜测权威副本。旧 key 至少保留一个最大 state TTL 窗口，迁移完成或旧 state 自然过期后再退役。
 - 不复用 session secret、渠道 key 或 API Key。
 - 明确 TTL、最大保留时间、删除入口和过期销毁验证。
 - 未配置稳定加密密钥时，`managed_consensus` 不得启用。
@@ -578,7 +581,7 @@ allow_tool_result_compaction=false
 - 首批仅支持非流式请求。
 - Redis/加密密钥不可用时 fail closed。
 
-实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`；阶段 C-2b 已冻结增量 current turn 契约，在渠道选择前接入会话加载、摘要注入和 lease 续租，并建立规范化输出/显式结算/缓冲执行边界，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`；阶段 C-2c 已完成下一 revision L2/L3、固定 2 MiB 缓冲、同请求 CAS 恢复和 commit-before-write，非流式统一 503 门禁已移除，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`。`managed_context_enabled` 仍默认关闭；C-3 的跨请求幂等/provider state 运行时闭环完成前，不允许 provider-owned state，也不能标记阶段 C 完成。
+实施状态：阶段 C-1 已完成加密、owner/HMAC、Redis Lua 仓储、CAS、lease/fencing、TTL、provider binding 记录契约及请求失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`；阶段 C-2a 已完成托管会话状态机、四协议安全摘要注入和非流式有界响应缓冲，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`；阶段 C-2b 已冻结增量 current turn 契约，在渠道选择前接入会话加载、摘要注入和 lease 续租，并建立规范化输出/显式结算/缓冲执行边界，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`；阶段 C-2c 已完成下一 revision L2/L3、固定 2 MiB 缓冲、同请求 CAS 恢复和 commit-before-write，非流式统一 503 门禁已移除，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`；阶段 C-3a 已完成托管会话 state 的有界旧密钥读取、双 namespace 冲突隔离和 revision 原子迁移，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`。`managed_context_enabled` 仍默认关闭；C-3b/C-3c 的持久化计费幂等、跨请求 outcome 和 provider state 运行时闭环完成前，不允许 provider-owned state，也不能标记阶段 C 完成。
 
 ### 阶段 D：工具结果压缩和可视化
 
@@ -613,6 +616,7 @@ allow_tool_result_compaction=false
 ### 23.5 状态与计费
 
 - TTL 过期、Redis 故障、CAS 冲突、重复 request_id、并发 fork。
+- active/previous key 读取、未知版本、旧 namespace revision 原子迁移、双 namespace 冲突和旧 key 提前退役。
 - 固定价格、倍率、tiered expression、免费模型、额度不足。
 - 压缩成功主调用失败、压缩失败、幂等重试。
 

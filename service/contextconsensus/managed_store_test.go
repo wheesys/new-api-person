@@ -24,6 +24,7 @@ type memoryManagedConsensusRepository struct {
 }
 
 var _ ManagedConsensusRepository = (*memoryManagedConsensusRepository)(nil)
+var _ ManagedConsensusKeyRotationRepository = (*memoryManagedConsensusRepository)(nil)
 
 func newMemoryManagedConsensusRepository(now func() time.Time) *memoryManagedConsensusRepository {
 	return &memoryManagedConsensusRepository{
@@ -157,6 +158,58 @@ func (repository *memoryManagedConsensusRepository) CompareAndSwapConsensus(
 		ExpiresAt:    now.Add(ttl),
 	}
 	repository.consensusRecords[key.RepositoryKey] = record
+	return record, nil
+}
+
+func (repository *memoryManagedConsensusRepository) CompareAndSwapMigrateConsensus(
+	ctx context.Context,
+	previousKey ManagedConversationStorageKey,
+	activeKey ManagedConversationStorageKey,
+	expectedRevision uint64,
+	lease ManagedConsensusLease,
+	payload ManagedEncryptedEnvelope,
+	ttl time.Duration,
+) (ManagedConsensusRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if ttl <= 0 || previousKey.RepositoryKey == activeKey.RepositoryKey {
+		return ManagedConsensusRecord{}, fmt.Errorf("valid migration keys and positive TTL are required")
+	}
+	if expectedRevision == math.MaxUint64 || payload.Purpose != ManagedEncryptionPurposeConsensusState || payload.Revision != expectedRevision+1 {
+		return ManagedConsensusRecord{}, fmt.Errorf("encrypted consensus migration payload is invalid")
+	}
+	if payload.KeyVersion != activeKey.KeyVersion {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus migration payload does not use the active key version")
+	}
+	repository.mutex.Lock()
+	defer repository.mutex.Unlock()
+	now := repository.now()
+	currentLease, found := repository.consensusLeases[previousKey.RepositoryKey]
+	if lease.RepositoryKey != previousKey.RepositoryKey || !found || !currentLease.ExpiresAt.After(now) || currentLease.HolderID != lease.HolderID || currentLease.FencingToken != lease.FencingToken {
+		return ManagedConsensusRecord{}, ErrManagedConsensusLeaseInvalid
+	}
+	previousRecord, found := repository.consensusRecords[previousKey.RepositoryKey]
+	if !found || !previousRecord.ExpiresAt.After(now) || previousRecord.Revision != expectedRevision {
+		return ManagedConsensusRecord{}, ErrManagedConsensusRevisionConflict
+	}
+	if activeRecord, activeFound := repository.consensusRecords[activeKey.RepositoryKey]; activeFound && activeRecord.ExpiresAt.After(now) {
+		return ManagedConsensusRecord{}, ErrManagedConsensusKeyConflict
+	}
+	if activeLease, activeLeaseFound := repository.consensusLeases[activeKey.RepositoryKey]; activeLeaseFound && activeLease.ExpiresAt.After(now) {
+		return ManagedConsensusRecord{}, ErrManagedConsensusKeyConflict
+	}
+	record := ManagedConsensusRecord{
+		Revision:     expectedRevision + 1,
+		FencingToken: lease.FencingToken,
+		Payload:      payload,
+		ExpiresAt:    now.Add(ttl),
+	}
+	repository.consensusRecords[activeKey.RepositoryKey] = record
+	delete(repository.consensusRecords, previousKey.RepositoryKey)
+	if repository.nextFencingTokens[activeKey.RepositoryKey] < lease.FencingToken {
+		repository.nextFencingTokens[activeKey.RepositoryKey] = lease.FencingToken
+	}
 	return record, nil
 }
 

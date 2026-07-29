@@ -300,6 +300,9 @@ docker run --name new-api -d --restart always \
 | `CRYPTO_SECRET` | HMAC secret for cache keys; nodes sharing Redis must use the same effective value | Defaults to `SESSION_SECRET` |
 | `SQL_DSN` | Database connection string | - |
 | `REDIS_CONN_STRING` | Redis connection string | - |
+| `CONTEXT_CONSENSUS_ENCRYPTION_KEY` | Strict Base64-encoded 32-byte active key for managed ContextConsensus state | - |
+| `CONTEXT_CONSENSUS_ENCRYPTION_KEY_VERSION` | Unique version label for the active managed ContextConsensus key | - |
+| `CONTEXT_CONSENSUS_PREVIOUS_ENCRYPTION_KEYS` | JSON array of up to 4 read-only previous keys (`version` and strict Base64 `key`) retained during rotation | - |
 | `RELAY_IDLE_CONN_TIMEOUT` | Idle keep-alive timeout for relay HTTP clients, seconds. Defaults to Go standard library behavior; set `0` to disable | `90` |
 | `STREAMING_TIMEOUT` | Streaming timeout (seconds) | `300` |
 | `STREAM_SCANNER_MAX_BUFFER_MB` | Max per-line buffer (MB) for the stream scanner; increase when upstream sends huge image/base64 payloads | `64` |

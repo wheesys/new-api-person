@@ -2,6 +2,8 @@ package contextconsensus
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type ambiguousManagedMigrationRepository struct {
+	*memoryManagedConsensusRepository
+	returnErrorAfterMigration bool
+}
+
+func (repository *ambiguousManagedMigrationRepository) CompareAndSwapMigrateConsensus(
+	ctx context.Context,
+	previousKey ManagedConversationStorageKey,
+	activeKey ManagedConversationStorageKey,
+	expectedRevision uint64,
+	lease ManagedConsensusLease,
+	payload ManagedEncryptedEnvelope,
+	ttl time.Duration,
+) (ManagedConsensusRecord, error) {
+	record, err := repository.memoryManagedConsensusRepository.CompareAndSwapMigrateConsensus(
+		ctx, previousKey, activeKey, expectedRevision, lease, payload, ttl,
+	)
+	if err == nil && repository.returnErrorAfterMigration {
+		repository.returnErrorAfterMigration = false
+		return ManagedConsensusRecord{}, fmt.Errorf("migration response unavailable")
+	}
+	return record, err
+}
 
 func TestManagedConsensusSessionCreatesLoadsInjectsRenewsAndCommits(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
@@ -146,6 +172,137 @@ func TestManagedConsensusSessionRenewFailurePermanentlyBlocksCommit(t *testing.T
 	require.ErrorIs(t, err, ErrManagedConsensusLeaseInvalid)
 }
 
+func TestManagedConsensusSessionReadsPreviousKeyNamespaceAndWritesActiveCipher(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	repository := newMemoryManagedConsensusRepository(func() time.Time { return now })
+	oldKey := []byte(strings.Repeat("o", 32))
+	activeKey := []byte(strings.Repeat("n", 32))
+	oldRuntime := managedSessionRuntimeWithKeys(t, repository, oldKey, "v1", nil)
+	owner := ManagedConsensusOwner{UserID: 42, TokenID: 84, EndpointFamily: "responses"}
+	seedManagedSessionState(t, oldRuntime, owner, "rotating-context", managedSessionTestState(1, now))
+	activeOnlyBeforeMigration := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", nil)
+	_, err := BeginManagedConsensusSession(context.Background(), activeOnlyBeforeMigration, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "rotating-context",
+		ExpectedRevision:  1,
+		HolderID:          "old-key-not-configured",
+		LeaseTTL:          time.Minute,
+	})
+	require.ErrorIs(t, err, ErrManagedConsensusNotFound)
+
+	rotatedRuntime := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", []managedConsensusPreviousKey{{
+		Version: "v1",
+		Key:     base64.StdEncoding.EncodeToString(oldKey),
+	}})
+	session, err := BeginManagedConsensusSession(context.Background(), rotatedRuntime, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "rotating-context",
+		ExpectedRevision:  1,
+		HolderID:          "rotated-request",
+		LeaseTTL:          time.Minute,
+	})
+	require.NoError(t, err)
+	state, err := session.State()
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	assert.Equal(t, uint64(1), state.Revision)
+
+	_, err = session.Commit(context.Background(), managedSessionTestState(2, now.Add(time.Minute)), 10*time.Minute)
+	require.NoError(t, err)
+	oldStorageKey, err := oldRuntime.KeyDeriver.DeriveConversationStorageKey(owner, "rotating-context")
+	require.NoError(t, err)
+	activeStorageKey, err := rotatedRuntime.KeyDeriver.DeriveConversationStorageKey(owner, "rotating-context")
+	require.NoError(t, err)
+	_, oldKeyStillExists := repository.consensusRecords[oldStorageKey.RepositoryKey]
+	assert.False(t, oldKeyStillExists)
+	record := repository.consensusRecords[activeStorageKey.RepositoryKey]
+	assert.Equal(t, "v2", record.Payload.KeyVersion)
+
+	reloaded, err := BeginManagedConsensusSession(context.Background(), rotatedRuntime, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "rotating-context",
+		ExpectedRevision:  2,
+		HolderID:          "rotated-reload",
+		LeaseTTL:          time.Minute,
+	})
+	require.NoError(t, err)
+	require.NoError(t, reloaded.Close(context.Background()))
+
+	activeOnlyRuntime := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", nil)
+	activeOnlySession, err := BeginManagedConsensusSession(context.Background(), activeOnlyRuntime, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "rotating-context",
+		ExpectedRevision:  2,
+		HolderID:          "missing-old-namespace",
+		LeaseTTL:          time.Minute,
+	})
+	require.NoError(t, err)
+	require.NoError(t, activeOnlySession.Close(context.Background()))
+}
+
+func TestManagedConsensusSessionRejectsDualKeyNamespaceConflict(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	repository := newMemoryManagedConsensusRepository(func() time.Time { return now })
+	oldKey := []byte(strings.Repeat("o", 32))
+	activeKey := []byte(strings.Repeat("n", 32))
+	owner := ManagedConsensusOwner{UserID: 7, TokenID: 9, EndpointFamily: "chat"}
+	oldRuntime := managedSessionRuntimeWithKeys(t, repository, oldKey, "v1", nil)
+	activeRuntime := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", nil)
+	seedManagedSessionState(t, oldRuntime, owner, "conflicting-context", managedSessionTestState(1, now))
+	seedManagedSessionState(t, activeRuntime, owner, "conflicting-context", managedSessionTestState(1, now))
+
+	rotatedRuntime := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", []managedConsensusPreviousKey{{
+		Version: "v1",
+		Key:     base64.StdEncoding.EncodeToString(oldKey),
+	}})
+	_, err := BeginManagedConsensusSession(context.Background(), rotatedRuntime, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "conflicting-context",
+		ExpectedRevision:  1,
+		HolderID:          "conflict-request",
+		LeaseTTL:          time.Minute,
+	})
+	require.ErrorIs(t, err, ErrManagedConsensusKeyConflict)
+	assert.Empty(t, repository.consensusLeases)
+}
+
+func TestManagedConsensusSessionRecoversAmbiguousPreviousKeyMigration(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	baseRepository := newMemoryManagedConsensusRepository(func() time.Time { return now })
+	oldKey := []byte(strings.Repeat("o", 32))
+	activeKey := []byte(strings.Repeat("n", 32))
+	owner := ManagedConsensusOwner{UserID: 11, TokenID: 13, EndpointFamily: "responses"}
+	oldRuntime := managedSessionRuntimeWithKeys(t, baseRepository, oldKey, "v1", nil)
+	seedManagedSessionState(t, oldRuntime, owner, "ambiguous-migration", managedSessionTestState(1, now))
+	repository := &ambiguousManagedMigrationRepository{
+		memoryManagedConsensusRepository: baseRepository,
+		returnErrorAfterMigration:        true,
+	}
+	rotatedRuntime := managedSessionRuntimeWithKeys(t, repository, activeKey, "v2", []managedConsensusPreviousKey{{
+		Version: "v1",
+		Key:     base64.StdEncoding.EncodeToString(oldKey),
+	}})
+	session, err := BeginManagedConsensusSession(context.Background(), rotatedRuntime, BeginManagedConsensusSessionRequest{
+		Owner:             owner,
+		ExternalContextID: "ambiguous-migration",
+		ExpectedRevision:  1,
+		HolderID:          "ambiguous-request",
+		LeaseTTL:          time.Minute,
+	})
+	require.NoError(t, err)
+	result, err := session.CommitWithRecovery(
+		context.Background(),
+		managedSessionTestState(2, now.Add(time.Minute)),
+		10*time.Minute,
+	)
+	require.NoError(t, err)
+	assert.True(t, result.Recovered)
+	assert.Equal(t, uint64(2), result.Record.Revision)
+	activeStorageKey, err := rotatedRuntime.KeyDeriver.DeriveConversationStorageKey(owner, "ambiguous-migration")
+	require.NoError(t, err)
+	assert.Contains(t, baseRepository.consensusRecords, activeStorageKey.RepositoryKey)
+}
+
 func managedSessionTestRuntime(t *testing.T, now func() time.Time) (*ManagedConsensusRuntime, *memoryManagedConsensusRepository) {
 	t.Helper()
 	key := []byte(strings.Repeat("m", 32))
@@ -155,6 +312,19 @@ func managedSessionTestRuntime(t *testing.T, now func() time.Time) (*ManagedCons
 	require.NoError(t, err)
 	repository := newMemoryManagedConsensusRepository(now)
 	return &ManagedConsensusRuntime{Cipher: cipher, KeyDeriver: deriver, Repository: repository}, repository
+}
+
+func managedSessionRuntimeWithKeys(
+	t *testing.T,
+	repository ManagedConsensusRepository,
+	activeKey []byte,
+	activeVersion string,
+	previousKeys []managedConsensusPreviousKey,
+) *ManagedConsensusRuntime {
+	t.Helper()
+	runtime, err := newManagedConsensusRuntime(activeKey, activeVersion, previousKeys, repository)
+	require.NoError(t, err)
+	return runtime
 }
 
 func seedManagedSessionState(t *testing.T, runtime *ManagedConsensusRuntime, owner ManagedConsensusOwner, contextID string, state ManagedConsensusState) {

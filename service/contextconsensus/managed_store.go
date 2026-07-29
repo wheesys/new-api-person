@@ -20,6 +20,7 @@ var (
 	ErrManagedConsensusLeaseInvalid     = errors.New("managed consensus lease is invalid or expired")
 	ErrManagedConsensusCommitFailed     = errors.New("managed consensus commit failed")
 	ErrManagedConsensusOutcomeUnknown   = errors.New("managed consensus commit outcome is unknown")
+	ErrManagedConsensusKeyConflict      = errors.New("managed consensus key rotation conflict")
 	ErrProviderStateBindingNotFound     = errors.New("provider state binding not found")
 	ErrProviderStateBindingConflict     = errors.New("provider state binding conflict")
 )
@@ -227,4 +228,19 @@ type ManagedConsensusRepository interface {
 	LoadProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey) (ManagedProviderStateRecord, error)
 	RegisterProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey, bindingDigest string, payload ManagedEncryptedEnvelope, ttl time.Duration) (ManagedProviderStateRecord, error)
 	DeleteProviderStateBinding(ctx context.Context, key ManagedProviderStateStorageKey, expectedBindingDigest string) error
+}
+
+// ManagedConsensusKeyRotationRepository atomically advances a revision from a
+// previous HMAC namespace into the active namespace. Implementations must not
+// leave both state keys live after a successful migration.
+type ManagedConsensusKeyRotationRepository interface {
+	CompareAndSwapMigrateConsensus(
+		ctx context.Context,
+		previousKey ManagedConversationStorageKey,
+		activeKey ManagedConversationStorageKey,
+		expectedRevision uint64,
+		lease ManagedConsensusLease,
+		payload ManagedEncryptedEnvelope,
+		ttl time.Duration,
+	) (ManagedConsensusRecord, error)
 }

@@ -92,6 +92,9 @@
     - [x] 完成阶段 C-2b：冻结 managed 增量 current turn 契约，在渠道选择前接入会话加载、安全摘要注入和 lease 续租，并建立主调用规范化输出、显式结算及非流式缓冲执行边界；门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`。
     - [x] 完成阶段 C-2c：生成下一 revision L2/L3，接入固定 2 MiB 缓冲、同请求 CAS 恢复、commit-before-write 及故障矩阵，并移除非流式 503 门禁，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`。
   - [ ] 完成阶段 C-3：冻结稳定客户端幂等键和结算后提交失败的跨请求恢复契约，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
+    - [x] 完成阶段 C-3a：为托管会话 state 增加最多 4 个旧版本的 AEAD/HMAC 读取窗口，唯一定位 current/previous namespace，并在下一 revision CAS 时原子迁移到 active namespace；双 namespace 冲突失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`。
+    - [ ] 完成阶段 C-3b：增加稳定客户端幂等键、revision intent、主调用与摘要子调用的持久化计费 operation 去重，以及 `settled_pending_commit`/`committed` 跨请求恢复；不得仅靠 Redis phase 推断扣费结果。
+    - [ ] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。

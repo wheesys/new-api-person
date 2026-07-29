@@ -2,6 +2,7 @@ package contextconsensus
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ func TestNewManagedConsensusRuntimeFromEnvironmentFailsClosed(t *testing.T) {
 
 	t.Setenv(managedConsensusEncryptionKeyEnvironment, "")
 	t.Setenv(managedConsensusEncryptionKeyVersionEnvironment, "")
+	t.Setenv(managedConsensusPreviousKeysEnvironment, "")
 	_, err := NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
 	require.ErrorContains(t, err, managedConsensusEncryptionKeyEnvironment)
 
@@ -38,6 +40,7 @@ func TestNewManagedConsensusRuntimeFromEnvironmentBuildsDomainSeparatedRuntime(t
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	t.Setenv(managedConsensusEncryptionKeyEnvironment, base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	t.Setenv(managedConsensusEncryptionKeyVersionEnvironment, "managed-v1")
+	t.Setenv(managedConsensusPreviousKeysEnvironment, "")
 
 	runtime, err := NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
 	require.NoError(t, err)
@@ -51,4 +54,51 @@ func TestNewManagedConsensusRuntimeFromEnvironmentBuildsDomainSeparatedRuntime(t
 	)
 	require.NoError(t, err)
 	assert.NotContains(t, storageKey.RepositoryKey, "raw-context-id")
+}
+
+func TestNewManagedConsensusRuntimeFromEnvironmentBuildsBoundedPreviousKeyring(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	activeKey := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("n", 32)))
+	previousKey := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+	t.Setenv(managedConsensusEncryptionKeyEnvironment, activeKey)
+	t.Setenv(managedConsensusEncryptionKeyVersionEnvironment, "v2")
+	t.Setenv(managedConsensusPreviousKeysEnvironment, fmt.Sprintf(`[{"version":"v1","key":%q}]`, previousKey))
+
+	runtime, err := NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
+	require.NoError(t, err)
+	assert.Len(t, runtime.readCiphers, 2)
+	assert.Len(t, runtime.readKeyDerivers, 2)
+	assert.Equal(t, "v2", runtime.Cipher.keyVersion)
+	assert.Equal(t, "v2", runtime.readKeyDerivers[0].keyVersion)
+	assert.Equal(t, "v1", runtime.readKeyDerivers[1].keyVersion)
+}
+
+func TestNewManagedConsensusRuntimeFromEnvironmentRejectsInvalidPreviousKeyring(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	encodedKey := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
+	t.Setenv(managedConsensusEncryptionKeyEnvironment, encodedKey)
+	t.Setenv(managedConsensusEncryptionKeyVersionEnvironment, "v2")
+
+	t.Setenv(managedConsensusPreviousKeysEnvironment, `[{"version":"v2","key":"redacted"}]`)
+	_, err := NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
+	require.ErrorContains(t, err, "duplicate key version")
+
+	t.Setenv(managedConsensusPreviousKeysEnvironment, `[{"version":"v1","key":"not-base64"}]`)
+	_, err = NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
+	require.ErrorContains(t, err, "invalid key")
+	assert.NotContains(t, err.Error(), "not-base64")
+
+	t.Setenv(managedConsensusPreviousKeysEnvironment, `null`)
+	_, err = NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
+	require.ErrorContains(t, err, "must be a JSON array")
+
+	tooMany := make([]string, 0, managedConsensusMaximumPreviousKeys+1)
+	for index := 0; index <= managedConsensusMaximumPreviousKeys; index++ {
+		tooMany = append(tooMany, fmt.Sprintf(`{"version":"old-%d","key":%q}`, index, encodedKey))
+	}
+	t.Setenv(managedConsensusPreviousKeysEnvironment, "["+strings.Join(tooMany, ",")+"]")
+	_, err = NewManagedConsensusRuntimeFromEnvironment(client, time.Hour)
+	require.ErrorContains(t, err, "supports at most")
 }

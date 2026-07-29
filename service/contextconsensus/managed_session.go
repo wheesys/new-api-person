@@ -30,6 +30,7 @@ type ManagedConsensusSession struct {
 	mutex            sync.Mutex
 	runtime          *ManagedConsensusRuntime
 	storageKey       ManagedConversationStorageKey
+	activeStorageKey ManagedConversationStorageKey
 	lease            ManagedConsensusLease
 	expectedRevision uint64
 	leaseTTL         time.Duration
@@ -43,7 +44,11 @@ func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensus
 	if runtime == nil || runtime.Cipher == nil || runtime.KeyDeriver == nil || runtime.Repository == nil {
 		return nil, fmt.Errorf("managed consensus runtime is unavailable")
 	}
-	storageKey, err := runtime.KeyDeriver.DeriveConversationStorageKey(request.Owner, request.ExternalContextID)
+	storageKeys, err := runtime.conversationStorageKeys(request.Owner, request.ExternalContextID)
+	if err != nil {
+		return nil, err
+	}
+	storageKey, err := locateManagedConsensusStorageKey(ctx, runtime.Repository, storageKeys, request.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +59,12 @@ func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensus
 	session := &ManagedConsensusSession{
 		runtime:          runtime,
 		storageKey:       storageKey,
+		activeStorageKey: storageKeys[0],
 		lease:            lease,
 		expectedRevision: request.ExpectedRevision,
 		leaseTTL:         request.LeaseTTL,
 	}
-	loadedRecord, loadErr := runtime.Repository.LoadConsensus(ctx, storageKey)
+	loadedRecord, loadErr := loadManagedConsensusForSession(ctx, runtime.Repository, storageKeys, storageKey, request.ExpectedRevision)
 	if request.ExpectedRevision == 0 {
 		if loadErr == nil {
 			session.releaseAfterFailedBegin(ctx)
@@ -79,7 +85,7 @@ func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensus
 		return nil, ErrManagedConsensusRevisionConflict
 	}
 	var state ManagedConsensusState
-	if err := runtime.Cipher.DecryptJSON(ctx, ManagedEncryptionContext{
+	if err := runtime.decryptJSON(ctx, ManagedEncryptionContext{
 		RepositoryKey: storageKey.RepositoryKey,
 		Purpose:       ManagedEncryptionPurposeConsensusState,
 		Revision:      loadedRecord.Revision,
@@ -97,6 +103,91 @@ func BeginManagedConsensusSession(ctx context.Context, runtime *ManagedConsensus
 	}
 	session.state = &state
 	return session, nil
+}
+
+func locateManagedConsensusStorageKey(
+	ctx context.Context,
+	repository ManagedConsensusRepository,
+	storageKeys []ManagedConversationStorageKey,
+	expectedRevision uint64,
+) (ManagedConversationStorageKey, error) {
+	if repository == nil || len(storageKeys) == 0 {
+		return ManagedConversationStorageKey{}, fmt.Errorf("managed consensus storage keys are unavailable")
+	}
+	matchedIndex := -1
+	existingRecords := 0
+	for index, storageKey := range storageKeys {
+		record, err := repository.LoadConsensus(ctx, storageKey)
+		if errors.Is(err, ErrManagedConsensusNotFound) {
+			continue
+		}
+		if err != nil {
+			return ManagedConversationStorageKey{}, err
+		}
+		existingRecords++
+		if record.Revision == expectedRevision {
+			if matchedIndex >= 0 {
+				return ManagedConversationStorageKey{}, ErrManagedConsensusKeyConflict
+			}
+			matchedIndex = index
+		}
+	}
+	if existingRecords > 1 {
+		return ManagedConversationStorageKey{}, ErrManagedConsensusKeyConflict
+	}
+	if expectedRevision == 0 {
+		if existingRecords != 0 {
+			return ManagedConversationStorageKey{}, ErrManagedConsensusRevisionConflict
+		}
+		return storageKeys[0], nil
+	}
+	if matchedIndex >= 0 {
+		return storageKeys[matchedIndex], nil
+	}
+	if existingRecords > 0 {
+		return ManagedConversationStorageKey{}, ErrManagedConsensusRevisionConflict
+	}
+	return ManagedConversationStorageKey{}, ErrManagedConsensusNotFound
+}
+
+func loadManagedConsensusForSession(
+	ctx context.Context,
+	repository ManagedConsensusRepository,
+	storageKeys []ManagedConversationStorageKey,
+	selectedKey ManagedConversationStorageKey,
+	expectedRevision uint64,
+) (ManagedConsensusRecord, error) {
+	var selectedRecord ManagedConsensusRecord
+	existingRecords := 0
+	for _, storageKey := range storageKeys {
+		record, err := repository.LoadConsensus(ctx, storageKey)
+		if errors.Is(err, ErrManagedConsensusNotFound) {
+			continue
+		}
+		if err != nil {
+			return ManagedConsensusRecord{}, err
+		}
+		existingRecords++
+		if storageKey.RepositoryKey == selectedKey.RepositoryKey {
+			selectedRecord = record
+		}
+	}
+	if existingRecords > 1 {
+		return ManagedConsensusRecord{}, ErrManagedConsensusKeyConflict
+	}
+	if expectedRevision == 0 {
+		if existingRecords != 0 {
+			return ManagedConsensusRecord{}, ErrManagedConsensusRevisionConflict
+		}
+		return ManagedConsensusRecord{}, ErrManagedConsensusNotFound
+	}
+	if existingRecords == 0 {
+		return ManagedConsensusRecord{}, ErrManagedConsensusNotFound
+	}
+	if selectedRecord.Revision != expectedRevision {
+		return ManagedConsensusRecord{}, ErrManagedConsensusRevisionConflict
+	}
+	return selectedRecord, nil
 }
 
 func (session *ManagedConsensusSession) State() (*ManagedConsensusState, error) {
@@ -160,22 +251,16 @@ func (session *ManagedConsensusSession) Commit(ctx context.Context, state Manage
 	if err := state.Validate(); err != nil {
 		return ManagedConsensusRecord{}, err
 	}
+	commitStorageKey := session.commitStorageKey()
 	payload, err := session.runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
-		RepositoryKey: session.storageKey.RepositoryKey,
+		RepositoryKey: commitStorageKey.RepositoryKey,
 		Purpose:       ManagedEncryptionPurposeConsensusState,
 		Revision:      state.Revision,
 	}, state)
 	if err != nil {
 		return ManagedConsensusRecord{}, err
 	}
-	record, err := session.runtime.Repository.CompareAndSwapConsensus(
-		ctx,
-		session.storageKey,
-		session.expectedRevision,
-		session.lease,
-		payload,
-		ttl,
-	)
+	record, err := session.compareAndSwap(ctx, payload, ttl)
 	if err != nil {
 		return ManagedConsensusRecord{}, err
 	}
@@ -203,8 +288,9 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	if err := state.Validate(); err != nil {
 		return ManagedConsensusCommitResult{}, err
 	}
+	commitStorageKey := session.commitStorageKey()
 	payload, err := session.runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
-		RepositoryKey: session.storageKey.RepositoryKey,
+		RepositoryKey: commitStorageKey.RepositoryKey,
 		Purpose:       ManagedEncryptionPurposeConsensusState,
 		Revision:      state.Revision,
 	}, state)
@@ -213,7 +299,7 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	}
 
 	commit := func(commitContext context.Context) (ManagedConsensusRecord, error) {
-		return session.runtime.Repository.CompareAndSwapConsensus(commitContext, session.storageKey, session.expectedRevision, session.lease, payload, ttl)
+		return session.compareAndSwap(commitContext, payload, ttl)
 	}
 	record, commitErr := commit(ctx)
 	if commitErr == nil {
@@ -266,7 +352,11 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 }
 
 func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context, candidate ManagedConsensusState) (bool, bool, ManagedConsensusRecord, error) {
-	record, err := session.runtime.Repository.LoadConsensus(ctx, session.storageKey)
+	commitStorageKey := session.commitStorageKey()
+	record, err := session.runtime.Repository.LoadConsensus(ctx, commitStorageKey)
+	if session.storageKey.RepositoryKey != commitStorageKey.RepositoryKey && errors.Is(err, ErrManagedConsensusNotFound) {
+		record, err = session.runtime.Repository.LoadConsensus(ctx, session.storageKey)
+	}
 	if errors.Is(err, ErrManagedConsensusNotFound) && session.expectedRevision == 0 {
 		return false, true, ManagedConsensusRecord{}, nil
 	}
@@ -280,8 +370,8 @@ func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context
 		return false, false, record, fmt.Errorf("managed consensus repository advanced to an unrelated revision")
 	}
 	var stored ManagedConsensusState
-	if err := session.runtime.Cipher.DecryptJSON(ctx, ManagedEncryptionContext{
-		RepositoryKey: session.storageKey.RepositoryKey,
+	if err := session.runtime.decryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: commitStorageKey.RepositoryKey,
 		Purpose:       ManagedEncryptionPurposeConsensusState,
 		Revision:      record.Revision,
 	}, record.Payload, &stored); err != nil {
@@ -304,8 +394,35 @@ func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context
 	return true, false, record, nil
 }
 
+func (session *ManagedConsensusSession) commitStorageKey() ManagedConversationStorageKey {
+	if session.activeStorageKey.RepositoryKey != "" {
+		return session.activeStorageKey
+	}
+	return session.storageKey
+}
+
+func (session *ManagedConsensusSession) compareAndSwap(ctx context.Context, payload ManagedEncryptedEnvelope, ttl time.Duration) (ManagedConsensusRecord, error) {
+	commitStorageKey := session.commitStorageKey()
+	if commitStorageKey.RepositoryKey == session.storageKey.RepositoryKey {
+		return session.runtime.Repository.CompareAndSwapConsensus(ctx, session.storageKey, session.expectedRevision, session.lease, payload, ttl)
+	}
+	rotationRepository, ok := session.runtime.Repository.(ManagedConsensusKeyRotationRepository)
+	if !ok {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus repository does not support key rotation")
+	}
+	return rotationRepository.CompareAndSwapMigrateConsensus(
+		ctx,
+		session.storageKey,
+		commitStorageKey,
+		session.expectedRevision,
+		session.lease,
+		payload,
+		ttl,
+	)
+}
+
 func managedCommitErrorIsDefinitive(err error) bool {
-	return errors.Is(err, ErrManagedConsensusRevisionConflict) || errors.Is(err, ErrManagedConsensusLeaseInvalid)
+	return errors.Is(err, ErrManagedConsensusRevisionConflict) || errors.Is(err, ErrManagedConsensusLeaseInvalid) || errors.Is(err, ErrManagedConsensusKeyConflict)
 }
 
 func (session *ManagedConsensusSession) finishCommit(ctx context.Context, state ManagedConsensusState) {

@@ -62,6 +62,31 @@ redis.call('PEXPIRE', KEYS[1], ARGV[6])
 redis.call('PEXPIRE', KEYS[3], ARGV[7])
 return tonumber(ARGV[3])
 `)
+	managedCompareAndSwapMigrateScript = redis.NewScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return -1
+end
+local previous_revision = redis.call('HGET', KEYS[1], 'revision')
+if not previous_revision or previous_revision ~= ARGV[2] then
+  return -2
+end
+if redis.call('EXISTS', KEYS[4]) == 1 or redis.call('EXISTS', KEYS[6]) == 1 then
+  return -3
+end
+redis.call('HSET', KEYS[4],
+  'revision', ARGV[3],
+  'fencing_token', ARGV[4],
+  'encrypted_payload', ARGV[5])
+redis.call('PEXPIRE', KEYS[4], ARGV[6])
+local active_fence = redis.call('GET', KEYS[5])
+if not active_fence or tonumber(active_fence) < tonumber(ARGV[4]) then
+  redis.call('SET', KEYS[5], ARGV[4])
+end
+redis.call('PEXPIRE', KEYS[5], ARGV[7])
+redis.call('PEXPIRE', KEYS[3], ARGV[7])
+redis.call('DEL', KEYS[1])
+return tonumber(ARGV[3])
+`)
 	managedDeleteConsensusScript = redis.NewScript(`
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then
   return -1
@@ -277,6 +302,84 @@ func (repository *RedisManagedConsensusRepository) CompareAndSwapConsensus(ctx c
 	}, nil
 }
 
+func (repository *RedisManagedConsensusRepository) CompareAndSwapMigrateConsensus(
+	ctx context.Context,
+	previousKey ManagedConversationStorageKey,
+	activeKey ManagedConversationStorageKey,
+	expectedRevision uint64,
+	lease ManagedConsensusLease,
+	payload ManagedEncryptedEnvelope,
+	ttl time.Duration,
+) (ManagedConsensusRecord, error) {
+	if err := repository.validateConversationKey(previousKey); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if err := repository.validateConversationKey(activeKey); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if previousKey.RepositoryKey == activeKey.RepositoryKey {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus migration requires distinct storage keys")
+	}
+	if err := repository.validateLeaseForKey(previousKey, lease); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	if expectedRevision == math.MaxUint64 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus revision overflow")
+	}
+	if payload.Purpose != ManagedEncryptionPurposeConsensusState || payload.Revision != expectedRevision+1 {
+		return ManagedConsensusRecord{}, fmt.Errorf("encrypted consensus payload revision or purpose does not match migration")
+	}
+	if payload.KeyVersion != activeKey.KeyVersion {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus migration payload does not use the active key version")
+	}
+	if err := repository.validateTTL(ttl); err != nil {
+		return ManagedConsensusRecord{}, err
+	}
+	encodedPayload, err := common.Marshal(payload)
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("encode encrypted managed consensus migration envelope: %w", err)
+	}
+	result, err := managedCompareAndSwapMigrateScript.Run(
+		ctx,
+		repository.client,
+		[]string{
+			previousKey.RepositoryKey,
+			previousKey.RepositoryKey + ":lease",
+			previousKey.RepositoryKey + ":fence",
+			activeKey.RepositoryKey,
+			activeKey.RepositoryKey + ":fence",
+			activeKey.RepositoryKey + ":lease",
+		},
+		managedLeaseValue(lease),
+		strconv.FormatUint(expectedRevision, 10),
+		strconv.FormatUint(expectedRevision+1, 10),
+		strconv.FormatUint(lease.FencingToken, 10),
+		string(encodedPayload),
+		ttl.Milliseconds(),
+		repository.fencingCounterRetention.Milliseconds(),
+	).Int64()
+	if err != nil {
+		return ManagedConsensusRecord{}, fmt.Errorf("migrate managed consensus key version: %w", err)
+	}
+	switch result {
+	case -1:
+		return ManagedConsensusRecord{}, ErrManagedConsensusLeaseInvalid
+	case -2:
+		return ManagedConsensusRecord{}, ErrManagedConsensusRevisionConflict
+	case -3:
+		return ManagedConsensusRecord{}, ErrManagedConsensusKeyConflict
+	}
+	if result <= 0 || uint64(result) != expectedRevision+1 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus migration returned an invalid revision")
+	}
+	return ManagedConsensusRecord{
+		Revision:     uint64(result),
+		FencingToken: lease.FencingToken,
+		Payload:      payload,
+		ExpiresAt:    repository.now().Add(ttl),
+	}, nil
+}
+
 func (repository *RedisManagedConsensusRepository) DeleteConsensus(ctx context.Context, key ManagedConversationStorageKey, expectedRevision uint64, lease ManagedConsensusLease) error {
 	if err := repository.validateConversationKey(key); err != nil {
 		return err
@@ -439,3 +542,4 @@ func managedLeaseValue(lease ManagedConsensusLease) string {
 }
 
 var _ ManagedConsensusRepository = (*RedisManagedConsensusRepository)(nil)
+var _ ManagedConsensusKeyRotationRepository = (*RedisManagedConsensusRepository)(nil)

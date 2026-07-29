@@ -107,6 +107,65 @@ func TestRedisManagedConsensusRepositoryCASIsAtomicAcrossClients(t *testing.T) {
 	assert.Equal(t, 1, conflicts)
 }
 
+func TestRedisManagedConsensusRepositoryMigratesPreviousNamespaceAtomically(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	repository, err := NewRedisManagedConsensusRepository(client, 10*time.Minute)
+	require.NoError(t, err)
+	owner := ManagedConsensusOwner{UserID: 3, TokenID: 7, EndpointFamily: "responses"}
+	previousDeriver, err := NewManagedConsensusKeyDeriver([]byte(strings.Repeat("p", 32)), "v1")
+	require.NoError(t, err)
+	activeDeriver, err := NewManagedConsensusKeyDeriver([]byte(strings.Repeat("a", 32)), "v2")
+	require.NoError(t, err)
+	previousKey, err := previousDeriver.DeriveConversationStorageKey(owner, "rotating-context")
+	require.NoError(t, err)
+	activeKey, err := activeDeriver.DeriveConversationStorageKey(owner, "rotating-context")
+	require.NoError(t, err)
+	lease, err := repository.AcquireConsensusLease(context.Background(), previousKey, "rotation-holder", time.Minute)
+	require.NoError(t, err)
+	_, err = repository.CompareAndSwapConsensus(
+		context.Background(),
+		previousKey,
+		0,
+		lease,
+		managedStoreTestEnvelope(ManagedEncryptionPurposeConsensusState, 1),
+		2*time.Minute,
+	)
+	require.NoError(t, err)
+	activePayload := managedStoreTestEnvelope(ManagedEncryptionPurposeConsensusState, 2)
+	activePayload.KeyVersion = "v2"
+	competingActiveLease, err := repository.AcquireConsensusLease(context.Background(), activeKey, "competing-active-holder", time.Minute)
+	require.NoError(t, err)
+	_, err = repository.CompareAndSwapMigrateConsensus(
+		context.Background(), previousKey, activeKey, 1, lease, activePayload, 2*time.Minute,
+	)
+	require.ErrorIs(t, err, ErrManagedConsensusKeyConflict)
+	_, err = repository.LoadConsensus(context.Background(), previousKey)
+	require.NoError(t, err)
+	require.NoError(t, repository.ReleaseConsensusLease(context.Background(), competingActiveLease))
+
+	record, err := repository.CompareAndSwapMigrateConsensus(
+		context.Background(),
+		previousKey,
+		activeKey,
+		1,
+		lease,
+		activePayload,
+		2*time.Minute,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), record.Revision)
+	_, err = repository.LoadConsensus(context.Background(), previousKey)
+	require.ErrorIs(t, err, ErrManagedConsensusNotFound)
+	loaded, err := repository.LoadConsensus(context.Background(), activeKey)
+	require.NoError(t, err)
+	assert.Equal(t, activePayload, loaded.Payload)
+	activeLease, err := repository.AcquireConsensusLease(context.Background(), activeKey, "active-holder", time.Minute)
+	require.NoError(t, err)
+	assert.Greater(t, activeLease.FencingToken, lease.FencingToken)
+}
+
 func TestRedisManagedConsensusRepositoryProviderBindingIsEncryptedConflictSafeAndExpiring(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
