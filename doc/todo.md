@@ -85,18 +85,18 @@
 - [x] 完成 `ContextConsensus` 阶段 B-2c2c：冻结完整候选集合，接入严格 tokenizer/上下文上限适配器，并完成单次压缩编排、请求正文与 DTO 原子提交、逐候选终检及主预扣前失败关闭；未支持的最终协议、模型和请求状态继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-b2c2c-implementation-2026-07-28.md`。
 - [x] 修复全包 `go test -race` 已暴露的既有竞态：收紧流扫描生命周期、消除任务轮询并发日志状态竞争，并隔离 Gin 全局模式与异步任务对象测试读写；同类 AWS、MiniMax 测试一并修复，见 `doc/auto-smart-routing-race-fixes-implementation-2026-07-28.md`。
 - [x] 审计并迁移旧渠道输出上限字段：Baidu、Cloudflare、Cohere、Ollama、Xunfei 与 AWS Nova 统一保留字段缺失、显式 `0` 和新旧字段优先级；其余渠道按语义完成核查，见 `doc/auto-smart-routing-output-limit-pointer-migration-2026-07-28.md`。
-- [ ] 完成 `ContextConsensus` 阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL、事务提交屏障和 provider state 绑定闭环。
+- [x] 完成 `ContextConsensus` 阶段 C：Redis 加密托管共识、revision/CAS、lease、TTL、事务提交屏障和 provider state 绑定闭环。
   - [x] 完成阶段 C-1：owner/HMAC 隔离、AES-256-GCM、真实 Redis Lua 仓储、revision CAS、lease/fencing、TTL、provider binding 记录契约、网关头解析及失败关闭；未增加管理员接口或页面，见 `doc/auto-smart-routing-context-consensus-stage-c1-implementation-2026-07-28.md`。
   - [x] 完成阶段 C-2：在渠道选择前加载并安全注入托管摘要，接入 lease 续租、非流式响应缓冲、显式结算结果和 commit-before-write revision 提交屏障。
     - [x] 完成阶段 C-2a：实现托管会话 acquire/load/decrypt/renew/commit 状态机、四协议 user-level 安全摘要注入和有界非流式响应缓冲；尚未接入请求生命周期，门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2a-implementation-2026-07-28.md`。
     - [x] 完成阶段 C-2b：冻结 managed 增量 current turn 契约，在渠道选择前接入会话加载、安全摘要注入和 lease 续租，并建立主调用规范化输出、显式结算及非流式缓冲执行边界；门禁继续返回 503，见 `doc/auto-smart-routing-context-consensus-stage-c2b-implementation-2026-07-29.md`。
     - [x] 完成阶段 C-2c：生成下一 revision L2/L3，接入固定 2 MiB 缓冲、同请求 CAS 恢复、commit-before-write 及故障矩阵，并移除非流式 503 门禁，见 `doc/auto-smart-routing-context-consensus-stage-c2c-implementation-2026-07-29.md`。
-  - [ ] 完成阶段 C-3：冻结稳定客户端幂等键和结算后提交失败的跨请求恢复契约，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
+  - [x] 完成阶段 C-3：冻结稳定客户端幂等键和结算后提交失败的跨请求恢复契约，接入 adaptor 真实 provider state report、成功后登记、请求前绑定校验、精确凭据槽固定及 key rotation/Redis 故障矩阵。
     - [x] 完成阶段 C-3a：为托管会话 state 增加最多 4 个旧版本的 AEAD/HMAC 读取窗口，唯一定位 current/previous namespace，并在下一 revision CAS 时原子迁移到 active namespace；双 namespace 冲突失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3a-implementation-2026-07-29.md`。
     - [x] 完成阶段 C-3b：建立托管请求的持久化计费去重与跨请求提交恢复闭环；不得仅靠 Redis phase 推断扣费结果。
       - [x] 完成阶段 C-3b1：为主调用与摘要子调用增加数据库持久化计费 operation，原子处理 API Key 额度、用户/渠道统计、冻结价格结果及消费日志 outbox；支持 active/previous key 定位迁移和独立 SQL 日志库，ClickHouse 托管计费失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`。
       - [x] 完成阶段 C-3b2：增加稳定客户端幂等键、revision intent、`settled_pending_commit`/`committed` outcome 和已提交响应回放，闭合上游成功但客户端重试时的跨请求恢复，见 `doc/auto-smart-routing-context-consensus-stage-c3b2-implementation-2026-07-29.md`。
-    - [ ] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭。
+    - [x] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生非流式 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3c-implementation-2026-07-30.md`。
 - [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。

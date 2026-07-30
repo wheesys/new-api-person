@@ -26,6 +26,10 @@ type managedRevisionCommitter interface {
 	CommitWithRecovery(context.Context, contextconsensus.ManagedConsensusState, time.Duration) (contextconsensus.ManagedConsensusCommitResult, error)
 }
 
+type managedProviderStateRevisionCommitter interface {
+	CommitWithProviderStateRecovery(context.Context, contextconsensus.ManagedConsensusState, contextconsensus.ManagedProviderStateCommit, time.Duration) (contextconsensus.ManagedConsensusCommitResult, error)
+}
+
 func executeManagedContextAttempt(
 	c *gin.Context,
 	info *relaycommon.RelayInfo,
@@ -94,11 +98,31 @@ func executeManagedContextAttempt(
 			},
 			settle: relay.SettleTextRelayUsage,
 			beforeSettle: func(contextValue *gin.Context, relayInfo *relaycommon.RelayInfo, responseBuffer *managedResponseBuffer, output contextconsensus.ManagedAssistantOutput) error {
+				var providerStateCommit *contextconsensus.ManagedProviderStateCommit
+				if attempt != nil && managedRequest.Protocol == types.RelayFormatOpenAIResponses && relayInfo.ChannelType == constant.ChannelTypeOpenAI {
+					body, bodyErr := responseBuffer.Body()
+					if bodyErr != nil {
+						return bodyErr
+					}
+					report, reportErr := attempt.ExtractManagedProviderStateReport(responseBuffer.Status(), body)
+					if reportErr != nil {
+						return reportErr
+					}
+					preparedCommit, prepareErr := session.PrepareProviderStateCommitForOwner(contextValue.Request.Context(), managedRequest.Owner, report, contextconsensus.ManagedProviderFinalTarget{
+						RelayFormat: relayInfo.GetFinalRequestRelayFormat(), ChannelID: relayInfo.ChannelId, ChannelType: relayInfo.ChannelType,
+						OriginModel: relayInfo.OriginModelName, UpstreamModel: relayInfo.FinalRequestModel, MultiKeyIndex: relayInfo.ChannelMultiKeyIndex,
+						ChannelIsMultiKey: relayInfo.ChannelIsMultiKey, Credential: relayInfo.ApiKey,
+					}, stateTTL, time.Now())
+					if prepareErr != nil {
+						return prepareErr
+					}
+					providerStateCommit = &preparedCommit
+				}
 				evidence = contextconsensus.ManagedRevisionEvidence{
 					Protocol: managedRequest.Protocol, PreviousState: previousState,
 					IncrementalSourceDigest: managedRequest.IncrementalSourceDigest,
 					CurrentUserText:         managedRequest.CurrentUserText, AssistantOutput: output,
-					PolicyVersion: policy.PolicyVersion,
+					PolicyVersion: policy.PolicyVersion, ProviderStateCommit: providerStateCommit,
 				}
 				var buildErr error
 				plan, buildErr = contextconsensus.BuildManagedRevisionPlan(evidence)
@@ -226,7 +250,16 @@ func commitAndFlushManagedRevision(
 	if err != nil {
 		return managedExecutionError(err)
 	}
-	if _, err := committer.CommitWithRecovery(c.Request.Context(), nextState, stateTTL); err != nil {
+	if plan.ProviderStateCommit != nil {
+		providerCommitter, ok := committer.(managedProviderStateRevisionCommitter)
+		if !ok {
+			return managedExecutionError(fmt.Errorf("managed provider state commit barrier is unavailable"))
+		}
+		_, err = providerCommitter.CommitWithProviderStateRecovery(c.Request.Context(), nextState, *plan.ProviderStateCommit, stateTTL)
+	} else {
+		_, err = committer.CommitWithRecovery(c.Request.Context(), nextState, stateTTL)
+	}
+	if err != nil {
 		return managedCommitAPIError(err)
 	}
 	if len(outcomes) > 0 && outcomes[0] != nil {

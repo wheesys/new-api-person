@@ -34,6 +34,9 @@ type ModelRequest struct {
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
+		var managedProviderKey string
+		var managedProviderKeyIndex int
+		managedProviderPinned := false
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		if err := captureContextConsensusPolicy(c); err != nil {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, err.Error(), types.ErrorCodeInvalidRequest)
@@ -76,44 +79,64 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		providerResolution, providerBound := common.GetContextKeyType[*contextconsensus.ManagedProviderStateResolution](c, constant.ContextKeyManagedProviderState)
+		if providerBound {
+			modelRequest.Model = providerResolution.Target().OriginModel
+		}
+		if !ok || providerBound {
+			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+			if modelLimitEnable {
+				value, found := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+				if !found {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+					return
+				}
+				tokenModelLimit, valid := value.(map[string]bool)
+				if !valid {
+					tokenModelLimit = map[string]bool{}
+				}
+				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model)
+				if _, allowed := tokenModelLimit[matchName]; !allowed {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+					return
+				}
+			}
+		}
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
 				return
 			}
-			channel, err = model.GetChannelById(id, true)
-			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
-				return
-			}
-			if channel.Status != common.ChannelStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-				return
+			if providerBound {
+				if id != providerResolution.Target().ChannelID {
+					abortWithOpenAiMessage(c, http.StatusConflict, "managed context provider state target is unavailable", types.ErrorCodeInvalidRequest)
+					return
+				}
+				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				var selectedGroup string
+				channel, selectedGroup, managedProviderKey, managedProviderKeyIndex, err = selectManagedProviderBoundChannel(c, providerResolution, usingGroup)
+				if err != nil {
+					abortWithOpenAiMessage(c, http.StatusConflict, "managed context provider state target is unavailable", types.ErrorCodeInvalidRequest)
+					return
+				}
+				managedProviderPinned = true
+				if usingGroup == "auto" {
+					common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
+				}
+			} else {
+				channel, err = model.GetChannelById(id, true)
+				if err != nil {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+					return
+				}
+				if channel.Status != common.ChannelStatusEnabled {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+					return
+				}
 			}
 		} else {
 			// Select a channel for the user
-			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model) // match gpts & thinking-*
-				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-					return
-				}
-			}
-
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
@@ -139,16 +162,31 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if selection, routed, routeErr := resolveSmartRoutingSelection(c, modelRequest, usingGroup); routed {
-					if routeErr != nil {
-						abortSmartRoutingError(c, usingGroup, modelRequest.Model, routeErr)
+				if providerBound {
+					var boundErr error
+					channel, selectGroup, managedProviderKey, managedProviderKeyIndex, boundErr = selectManagedProviderBoundChannel(c, providerResolution, usingGroup)
+					if boundErr != nil {
+						abortWithOpenAiMessage(c, http.StatusConflict, "managed context provider state target is unavailable", types.ErrorCodeInvalidRequest)
 						return
 					}
-					modelRequest.Model = selection.modelName
-					channel = selection.channel
-					selectGroup = selection.group
+					managedProviderPinned = true
 					if usingGroup == "auto" {
 						common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
+					}
+				}
+
+				if channel == nil {
+					if selection, routed, routeErr := resolveSmartRoutingSelection(c, modelRequest, usingGroup); routed {
+						if routeErr != nil {
+							abortSmartRoutingError(c, usingGroup, modelRequest.Model, routeErr)
+							return
+						}
+						modelRequest.Model = selection.modelName
+						channel = selection.channel
+						selectGroup = selection.group
+						if usingGroup == "auto" {
+							common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
+						}
 					}
 				}
 
@@ -229,12 +267,70 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if managedProviderPinned {
+			if setupError := SetupContextForSelectedChannelSnapshot(c, channel, modelRequest.Model, managedProviderKey, managedProviderKeyIndex); setupError != nil {
+				abortWithOpenAiMessage(c, http.StatusConflict, "managed context provider credential is unavailable", types.ErrorCodeInvalidRequest)
+				return
+			}
+		} else {
+			SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func selectManagedProviderBoundChannel(c *gin.Context, resolution *contextconsensus.ManagedProviderStateResolution, usingGroup string) (*model.Channel, string, string, int, error) {
+	if resolution == nil {
+		return nil, "", "", 0, fmt.Errorf("managed provider state resolution is unavailable")
+	}
+	target := resolution.Target()
+	if target.RelayFormat != types.RelayFormatOpenAIResponses || target.ChannelType != constant.ChannelTypeOpenAI {
+		return nil, "", "", 0, fmt.Errorf("managed provider state target is unsupported")
+	}
+	channel, err := model.GetChannelById(target.ChannelID, true)
+	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || channel.Type != target.ChannelType ||
+		channel.ChannelInfo.IsMultiKey != target.ChannelIsMultiKey || !channelSupportsRequestPath(channel, c.Request.URL.Path, target.OriginModel) {
+		return nil, "", "", 0, fmt.Errorf("managed provider state channel is unavailable")
+	}
+	selectedGroup := usingGroup
+	if usingGroup == "auto" {
+		selectedGroup = ""
+		for _, group := range service.GetUserAutoGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup)) {
+			if model.IsChannelEnabledForGroupModel(group, target.OriginModel, channel.Id) {
+				selectedGroup = group
+				break
+			}
+		}
+	} else if !model.IsChannelEnabledForGroupModel(usingGroup, target.OriginModel, channel.Id) {
+		selectedGroup = ""
+	}
+	if selectedGroup == "" {
+		return nil, "", "", 0, fmt.Errorf("managed provider state target is not authorized for the active group")
+	}
+	keyIndex := target.MultiKeyIndex
+	var credential string
+	if target.ChannelIsMultiKey {
+		keys := channel.GetKeys()
+		if keyIndex < 0 || keyIndex >= len(keys) || channel.ChannelInfo.MultiKeyStatusList[keyIndex] != 0 && channel.ChannelInfo.MultiKeyStatusList[keyIndex] != common.ChannelStatusEnabled {
+			return nil, "", "", 0, fmt.Errorf("managed provider state credential slot is unavailable")
+		}
+		credential = keys[keyIndex]
+	} else {
+		if keyIndex != 0 {
+			return nil, "", "", 0, fmt.Errorf("managed provider state single-key slot is invalid")
+		}
+		credential = channel.Key
+	}
+	if err := resolution.ValidateFinalTarget(contextconsensus.ManagedProviderFinalTarget{
+		RelayFormat: types.RelayFormatOpenAIResponses, ChannelID: channel.Id, ChannelType: channel.Type,
+		OriginModel: target.OriginModel, UpstreamModel: target.UpstreamModel, MultiKeyIndex: keyIndex, ChannelIsMultiKey: channel.ChannelInfo.IsMultiKey, Credential: credential,
+	}); err != nil {
+		return nil, "", "", 0, err
+	}
+	return channel, selectedGroup, credential, keyIndex, nil
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.

@@ -193,6 +193,56 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.SetEstimatePromptTokens(tokens)
 	}
 
+	if managedContext && relayFormat == types.RelayFormatOpenAIResponses && preparedContextConsensusAttempt == nil &&
+		common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeOpenAI {
+		preparedContextConsensusChannel, err = model.GetChannelById(relayInfo.ChannelId, true)
+		if err != nil || preparedContextConsensusChannel == nil {
+			newAPIError = managedExecutionError(fmt.Errorf("managed provider state channel snapshot is unavailable"))
+			return
+		}
+		preparedContextConsensusAttempt, newAPIError = relay.PrepareAuthoritativeTextRelayAttempt(c, relayInfo)
+		if newAPIError != nil {
+			return
+		}
+		defer preparedContextConsensusAttempt.Close()
+	}
+
+	providerResolution, providerBound := common.GetContextKeyType[*contextconsensus.ManagedProviderStateResolution](c, constant.ContextKeyManagedProviderState)
+	if managedContext && relayFormat == types.RelayFormatOpenAIResponses && relayInfo.ChannelType == constant.ChannelTypeOpenAI {
+		if err := preparedContextConsensusAttempt.ValidateManagedProviderStateRequest(providerResolution); err != nil {
+			newAPIError = managedExecutionError(err)
+			return
+		}
+	}
+
+	if providerBound {
+		if relayFormat != types.RelayFormatOpenAIResponses || relayInfo.IsStream {
+			newAPIError = managedExecutionError(fmt.Errorf("managed provider state requires native non-streaming OpenAI Responses"))
+			return
+		}
+		if preparedContextConsensusAttempt == nil {
+			preparedContextConsensusAttempt, newAPIError = relay.PrepareAuthoritativeTextRelayAttempt(c, relayInfo)
+			if newAPIError != nil {
+				return
+			}
+			defer preparedContextConsensusAttempt.Close()
+		}
+		authoritativeTarget, sealed := preparedContextConsensusAttempt.AuthoritativeTarget()
+		if !sealed || authoritativeTarget.Protocol != types.RelayFormatOpenAIResponses || authoritativeTarget.Model != providerResolution.Target().UpstreamModel ||
+			relayInfo.ChannelType != constant.ChannelTypeOpenAI || relayInfo.ChannelId != providerResolution.Target().ChannelID {
+			newAPIError = managedExecutionError(fmt.Errorf("managed provider state authoritative target does not match its binding"))
+			return
+		}
+		if err := providerResolution.ValidateFinalTarget(contextconsensus.ManagedProviderFinalTarget{
+			RelayFormat: relayInfo.GetFinalRequestRelayFormat(), ChannelID: relayInfo.ChannelId, ChannelType: relayInfo.ChannelType,
+			OriginModel: relayInfo.OriginModelName, UpstreamModel: relayInfo.FinalRequestModel, MultiKeyIndex: relayInfo.ChannelMultiKeyIndex,
+			ChannelIsMultiKey: relayInfo.ChannelIsMultiKey, Credential: relayInfo.ApiKey,
+		}); err != nil {
+			newAPIError = managedExecutionError(err)
+			return
+		}
+	}
+
 	if managedContext && relayInfo.BillingRequestInput == nil {
 		billingInput, billingInputErr := helper.BuildBillingExprRequestInputFromRequest(request, relayInfo.RequestHeaders)
 		if billingInputErr != nil {

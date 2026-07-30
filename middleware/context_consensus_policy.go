@@ -72,6 +72,7 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 			IdempotencyKey:    idempotencyKey,
 			ExpectedRevision:  expectedRevision,
 		})
+		common.SetContextKey(c, constant.ContextKeySuppressDebugLog, true)
 	} else if contextID != "" || revisionValue != "" || len(idempotencyValues) != 0 {
 		return fmt.Errorf("context ID, revision, and idempotency key require managed context mode")
 	}
@@ -162,6 +163,8 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 	owner := contextconsensus.ManagedConsensusOwner{
 		UserID: common.GetContextKeyInt(c, constant.ContextKeyUserId), TokenID: common.GetContextKeyInt(c, constant.ContextKeyTokenId), EndpointFamily: endpointFamily,
 	}
+	managedRequest.Owner = owner
+	common.SetContextKey(c, constant.ContextKeyManagedContextRequest, managedRequest)
 	outcome, err := contextconsensus.ReserveManagedOutcome(c.Request.Context(), runtime, contextconsensus.ManagedOutcomeRequest{
 		Owner: owner, ExternalContextID: managedRequest.ExternalContextID, IdempotencyKey: managedRequest.IdempotencyKey,
 		ExpectedRevision: managedRequest.ExpectedRevision, Protocol: protocol,
@@ -202,7 +205,13 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 		if nextStateErr != nil {
 			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context pending outcome is unavailable")
 		}
-		committed, currentAtExpected, confirmErr := runtime.ConfirmManagedOutcomeCommit(c.Request.Context(), owner, managedRequest.ExternalContextID, managedRequest.ExpectedRevision, nextState)
+		snapshot, snapshotErr := outcome.SummaryExecution(c.Request.Context())
+		if snapshotErr != nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context pending summary snapshot is unavailable")
+		}
+		committed, currentAtExpected, confirmErr := runtime.ConfirmManagedOutcomeCommit(
+			c.Request.Context(), owner, managedRequest.ExternalContextID, managedRequest.ExpectedRevision, nextState, snapshot.Plan.ProviderStateCommit,
+		)
 		if confirmErr != nil {
 			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context commit outcome is unavailable")
 		}
@@ -256,8 +265,22 @@ func prepareManagedConsensusRequest(c *gin.Context) (*contextconsensus.ManagedCo
 	if err != nil {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context state is unavailable")
 	}
+	providerStateReference, err := contextconsensus.ExtractManagedProviderStateReference(protocol, body)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
 	if state != nil && state.ProviderBinding != nil {
-		return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context provider state is unavailable")
+		if providerStateReference == "" {
+			return nil, http.StatusBadRequest, fmt.Errorf("managed request is missing the bound provider state reference")
+		}
+		resolution, resolveErr := session.ResolveBoundProviderState(c.Request.Context(), owner, providerStateReference, *state)
+		if resolveErr != nil {
+			if errors.Is(resolveErr, contextconsensus.ErrProviderStateBindingNotFound) || errors.Is(resolveErr, contextconsensus.ErrProviderStateBindingConflict) || errors.Is(resolveErr, contextconsensus.ErrManagedConsensusKeyConflict) {
+				return nil, http.StatusConflict, fmt.Errorf("managed context provider state binding is invalid")
+			}
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("managed context provider state is unavailable")
+		}
+		common.SetContextKey(c, constant.ContextKeyManagedProviderState, resolution)
 	}
 	rewrittenBody, err := contextconsensus.PrepareManagedIncrementalRequest(protocol, body, state)
 	if err != nil {

@@ -14,6 +14,7 @@ type CompactionPolicy struct {
 // from request headers. ExternalContextID must remain request-local and must not
 // be persisted or written to logs.
 type ManagedContextRequest struct {
+	Owner                   ManagedConsensusOwner
 	ExternalContextID       string
 	IdempotencyKey          string
 	ExpectedRevision        uint64

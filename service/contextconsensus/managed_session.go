@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sync"
 	"time"
 
@@ -301,6 +302,14 @@ func (session *ManagedConsensusSession) Commit(ctx context.Context, state Manage
 // fenced lease is still held. It performs at most one CAS retry and never
 // treats a different payload at the next revision as this request's commit.
 func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, state ManagedConsensusState, ttl time.Duration) (ManagedConsensusCommitResult, error) {
+	return session.commitWithRecovery(ctx, state, nil, ttl)
+}
+
+func (session *ManagedConsensusSession) CommitWithProviderStateRecovery(ctx context.Context, state ManagedConsensusState, providerCommit ManagedProviderStateCommit, ttl time.Duration) (ManagedConsensusCommitResult, error) {
+	return session.commitWithRecovery(ctx, state, &providerCommit, ttl)
+}
+
+func (session *ManagedConsensusSession) commitWithRecovery(ctx context.Context, state ManagedConsensusState, providerCommit *ManagedProviderStateCommit, ttl time.Duration) (ManagedConsensusCommitResult, error) {
 	if session == nil {
 		return ManagedConsensusCommitResult{}, fmt.Errorf("managed consensus session is required")
 	}
@@ -315,6 +324,17 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	if err := state.Validate(); err != nil {
 		return ManagedConsensusCommitResult{}, err
 	}
+	if (state.ProviderState == nil) != (providerCommit == nil) {
+		return ManagedConsensusCommitResult{}, fmt.Errorf("managed provider state commit does not match next consensus state")
+	}
+	if providerCommit != nil {
+		if err := providerCommit.Validate(time.Now()); err != nil {
+			return ManagedConsensusCommitResult{}, err
+		}
+		if !reflect.DeepEqual(*state.ProviderState, providerCommit.Link()) || !reflect.DeepEqual(*state.ProviderBinding, providerCommit.Binding.Target) {
+			return ManagedConsensusCommitResult{}, fmt.Errorf("managed provider state commit does not match next consensus state")
+		}
+	}
 	commitStorageKey := session.commitStorageKey()
 	payload, err := session.runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
 		RepositoryKey: commitStorageKey.RepositoryKey,
@@ -326,7 +346,10 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	}
 
 	commit := func(commitContext context.Context) (ManagedConsensusRecord, error) {
-		return session.compareAndSwap(commitContext, payload, ttl)
+		if providerCommit == nil {
+			return session.compareAndSwap(commitContext, payload, ttl)
+		}
+		return session.compareAndSwapWithProviderState(commitContext, payload, *providerCommit, ttl)
 	}
 	record, commitErr := commit(ctx)
 	if commitErr == nil {
@@ -339,7 +362,7 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 
 	recoveryContext, cancelRecovery := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancelRecovery()
-	recovered, currentAtExpected, resolvedRecord, resolveErr := session.resolveCommitOutcome(recoveryContext, state)
+	recovered, currentAtExpected, resolvedRecord, resolveErr := session.resolveCommitOutcome(recoveryContext, state, providerCommit)
 	if recovered {
 		session.finishCommit(ctx, state)
 		return ManagedConsensusCommitResult{Record: resolvedRecord, Recovered: true}, nil
@@ -367,7 +390,7 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	if managedCommitErrorIsDefinitive(retryErr) {
 		return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusCommitFailed, retryErr)
 	}
-	recovered, currentAtExpected, resolvedRecord, resolveErr = session.resolveCommitOutcome(recoveryContext, state)
+	recovered, currentAtExpected, resolvedRecord, resolveErr = session.resolveCommitOutcome(recoveryContext, state, providerCommit)
 	if recovered {
 		session.finishCommit(ctx, state)
 		return ManagedConsensusCommitResult{Record: resolvedRecord, Recovered: true}, nil
@@ -378,7 +401,7 @@ func (session *ManagedConsensusSession) CommitWithRecovery(ctx context.Context, 
 	return ManagedConsensusCommitResult{}, fmt.Errorf("%w: %v", ErrManagedConsensusOutcomeUnknown, errors.Join(retryErr, resolveErr))
 }
 
-func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context, candidate ManagedConsensusState) (bool, bool, ManagedConsensusRecord, error) {
+func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context, candidate ManagedConsensusState, providerCommit *ManagedProviderStateCommit) (bool, bool, ManagedConsensusRecord, error) {
 	commitStorageKey := session.commitStorageKey()
 	record, err := session.runtime.Repository.LoadConsensus(ctx, commitStorageKey)
 	if session.storageKey.RepositoryKey != commitStorageKey.RepositoryKey && errors.Is(err, ErrManagedConsensusNotFound) {
@@ -418,6 +441,23 @@ func (session *ManagedConsensusSession) resolveCommitOutcome(ctx context.Context
 	if !bytes.Equal(storedJSON, candidateJSON) {
 		return false, false, record, fmt.Errorf("managed consensus next revision payload differs from candidate")
 	}
+	if providerCommit != nil {
+		providerRecord, err := session.runtime.Repository.LoadProviderStateBinding(ctx, providerCommit.StorageKey)
+		if err != nil {
+			return false, false, record, err
+		}
+		storedProviderJSON, err := common.Marshal(providerRecord.Payload)
+		if err != nil {
+			return false, false, record, err
+		}
+		candidateProviderJSON, err := common.Marshal(providerCommit.Payload)
+		if err != nil {
+			return false, false, record, err
+		}
+		if providerRecord.BindingDigest != providerCommit.BindingDigest || !bytes.Equal(storedProviderJSON, candidateProviderJSON) {
+			return false, false, record, fmt.Errorf("managed provider state binding differs from candidate")
+		}
+	}
 	return true, false, record, nil
 }
 
@@ -448,8 +488,35 @@ func (session *ManagedConsensusSession) compareAndSwap(ctx context.Context, payl
 	)
 }
 
+func (session *ManagedConsensusSession) compareAndSwapWithProviderState(ctx context.Context, payload ManagedEncryptedEnvelope, providerCommit ManagedProviderStateCommit, ttl time.Duration) (ManagedConsensusRecord, error) {
+	providerTTL := time.Until(time.Unix(providerCommit.ExpiresAtUnix, 0))
+	if providerTTL <= 0 {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed provider state commit expired")
+	}
+	if ttl > providerTTL {
+		ttl = providerTTL
+	}
+	commitStorageKey := session.commitStorageKey()
+	if commitStorageKey.RepositoryKey == session.storageKey.RepositoryKey {
+		repository, ok := session.runtime.Repository.(ManagedConsensusProviderStateRepository)
+		if !ok {
+			return ManagedConsensusRecord{}, fmt.Errorf("managed consensus repository does not support atomic provider state")
+		}
+		record, _, err := repository.CompareAndSwapConsensusWithProviderState(ctx, session.storageKey, session.expectedRevision, session.lease, payload,
+			providerCommit.StorageKey, providerCommit.ConflictStorageKeys, providerCommit.BindingDigest, providerCommit.Payload, ttl, providerTTL)
+		return record, err
+	}
+	repository, ok := session.runtime.Repository.(ManagedConsensusProviderStateKeyRotationRepository)
+	if !ok {
+		return ManagedConsensusRecord{}, fmt.Errorf("managed consensus repository does not support atomic provider-state key rotation")
+	}
+	record, _, err := repository.CompareAndSwapMigrateConsensusWithProviderState(ctx, session.storageKey, commitStorageKey, session.expectedRevision, session.lease, payload,
+		providerCommit.StorageKey, providerCommit.ConflictStorageKeys, providerCommit.BindingDigest, providerCommit.Payload, ttl, providerTTL)
+	return record, err
+}
+
 func managedCommitErrorIsDefinitive(err error) bool {
-	return errors.Is(err, ErrManagedConsensusRevisionConflict) || errors.Is(err, ErrManagedConsensusLeaseInvalid) || errors.Is(err, ErrManagedConsensusKeyConflict)
+	return errors.Is(err, ErrManagedConsensusRevisionConflict) || errors.Is(err, ErrManagedConsensusLeaseInvalid) || errors.Is(err, ErrManagedConsensusKeyConflict) || errors.Is(err, ErrProviderStateBindingConflict)
 }
 
 func (session *ManagedConsensusSession) finishCommit(ctx context.Context, state ManagedConsensusState) {

@@ -31,6 +31,7 @@ const (
 	ContextKeyManagedContextLease    ContextKey = "managed_context_lease"
 	ContextKeyManagedContextOutcome  ContextKey = "managed_context_outcome"
 	ContextKeyManagedContextReplay   ContextKey = "managed_context_replay"
+	ContextKeyManagedProviderState   ContextKey = "managed_provider_state"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"

@@ -9,6 +9,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 
 	"github.com/gin-gonic/gin"
 )
@@ -64,6 +65,10 @@ type TextRelayPreparationCapabilities struct {
 type AuthoritativeTextRelayAdaptor interface {
 	TextRelayPreparationCapabilities(input TextRelayTargetInput) TextRelayPreparationCapabilities
 	ResolveTextRelayTarget(input TextRelayTargetInput) (TextRelayTarget, error)
+}
+
+type ManagedProviderStateReportingAdaptor interface {
+	ExtractManagedProviderStateReport(info *relaycommon.RelayInfo, httpStatus int, responseBody []byte) (contextconsensus.ManagedProviderStateReport, error)
 }
 
 type TaskAdaptor interface {

@@ -29,6 +29,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 
@@ -38,6 +39,16 @@ import (
 type Adaptor struct {
 	ChannelType    int
 	ResponseFormat string
+}
+
+func (a *Adaptor) ExtractManagedProviderStateReport(info *relaycommon.RelayInfo, httpStatus int, responseBody []byte) (contextconsensus.ManagedProviderStateReport, error) {
+	if info == nil || info.IsStream || info.RelayMode != relayconstant.RelayModeResponses || info.RelayFormat != types.RelayFormatOpenAIResponses ||
+		info.GetFinalRequestRelayFormat() != types.RelayFormatOpenAIResponses || info.ChannelType != constant.ChannelTypeOpenAI || len(info.RequestConversionChain) != 1 {
+		return contextconsensus.ManagedProviderStateReport{}, fmt.Errorf("managed provider state report is unsupported for this OpenAI relay attempt")
+	}
+	return contextconsensus.ExtractManagedProviderStateReport(contextconsensus.ExtractManagedProviderStateReportRequest{
+		SourceProtocol: info.RelayFormat, FinalProtocol: info.GetFinalRequestRelayFormat(), HTTPStatus: httpStatus, ResponseBody: responseBody,
+	})
 }
 
 func (a *Adaptor) TextRelayPreparationCapabilities(input channel.TextRelayTargetInput) channel.TextRelayPreparationCapabilities {

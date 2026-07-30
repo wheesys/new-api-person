@@ -42,6 +42,7 @@ type ManagedRevisionEvidence struct {
 	CurrentUserText         string
 	AssistantOutput         ManagedAssistantOutput
 	PolicyVersion           string
+	ProviderStateCommit     *ManagedProviderStateCommit
 }
 
 type ManagedRevisionPlan struct {
@@ -51,6 +52,7 @@ type ManagedRevisionPlan struct {
 	UserRange             SummarySourceRange
 	AssistantRange        SummarySourceRange
 	PreviousSummary       *ConsensusSummary
+	ProviderStateCommit   *ManagedProviderStateCommit
 	previousCreatedAtUnix int64
 	hasCurrentUserText    bool
 }
@@ -72,6 +74,14 @@ func BuildManagedRevisionPlan(evidence ManagedRevisionEvidence) (ManagedRevision
 	}
 	if strings.TrimSpace(evidence.AssistantOutput.Text) == "" || strings.TrimSpace(evidence.PolicyVersion) == "" {
 		return ManagedRevisionPlan{}, fmt.Errorf("managed revision evidence and policy are required")
+	}
+	if evidence.ProviderStateCommit != nil {
+		if evidence.Protocol != types.RelayFormatOpenAIResponses {
+			return ManagedRevisionPlan{}, fmt.Errorf("managed provider state requires native OpenAI Responses")
+		}
+		if err := evidence.ProviderStateCommit.Validate(time.Now()); err != nil {
+			return ManagedRevisionPlan{}, err
+		}
 	}
 
 	lineage := ManagedConsensusLineage{
@@ -133,13 +143,14 @@ func BuildManagedRevisionPlan(evidence ManagedRevisionEvidence) (ManagedRevision
 		return ManagedRevisionPlan{}, fmt.Errorf("encode managed revision lineage: %w", err)
 	}
 	return ManagedRevisionPlan{
-		Lineage:            lineage,
-		SourceDigest:       digestBytes(append([]byte("new-api:managed-consensus-lineage:v1\x00"), encodedLineage...)),
-		SourceRanges:       sourceRanges,
-		UserRange:          userRange,
-		AssistantRange:     assistantRange,
-		PreviousSummary:    previousSummary,
-		hasCurrentUserText: strings.TrimSpace(evidence.CurrentUserText) != "",
+		Lineage:             lineage,
+		SourceDigest:        digestBytes(append([]byte("new-api:managed-consensus-lineage:v1\x00"), encodedLineage...)),
+		SourceRanges:        sourceRanges,
+		UserRange:           userRange,
+		AssistantRange:      assistantRange,
+		PreviousSummary:     previousSummary,
+		ProviderStateCommit: evidence.ProviderStateCommit,
+		hasCurrentUserText:  strings.TrimSpace(evidence.CurrentUserText) != "",
 		previousCreatedAtUnix: func() int64 {
 			if evidence.PreviousState == nil {
 				return 0
@@ -256,6 +267,12 @@ func BuildNextManagedConsensusState(plan ManagedRevisionPlan, summary ConsensusS
 		Version: ManagedConsensusStateVersion, Revision: nextRevision, Mode: "managed_consensus",
 		TaskConsensus: validatedSummary, SourceDigest: plan.SourceDigest, PolicyVersion: plan.Lineage.PolicyVersion,
 		Lineage: &plan.Lineage, CreatedAtUnix: createdAt, UpdatedAtUnix: now.Unix(),
+	}
+	if plan.ProviderStateCommit != nil {
+		binding := plan.ProviderStateCommit.Binding.Target
+		link := plan.ProviderStateCommit.Link()
+		state.ProviderBinding = &binding
+		state.ProviderState = &link
 	}
 	if err := state.Validate(); err != nil {
 		return ManagedConsensusState{}, err

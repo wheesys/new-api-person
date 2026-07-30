@@ -22,6 +22,17 @@ func PrepareManagedIncrementalRequest(protocol types.RelayFormat, body []byte, s
 	if err := ValidateManagedIncrementalRequest(protocol, body); err != nil {
 		return nil, err
 	}
+	providerStateReference, err := ExtractManagedProviderStateReference(protocol, body)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil || state.ProviderState == nil {
+		if providerStateReference != "" {
+			return nil, fmt.Errorf("managed request has provider state without an authenticated binding")
+		}
+	} else if providerStateReference == "" {
+		return nil, fmt.Errorf("managed request is missing the bound provider state reference")
+	}
 	if state == nil {
 		return append([]byte(nil), body...), nil
 	}
@@ -145,9 +156,15 @@ func validateManagedResponsesIncrement(body []byte) error {
 	if err := common.Unmarshal(body, &request); err != nil {
 		return fmt.Errorf("decode managed Responses request: %w", err)
 	}
-	for _, field := range []string{"conversation", "previous_response_id", "context_management", "prompt"} {
+	for _, field := range []string{"conversation", "context_management", "prompt"} {
 		if managedRawPresent(request[field]) {
 			return fmt.Errorf("managed Responses request contains provider-owned field %q", field)
+		}
+	}
+	if managedRawPresent(request["previous_response_id"]) {
+		stateReference, err := managedRawString(request["previous_response_id"])
+		if err != nil || validateManagedOpenAIResponseID(stateReference) != nil {
+			return fmt.Errorf("managed Responses previous_response_id is invalid")
 		}
 	}
 	input := request["input"]
@@ -203,6 +220,73 @@ func validateManagedResponsesIncrement(body []byte) error {
 	default:
 		return fmt.Errorf("managed Responses request requires string or array input")
 	}
+}
+
+func ExtractManagedProviderStateReference(protocol types.RelayFormat, body []byte) (string, error) {
+	if protocol != types.RelayFormatOpenAIResponses {
+		return "", nil
+	}
+	var request map[string]json.RawMessage
+	if err := common.Unmarshal(body, &request); err != nil {
+		return "", fmt.Errorf("decode managed Responses request: %w", err)
+	}
+	if !managedRawPresent(request["previous_response_id"]) {
+		return "", nil
+	}
+	stateReference, err := managedRawString(request["previous_response_id"])
+	if err != nil || validateManagedOpenAIResponseID(stateReference) != nil {
+		return "", fmt.Errorf("managed Responses previous_response_id is invalid")
+	}
+	return stateReference, nil
+}
+
+// ValidateManagedResponsesProviderStateFields rechecks provider-owned fields
+// after channel parameter overrides have produced the final upstream body.
+// Unlike the initial incremental validator, it permits the injected consensus
+// message while continuing to reject opaque historical/provider state.
+func ValidateManagedResponsesProviderStateFields(body []byte) error {
+	var request map[string]json.RawMessage
+	if err := common.Unmarshal(body, &request); err != nil {
+		return fmt.Errorf("decode final managed Responses request: %w", err)
+	}
+	for _, field := range []string{"conversation", "context_management", "prompt"} {
+		if managedRawPresent(request[field]) {
+			return fmt.Errorf("final managed Responses request contains provider-owned field %q", field)
+		}
+	}
+	if common.GetJsonType(request["input"]) != "array" {
+		return nil
+	}
+	var items []map[string]json.RawMessage
+	if err := common.Unmarshal(request["input"], &items); err != nil {
+		return fmt.Errorf("decode final managed Responses input: %w", err)
+	}
+	for _, item := range items {
+		itemType, err := managedRawString(item["type"])
+		if err != nil {
+			return fmt.Errorf("final managed Responses input item type: %w", err)
+		}
+		if itemType != "" && itemType != "message" {
+			return fmt.Errorf("final managed Responses request contains provider-owned input type %q", itemType)
+		}
+		if common.GetJsonType(item["content"]) != "array" {
+			continue
+		}
+		var parts []map[string]json.RawMessage
+		if err := common.Unmarshal(item["content"], &parts); err != nil {
+			return fmt.Errorf("decode final managed Responses content: %w", err)
+		}
+		for _, part := range parts {
+			partType, err := managedRawString(part["type"])
+			if err != nil {
+				return fmt.Errorf("final managed Responses content type: %w", err)
+			}
+			if partType == "input_file" && managedRawPresent(part["file_id"]) {
+				return fmt.Errorf("final managed Responses request contains a provider-owned file ID")
+			}
+		}
+	}
+	return nil
 }
 
 func validateManagedResponsesUserContent(content json.RawMessage) error {

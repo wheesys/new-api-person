@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -161,6 +162,62 @@ func (attempt *PreparedTextRelayAttempt) AuthoritativeTarget() (channel.TextRela
 		return channel.TextRelayTarget{}, false
 	}
 	return *attempt.authoritativeTarget, true
+}
+
+// ValidateManagedProviderStateRequest verifies the exact frozen request that
+// will be sent upstream before a response ID can become managed provider state.
+func (attempt *PreparedTextRelayAttempt) ValidateManagedProviderStateRequest(resolution *contextconsensus.ManagedProviderStateResolution) error {
+	if attempt == nil || attempt.adaptor == nil || attempt.info == nil || attempt.preparedRequest == nil {
+		return fmt.Errorf("managed provider state request is unavailable")
+	}
+	if _, ok := attempt.adaptor.(channel.ManagedProviderStateReportingAdaptor); !ok {
+		return fmt.Errorf("text relay adaptor does not report managed provider state")
+	}
+	if attempt.info.IsStream || attempt.info.RelayFormat != types.RelayFormatOpenAIResponses ||
+		attempt.info.GetFinalRequestRelayFormat() != types.RelayFormatOpenAIResponses || attempt.info.ChannelType != constant.ChannelTypeOpenAI {
+		return fmt.Errorf("managed provider state requires native non-streaming OpenAI Responses")
+	}
+	for headerName := range relaycommon.GetEffectiveHeaderOverride(attempt.info) {
+		normalizedHeader := strings.ToLower(strings.TrimSpace(headerName))
+		if normalizedHeader == "authorization" || normalizedHeader == "api-key" || normalizedHeader == "x-api-key" {
+			return fmt.Errorf("managed provider state does not allow credential header overrides")
+		}
+	}
+	body, err := attempt.preparedRequest.Body()
+	if err != nil {
+		return err
+	}
+	var request dto.OpenAIResponsesRequest
+	if err := common.Unmarshal(body, &request); err != nil {
+		return fmt.Errorf("decode managed provider state request: %w", err)
+	}
+	if err := contextconsensus.ValidateManagedResponsesProviderStateFields(body); err != nil {
+		return err
+	}
+	if len(request.Store) > 0 {
+		var store bool
+		if err := common.Unmarshal(request.Store, &store); err != nil || !store {
+			return fmt.Errorf("managed provider state requires a storable native Responses request")
+		}
+	}
+	if resolution == nil {
+		if request.PreviousResponseID != "" {
+			return fmt.Errorf("managed provider state request has no authenticated binding")
+		}
+		return nil
+	}
+	return resolution.ValidateStateReference(request.PreviousResponseID)
+}
+
+func (attempt *PreparedTextRelayAttempt) ExtractManagedProviderStateReport(httpStatus int, responseBody []byte) (contextconsensus.ManagedProviderStateReport, error) {
+	if attempt == nil || attempt.adaptor == nil || attempt.info == nil {
+		return contextconsensus.ManagedProviderStateReport{}, fmt.Errorf("managed provider state reporting adaptor is unavailable")
+	}
+	reporter, ok := attempt.adaptor.(channel.ManagedProviderStateReportingAdaptor)
+	if !ok {
+		return contextconsensus.ManagedProviderStateReport{}, fmt.Errorf("text relay adaptor does not report managed provider state")
+	}
+	return reporter.ExtractManagedProviderStateReport(attempt.info, httpStatus, responseBody)
 }
 
 // Close is idempotent. For Chat-to-Responses it also restores the caller's

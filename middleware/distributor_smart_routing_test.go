@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,15 +15,94 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestDistributePinsManagedProviderStateForTokenSpecificChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+	database := setupDistributorSmartRoutingTestDB(t)
+	channel := model.Channel{
+		Id: 1701, Type: constant.ChannelTypeOpenAI, Key: "credential-zero\ncredential-one",
+		Status: common.ChannelStatusEnabled, Name: "managed-provider-channel", Models: "gpt-bound", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true},
+	}
+	require.NoError(t, database.Create(&channel).Error)
+	require.NoError(t, database.Create(&model.Ability{Group: "default", Model: "gpt-bound", ChannelId: channel.Id, Enabled: true}).Error)
+	model.InitChannelCache()
+
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	repository, err := contextconsensus.NewRedisManagedConsensusRepository(client, time.Hour)
+	require.NoError(t, err)
+	key := []byte(strings.Repeat("k", 32))
+	cipherValue, err := contextconsensus.NewManagedConsensusCipher(key, "v1")
+	require.NoError(t, err)
+	deriver, err := contextconsensus.NewManagedConsensusKeyDeriver(key, "v1")
+	require.NoError(t, err)
+	runtime := &contextconsensus.ManagedConsensusRuntime{Cipher: cipherValue, KeyDeriver: deriver, Repository: repository}
+	owner := contextconsensus.ManagedConsensusOwner{UserID: 7, TokenID: 9, EndpointFamily: "responses"}
+	report := contextconsensus.ManagedProviderStateReport{
+		Version: contextconsensus.ManagedProviderStateReportVersion, SourceProtocol: types.RelayFormatOpenAIResponses,
+		FinalProtocol: types.RelayFormatOpenAIResponses, RequestField: "previous_response_id",
+		ReasonCode: "responses_previous_response_id", StateReference: "resp_token_specific",
+	}
+	session, err := contextconsensus.BeginManagedConsensusSession(context.Background(), runtime, contextconsensus.BeginManagedConsensusSessionRequest{
+		Owner: owner, ExternalContextID: "token-specific-context", ExpectedRevision: 0,
+		HolderID: "token-specific-holder", LeaseTTL: time.Minute,
+	})
+	require.NoError(t, err)
+	providerCommit, err := session.PrepareProviderStateCommitForOwner(context.Background(), owner, report,
+		contextconsensus.ManagedProviderFinalTarget{
+			RelayFormat: types.RelayFormatOpenAIResponses, ChannelID: channel.Id, ChannelType: channel.Type,
+			OriginModel: "gpt-bound", UpstreamModel: "gpt-bound", MultiKeyIndex: 1,
+			ChannelIsMultiKey: true, Credential: "credential-one",
+		},
+		time.Hour, time.Now())
+	require.NoError(t, err)
+	_, err = repository.RegisterProviderStateBinding(
+		context.Background(), providerCommit.StorageKey, providerCommit.BindingDigest, providerCommit.Payload, time.Hour,
+	)
+	require.NoError(t, err)
+	require.NoError(t, session.Close(context.Background()))
+	resolution, err := contextconsensus.ResolveManagedProviderStateBinding(context.Background(), runtime, owner, report.StateReference)
+	require.NoError(t, err)
+
+	newRequestContext := func(tokenModels map[string]bool) *gin.Context {
+		requestContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+		requestContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"client-model"}`))
+		common.SetContextKey(requestContext, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(channel.Id))
+		common.SetContextKey(requestContext, constant.ContextKeyManagedProviderState, resolution)
+		common.SetContextKey(requestContext, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(requestContext, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(requestContext, constant.ContextKeyTokenModelLimitEnabled, true)
+		common.SetContextKey(requestContext, constant.ContextKeyTokenModelLimit, tokenModels)
+		return requestContext
+	}
+
+	forbiddenContext := newRequestContext(map[string]bool{"client-model": true})
+	Distribute()(forbiddenContext)
+	assert.True(t, forbiddenContext.IsAborted())
+	assert.Equal(t, http.StatusForbidden, forbiddenContext.Writer.Status())
+
+	allowedContext := newRequestContext(map[string]bool{"gpt-bound": true})
+	Distribute()(allowedContext)
+	assert.False(t, allowedContext.IsAborted())
+	assert.Equal(t, "credential-one", common.GetContextKeyString(allowedContext, constant.ContextKeyChannelKey))
+	assert.Equal(t, 1, common.GetContextKeyInt(allowedContext, constant.ContextKeyChannelMultiKeyIndex))
+}
 
 func setupDistributorSmartRoutingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()

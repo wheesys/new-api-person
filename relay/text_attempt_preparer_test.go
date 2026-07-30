@@ -271,6 +271,37 @@ func TestPrepareNativeTextProtocolsFreezesExactlyWhatExecuteSends(t *testing.T) 
 	}
 }
 
+func TestValidateManagedProviderStateRequestUsesFrozenBodyAndEffectiveHeaders(t *testing.T) {
+	newAttempt := func(t *testing.T, body string, staticHeaders, runtimeHeaders map[string]interface{}) *PreparedTextRelayAttempt {
+		t.Helper()
+		preparedRequest, err := relaycommon.PrepareJSONRelayRequest([]byte(body), relaycommon.PreparedRelayRequestMetadata{
+			Model: "gpt-upstream", Protocol: types.RelayFormatOpenAIResponses,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, preparedRequest.Close()) })
+		info := &relaycommon.RelayInfo{
+			RelayFormat: types.RelayFormatOpenAIResponses, RelayMode: relayconstant.RelayModeResponses,
+			RequestConversionChain:  []types.RelayFormat{types.RelayFormatOpenAIResponses},
+			FinalRequestRelayFormat: types.RelayFormatOpenAIResponses,
+			ChannelMeta:             &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI, HeadersOverride: staticHeaders},
+		}
+		if runtimeHeaders != nil {
+			info.UseRuntimeHeadersOverride = true
+			info.RuntimeHeadersOverride = runtimeHeaders
+		}
+		return &PreparedTextRelayAttempt{info: info, adaptor: GetAdaptor(constant.APITypeOpenAI), preparedRequest: preparedRequest}
+	}
+
+	require.NoError(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello"}`, nil, nil).ValidateManagedProviderStateRequest(nil))
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello","store":false}`, nil, nil).ValidateManagedProviderStateRequest(nil), "storable")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello","previous_response_id":"resp_unbound"}`, nil, nil).ValidateManagedProviderStateRequest(nil), "authenticated binding")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello","conversation":"conv_injected"}`, nil, nil).ValidateManagedProviderStateRequest(nil), "provider-owned field")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":[{"type":"item_reference","id":"item_injected"}]}`, nil, nil).ValidateManagedProviderStateRequest(nil), "provider-owned input type")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":[{"type":"message","role":"user","content":[{"type":"input_file","file_id":"file_injected"}]}]}`, nil, nil).ValidateManagedProviderStateRequest(nil), "provider-owned file ID")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello"}`, map[string]interface{}{"Authorization": "redacted"}, nil).ValidateManagedProviderStateRequest(nil), "credential header")
+	require.ErrorContains(t, newAttempt(t, `{"model":"gpt-upstream","input":"hello"}`, nil, map[string]interface{}{"x-api-key": "redacted"}).ValidateManagedProviderStateRequest(nil), "credential header")
+}
+
 func TestPrepareResponsesCompactionRejectsUnsupportedAdaptorBeforeConversion(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)

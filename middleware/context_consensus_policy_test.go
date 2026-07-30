@@ -122,6 +122,7 @@ func TestCaptureContextConsensusPolicyCapturesManagedContract(t *testing.T) {
 	assert.Equal(t, "opaque-context", managedRequest.ExternalContextID)
 	assert.Equal(t, uint64(7), managedRequest.ExpectedRevision)
 	assert.Equal(t, "request-key-1234567890", managedRequest.IdempotencyKey)
+	assert.True(t, common.GetContextKeyBool(context, constant.ContextKeySuppressDebugLog))
 	assert.Empty(t, context.Request.Header.Get(contextIDHeader))
 	assert.Empty(t, context.Request.Header.Get(contextModeHeader))
 	assert.Empty(t, context.Request.Header.Get(contextRevisionHeader))

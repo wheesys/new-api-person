@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -398,7 +399,14 @@ func IsManagedOutcomeConflict(err error) bool {
 // ConfirmManagedOutcomeCommit compares the exact encrypted Redis revision with
 // the database checkpoint. It never advances Redis and is safe after an
 // ambiguous database acknowledgement.
-func (runtime *ManagedConsensusRuntime) ConfirmManagedOutcomeCommit(ctx context.Context, owner ManagedConsensusOwner, externalContextID string, expectedRevision uint64, candidate ManagedConsensusState) (bool, bool, error) {
+func (runtime *ManagedConsensusRuntime) ConfirmManagedOutcomeCommit(
+	ctx context.Context,
+	owner ManagedConsensusOwner,
+	externalContextID string,
+	expectedRevision uint64,
+	candidate ManagedConsensusState,
+	providerCommit *ManagedProviderStateCommit,
+) (bool, bool, error) {
 	if runtime == nil || runtime.Repository == nil {
 		return false, false, fmt.Errorf("managed consensus repository is unavailable")
 	}
@@ -444,5 +452,30 @@ func (runtime *ManagedConsensusRuntime) ConfirmManagedOutcomeCommit(ctx context.
 	if err != nil {
 		return false, false, err
 	}
-	return bytes.Equal(storedJSON, candidateJSON), false, nil
+	if !bytes.Equal(storedJSON, candidateJSON) {
+		return false, false, nil
+	}
+	if (candidate.ProviderState == nil) != (providerCommit == nil) {
+		return false, false, nil
+	}
+	if providerCommit == nil {
+		return true, false, nil
+	}
+	if err := providerCommit.Validate(time.Now()); err != nil || !reflect.DeepEqual(*candidate.ProviderState, providerCommit.Link()) ||
+		candidate.ProviderBinding == nil || !reflect.DeepEqual(*candidate.ProviderBinding, providerCommit.Binding.Target) {
+		return false, false, err
+	}
+	providerRecord, err := runtime.Repository.LoadProviderStateBinding(ctx, providerCommit.StorageKey)
+	if err != nil {
+		return false, false, err
+	}
+	storedProviderJSON, err := common.Marshal(providerRecord.Payload)
+	if err != nil {
+		return false, false, err
+	}
+	candidateProviderJSON, err := common.Marshal(providerCommit.Payload)
+	if err != nil {
+		return false, false, err
+	}
+	return providerRecord.BindingDigest == providerCommit.BindingDigest && bytes.Equal(storedProviderJSON, candidateProviderJSON), false, nil
 }

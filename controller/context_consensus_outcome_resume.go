@@ -75,7 +75,16 @@ func resumeManagedContextOutcome(c *gin.Context, request contextconsensus.Manage
 	if stateTTL <= 0 {
 		return true, managedExecutionError(fmt.Errorf("managed context outcome expired"))
 	}
-	if _, err := consensusSession.CommitWithRecovery(c.Request.Context(), nextState, stateTTL); err != nil {
+	snapshot, err := outcome.SummaryExecution(c.Request.Context())
+	if err != nil {
+		return true, managedExecutionError(err)
+	}
+	if snapshot.Plan.ProviderStateCommit != nil {
+		_, err = consensusSession.CommitWithProviderStateRecovery(c.Request.Context(), nextState, *snapshot.Plan.ProviderStateCommit, stateTTL)
+	} else {
+		_, err = consensusSession.CommitWithRecovery(c.Request.Context(), nextState, stateTTL)
+	}
+	if err != nil {
 		return true, managedCommitAPIError(err)
 	}
 	if err := outcome.MarkCommitted(c.Request.Context()); err != nil {

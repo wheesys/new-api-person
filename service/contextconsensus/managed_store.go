@@ -31,6 +31,7 @@ type ManagedConsensusState struct {
 	Mode            string                        `json:"mode"`
 	TaskConsensus   ConsensusSummary              `json:"task_consensus"`
 	ProviderBinding *ManagedProviderTargetBinding `json:"provider_binding,omitempty"`
+	ProviderState   *ManagedProviderStateLink     `json:"provider_state,omitempty"`
 	SourceDigest    string                        `json:"source_digest"`
 	PolicyVersion   string                        `json:"policy_version"`
 	Lineage         *ManagedConsensusLineage      `json:"lineage,omitempty"`
@@ -80,8 +81,14 @@ func (state ManagedConsensusState) Validate() error {
 	if state.UpdatedAtUnix < state.CreatedAtUnix {
 		return fmt.Errorf("managed consensus update time must not precede creation")
 	}
+	if (state.ProviderBinding == nil) != (state.ProviderState == nil) {
+		return fmt.Errorf("managed provider binding and state link must be present together")
+	}
 	if state.ProviderBinding != nil {
 		if err := state.ProviderBinding.Validate(); err != nil {
+			return err
+		}
+		if err := state.ProviderState.Validate(state.Revision); err != nil {
 			return err
 		}
 	}
@@ -124,9 +131,12 @@ type ManagedProviderTargetBinding struct {
 	RelayFormat           types.RelayFormat `json:"relay_format"`
 	ChannelID             int               `json:"channel_id"`
 	ChannelType           int               `json:"channel_type"`
+	OriginModel           string            `json:"origin_model"`
 	UpstreamModel         string            `json:"upstream_model"`
 	MultiKeyIndex         int               `json:"multi_key_index"`
+	ChannelIsMultiKey     bool              `json:"channel_is_multi_key"`
 	CredentialFingerprint string            `json:"credential_fingerprint"`
+	FingerprintKeyVersion string            `json:"fingerprint_key_version"`
 	ReasonCodes           []string          `json:"reason_codes"`
 }
 
@@ -143,14 +153,20 @@ func (binding ManagedProviderTargetBinding) Validate() error {
 	if binding.ChannelType <= 0 {
 		return fmt.Errorf("provider state channel type must be positive")
 	}
-	if strings.TrimSpace(binding.UpstreamModel) == "" {
-		return fmt.Errorf("provider state upstream model is required")
+	if strings.TrimSpace(binding.OriginModel) == "" || strings.TrimSpace(binding.UpstreamModel) == "" {
+		return fmt.Errorf("provider state origin and upstream models are required")
 	}
 	if binding.MultiKeyIndex < 0 {
 		return fmt.Errorf("provider state multi-key index must not be negative")
 	}
+	if !binding.ChannelIsMultiKey && binding.MultiKeyIndex != 0 {
+		return fmt.Errorf("single-key provider state binding must use credential slot zero")
+	}
 	if binding.BindingLevel == BindingLevelCredential && strings.TrimSpace(binding.CredentialFingerprint) == "" {
 		return fmt.Errorf("provider state credential fingerprint is required")
+	}
+	if strings.TrimSpace(binding.FingerprintKeyVersion) == "" {
+		return fmt.Errorf("provider state credential fingerprint key version is required")
 	}
 	if len(binding.ReasonCodes) == 0 {
 		return fmt.Errorf("provider state binding reason codes are required")
@@ -163,9 +179,28 @@ func (binding ManagedProviderTargetBinding) Validate() error {
 	return nil
 }
 
+type ManagedProviderStateLink struct {
+	Version            int    `json:"version"`
+	StateReferenceHMAC string `json:"state_reference_hmac"`
+	BindingDigest      string `json:"binding_digest"`
+	KeyVersion         string `json:"key_version"`
+	ProducedRevision   uint64 `json:"produced_revision"`
+}
+
+func (link ManagedProviderStateLink) Validate(stateRevision uint64) error {
+	if link.Version != ManagedConsensusStateVersion || strings.TrimSpace(link.StateReferenceHMAC) == "" ||
+		strings.TrimSpace(link.BindingDigest) == "" || strings.TrimSpace(link.KeyVersion) == "" ||
+		link.ProducedRevision == 0 || link.ProducedRevision != stateRevision {
+		return fmt.Errorf("managed provider state link is invalid")
+	}
+	return nil
+}
+
 type ManagedProviderStateBinding struct {
 	Version            int                          `json:"version"`
 	OwnerHMAC          string                       `json:"owner_hmac"`
+	ConversationHMAC   string                       `json:"conversation_hmac"`
+	ProducedRevision   uint64                       `json:"produced_revision"`
 	StateReferenceHMAC string                       `json:"state_reference_hmac"`
 	Target             ManagedProviderTargetBinding `json:"target"`
 	CreatedAtUnix      int64                        `json:"created_at_unix"`
@@ -178,6 +213,9 @@ func (binding ManagedProviderStateBinding) Validate() error {
 	}
 	if strings.TrimSpace(binding.OwnerHMAC) == "" {
 		return fmt.Errorf("provider state binding owner HMAC is required")
+	}
+	if strings.TrimSpace(binding.ConversationHMAC) == "" || binding.ProducedRevision == 0 {
+		return fmt.Errorf("provider state conversation and produced revision are required")
 	}
 	if strings.TrimSpace(binding.StateReferenceHMAC) == "" {
 		return fmt.Errorf("provider state reference HMAC is required")
@@ -243,4 +281,39 @@ type ManagedConsensusKeyRotationRepository interface {
 		payload ManagedEncryptedEnvelope,
 		ttl time.Duration,
 	) (ManagedConsensusRecord, error)
+}
+
+// ManagedConsensusProviderStateRepository commits the next consensus revision
+// and its provider-state mapping as one atomic repository operation.
+type ManagedConsensusProviderStateRepository interface {
+	CompareAndSwapConsensusWithProviderState(
+		ctx context.Context,
+		key ManagedConversationStorageKey,
+		expectedRevision uint64,
+		lease ManagedConsensusLease,
+		consensusPayload ManagedEncryptedEnvelope,
+		providerKey ManagedProviderStateStorageKey,
+		providerConflictKeys []ManagedProviderStateStorageKey,
+		bindingDigest string,
+		providerPayload ManagedEncryptedEnvelope,
+		consensusTTL time.Duration,
+		providerTTL time.Duration,
+	) (ManagedConsensusRecord, ManagedProviderStateRecord, error)
+}
+
+type ManagedConsensusProviderStateKeyRotationRepository interface {
+	CompareAndSwapMigrateConsensusWithProviderState(
+		ctx context.Context,
+		previousKey ManagedConversationStorageKey,
+		activeKey ManagedConversationStorageKey,
+		expectedRevision uint64,
+		lease ManagedConsensusLease,
+		consensusPayload ManagedEncryptedEnvelope,
+		providerKey ManagedProviderStateStorageKey,
+		providerConflictKeys []ManagedProviderStateStorageKey,
+		bindingDigest string,
+		providerPayload ManagedEncryptedEnvelope,
+		consensusTTL time.Duration,
+		providerTTL time.Duration,
+	) (ManagedConsensusRecord, ManagedProviderStateRecord, error)
 }
