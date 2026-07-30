@@ -465,6 +465,7 @@ func validInternalCompactionRequest(t *testing.T, parent *gin.Context) (Internal
 	t.Helper()
 	coveredRange := contextconsensus.SummarySourceRange{StartSequence: 0, EndSequence: 1, SourceDigest: "covered-digest"}
 	plan := contextconsensus.CompactionPlan{
+		SummaryVersion:   contextconsensus.ConsensusSummaryVersion,
 		SourceDigest:     "source-digest",
 		CoveredRanges:    []contextconsensus.SummarySourceRange{coveredRange},
 		MaxSummaryTokens: 128,
@@ -495,6 +496,7 @@ func validInternalCompactionRequest(t *testing.T, parent *gin.Context) (Internal
 		AllowedChannelIDs: []int{9},
 		PolicyVersion:     "policy-v1",
 		SourceDigest:      "source-digest",
+		SummaryVersion:    contextconsensus.ConsensusSummaryVersion,
 		MaxOutputTokens:   128,
 		MaxInputTokens:    128000,
 		SummaryRequest: &dto.GeneralOpenAIRequest{Messages: []dto.Message{

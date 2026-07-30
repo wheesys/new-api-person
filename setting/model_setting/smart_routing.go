@@ -13,6 +13,7 @@ type SmartRoutingSettings struct {
 	VirtualModelPools            map[string][]string                        `json:"virtual_model_pools"`
 	ContextConsensusEnabled      bool                                       `json:"context_consensus_enabled"`
 	AutoCompactionEnabled        bool                                       `json:"auto_compaction_enabled"`
+	AllowToolResultCompaction    bool                                       `json:"allow_tool_result_compaction"`
 	ManagedContextEnabled        bool                                       `json:"managed_context_enabled"`
 	CompactionModelPool          []string                                   `json:"compaction_model_pool"`
 	CompactionChannelIDs         []int                                      `json:"compaction_channel_ids"`

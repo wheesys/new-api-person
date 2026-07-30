@@ -26,7 +26,16 @@ func RewriteRequestWithConsensus(request RewriteCompactedRequest) ([]byte, error
 	if err := validateCompactionPlanForRewrite(request); err != nil {
 		return nil, err
 	}
-	summary, err := ParseAndValidateConsensusSummaryV1(request.SummaryBody, request.Plan)
+	var summary ConsensusSummary
+	var err error
+	switch request.Plan.SummaryVersion {
+	case ConsensusSummaryVersion:
+		summary, err = ParseAndValidateConsensusSummaryV1(request.SummaryBody, request.Plan)
+	case ConsensusSummaryVersionV2:
+		summary, err = ParseAndValidateConsensusSummaryV2(request.SummaryBody, request.Plan)
+	default:
+		return nil, fmt.Errorf("unsupported consensus summary version %d", request.Plan.SummaryVersion)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -61,22 +70,37 @@ func validateCompactionPlanAgainstBody(protocol types.RelayFormat, body []byte, 
 	if plan.integrityDigest == "" || plan.integrityDigest != digestValue(plan) {
 		return fmt.Errorf("compaction plan integrity check failed")
 	}
+	if plan.SummaryVersion == ConsensusSummaryVersionV2 {
+		if _, err := toolCompactionExpectedFacts(plan); err != nil {
+			return err
+		}
+	}
 	envelope, err := Extract(ExtractionRequest{Protocol: protocol, Body: body})
 	if err != nil {
 		return fmt.Errorf("rebuild context envelope for compaction plan: %w", err)
 	}
-	expectedPlan, err := BuildCompactionPlan(CompactionPlanRequest{
+	planRequest := CompactionPlanRequest{
 		Protocol: protocol,
 		Body:     body,
 		Envelope: envelope,
 		Policy: CompactionPolicy{
-			SystemEnabled:        true,
-			PolicyVersion:        plan.PolicyVersion,
-			PreservedRecentTurns: plan.preservedRecentTurns,
-			TargetInputTokens:    plan.TargetInputTokens,
-			MaxSummaryTokens:     plan.MaxSummaryTokens,
+			SystemEnabled:             true,
+			AllowToolResultCompaction: plan.ToolContextPresent,
+			PolicyVersion:             plan.PolicyVersion,
+			PreservedRecentTurns:      plan.preservedRecentTurns,
+			TargetInputTokens:         plan.TargetInputTokens,
+			MaxSummaryTokens:          plan.MaxSummaryTokens,
 		}.Snapshot(true, true),
-	})
+	}
+	var expectedPlan CompactionPlan
+	if plan.ToolContextPresent {
+		expectedPlan, err = BuildToolCompactionPlanV2(ToolCompactionPlanRequest{
+			CompactionPlanRequest: planRequest,
+			PolicyProvider:        plan.toolPolicyProvider,
+		})
+	} else {
+		expectedPlan, err = BuildCompactionPlan(planRequest)
+	}
 	if err != nil {
 		return fmt.Errorf("validate compaction plan against request: %w", err)
 	}

@@ -598,7 +598,7 @@ allow_tool_result_compaction=false
 - D-2：统一并行 group 语义后评估稳定 ID 协议的并行工具组；Gemini 同名并行继续失败关闭。
 - D-3：在 adaptor 提供权威所有权、到期和删除能力后实现 provider file 生命周期。
 
-实施状态：阶段 D-1a 已完成工具结果因果序号、跨协议/逆序 result 拒绝和只含 digest 的单工具串行结构资格评估，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`；阶段 D-1b 已完成服务端构造、版本精确绑定且默认拒绝的 JSON Pointer 白名单脱敏注册表，真实 Chat JSON 字符串结果先绑定原始 digest，再拒绝未知字段、重复键、敏感值和超限结构，仅生成带进程内完整性证明的有界标量投影，见 `doc/auto-smart-routing-context-consensus-stage-d1b-implementation-2026-07-30.md`。`BuildCompactionPlan` 继续拒绝所有工具上下文，Summary v1、managed、其他协议、并行工具和 provider file 行为不变。
+实施状态：阶段 D-1a 已完成工具结果因果序号、跨协议/逆序 result 拒绝和只含 digest 的单工具串行结构资格评估，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`；阶段 D-1b 已完成服务端构造、版本精确绑定且默认拒绝的 JSON Pointer 白名单脱敏注册表，真实 Chat JSON 字符串结果先绑定原始 digest，再拒绝未知字段、重复键、敏感值和超限结构，仅生成带进程内完整性证明的有界标量投影，见 `doc/auto-smart-routing-context-consensus-stage-d1b-implementation-2026-07-30.md`；阶段 D-1c 已完成 Summary v2、单个旧串行 Chat 工具四消息原子计划、原始工具内容隔离、确定性工具事实校验、原子 rewrite、内部执行器版本绑定和最终 OpenAI Chat 协议门禁，见 `doc/auto-smart-routing-context-consensus-stage-d1c-implementation-2026-07-30.md`。工具压缩开关默认关闭，编译期静态策略表因无内置业务工具而保持为空；未登记工具只允许压缩其之前的完整普通轮次。Summary v1、managed、其他协议、并行工具和 provider file 行为不变。
 
 ## 23. 测试矩阵
 
@@ -651,6 +651,6 @@ allow_tool_result_compaction=false
 
 ## 25. 推荐下一步
 
-下一步完成阶段 D-1c：新增 Summary v2，并将 D-1a 结构证据和 D-1b 脱敏投影接入单个旧串行 Chat 工具原子段的 plan、prompt、rewrite 与 runtime。调用、结果和最终 assistant 回复必须整体压缩或整体保留；消费脱敏投影前必须再次校验其进程内完整性证明。原始参数、结果、工具名称、schema、凭据、URL、provider file 和 opaque state 仍不得进入摘要子请求。
+下一步完成阶段 D-1d：复用现有管理员鉴权和有界日志聚合，增加有限 reason code 的只读诊断 API 与后台页面。诊断不得展示原始 call ID、函数名、参数、结果、schema、digest、文件引用、摘要正文或任何凭据；生产静态脱敏策略仍需针对服务端实际拥有的精确工具/schema 单独评审后通过代码登记。
 
 发布前应在真实 Redis 和 OpenAI 测试账号上补充网络中断、Redis 超时、进程退出、active/previous key 轮换及旧密钥退役故障注入。`managed_context_enabled` 在这些门禁通过前继续默认关闭。

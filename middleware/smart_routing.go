@@ -260,6 +260,16 @@ func buildSmartRouteRequest(c *gin.Context, modelRequest *ModelRequest, usingGro
 		})
 		if envelope != nil {
 			request.ContextConstraint = envelope.RoutingConstraint(request.EstimatedPromptTokens)
+			toolContextPresent := len(envelope.ToolState.Exchanges) > 0 || envelope.ToolState.SchemaDigest != ""
+			for _, segment := range envelope.PreservedSegments {
+				if segment.Kind == contextconsensus.SegmentKindToolCall || segment.Kind == contextconsensus.SegmentKindToolResult {
+					toolContextPresent = true
+					break
+				}
+			}
+			if toolContextPresent {
+				common.SetContextKey(c, constant.ContextKeySuppressDebugLog, true)
+			}
 		}
 		if extractErr != nil {
 			return request, &smartRoutingContextValidationError{cause: extractErr}

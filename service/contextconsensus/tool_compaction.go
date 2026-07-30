@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 var ErrToolCompactionEvidenceInvalid = errors.New("tool compaction structural evidence is invalid")
@@ -66,8 +66,8 @@ type ToolCompactionStructuralAssessment struct {
 	Evidence             *ToolCompactionStructuralEvidence `json:"evidence,omitempty"`
 }
 
-// AssessSingleSerialToolCompaction checks only the structural prerequisites
-// for a future sanitizer. Runtime compaction remains disabled for every tool graph.
+// AssessSingleSerialToolCompaction checks the structural prerequisites for the
+// separate sanitizer and tool-aware compaction authorization stages.
 func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionStructuralAssessment {
 	if envelope == nil {
 		return ToolCompactionStructuralAssessment{ReasonCodes: []string{ToolCompactionReasonEnvelopeUnavailable}}

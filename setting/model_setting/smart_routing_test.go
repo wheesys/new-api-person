@@ -1,6 +1,7 @@
 package model_setting
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -61,6 +62,25 @@ func TestSmartRoutingVirtualModelPoolReturnsCopy(t *testing.T) {
 	unchangedPool, unchangedConfigured := GetSmartRoutingVirtualModelPool("auto:quality")
 	assert.True(t, unchangedConfigured)
 	assert.Equal(t, []string{"gpt-5"}, unchangedPool)
+}
+
+func TestSmartRoutingToolResultCompactionDefaultsClosedAndLoadsExplicitly(t *testing.T) {
+	originalValue := GetSmartRoutingSettings().AllowToolResultCompaction
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+			"smart_routing.allow_tool_result_compaction": strconv.FormatBool(originalValue),
+		}))
+	})
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"smart_routing.allow_tool_result_compaction": "true",
+	}))
+	assert.True(t, GetSmartRoutingSettings().AllowToolResultCompaction)
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"smart_routing.allow_tool_result_compaction": "false",
+	}))
+	assert.False(t, GetSmartRoutingSettings().AllowToolResultCompaction)
 }
 
 func TestSmartRoutingVirtualModelPoolFailsClosedForLegacyInvalidPool(t *testing.T) {

@@ -10,7 +10,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ConsensusSummaryVersion = 1
+const (
+	ConsensusSummaryVersion   = 1
+	ConsensusSummaryVersionV2 = 2
+)
 
 type ConsensusProvenance string
 
@@ -85,6 +88,20 @@ func ParseAndValidateConsensusSummaryV1(data []byte, plan CompactionPlan) (Conse
 		return ConsensusSummary{}, err
 	}
 	if err := ValidateConsensusSummaryV1(summary, plan); err != nil {
+		return ConsensusSummary{}, err
+	}
+	return summary, nil
+}
+
+func ParseAndValidateConsensusSummaryV2(data []byte, plan CompactionPlan) (ConsensusSummary, error) {
+	if err := common.ValidateJsonUniqueObjectKeys(data); err != nil {
+		return ConsensusSummary{}, fmt.Errorf("consensus summary v2 contains duplicate object keys")
+	}
+	summary, err := parseConsensusSummaryV1Shape(data)
+	if err != nil {
+		return ConsensusSummary{}, err
+	}
+	if err := ValidateConsensusSummaryV2(summary, plan); err != nil {
 		return ConsensusSummary{}, err
 	}
 	return summary, nil
@@ -169,17 +186,8 @@ func parseConsensusSummaryV1Shape(data []byte) (ConsensusSummary, error) {
 }
 
 func ValidateConsensusSummaryV1(summary ConsensusSummary, plan CompactionPlan) error {
-	if summary.Version != ConsensusSummaryVersion {
-		return fmt.Errorf("consensus summary version must be %d", ConsensusSummaryVersion)
-	}
-	if summary.SourceDigest == "" || summary.SourceDigest != plan.SourceDigest {
-		return fmt.Errorf("consensus summary source digest does not match compaction plan")
-	}
-	if !reflect.DeepEqual(summary.SourceRanges, plan.CoveredRanges) {
-		return fmt.Errorf("consensus summary source ranges do not match compaction plan")
-	}
-	if summary.TaskGoal == nil || summary.Decisions == nil || summary.MustPreserve == nil || summary.OpenQuestions == nil || summary.UserPreferences == nil || summary.DomainTerms == nil || summary.CompletedSteps == nil || summary.PendingSteps == nil || summary.ArtifactRefs == nil || summary.ToolResultSummaries == nil || summary.SourceRanges == nil {
-		return fmt.Errorf("consensus summary collection fields must not be null")
+	if err := validateConsensusSummaryEnvelope(summary, plan, ConsensusSummaryVersion); err != nil {
+		return err
 	}
 	if len(summary.ToolResultSummaries) > 0 {
 		return fmt.Errorf("tool result summaries are not supported by compaction version 1")
@@ -215,25 +223,75 @@ func ValidateConsensusSummaryV1(summary ConsensusSummary, plan CompactionPlan) e
 	return nil
 }
 
-func validateConsensusFact(fact ConsensusFact, plan CompactionPlan) error {
-	if strings.TrimSpace(fact.Field) == "" {
-		return fmt.Errorf("consensus fact field is required")
+func ValidateConsensusSummaryV2(summary ConsensusSummary, plan CompactionPlan) error {
+	if plan.SummaryVersion != ConsensusSummaryVersionV2 || !plan.ToolContextPresent {
+		return fmt.Errorf("consensus summary v2 requires a tool compaction plan")
 	}
-	if strings.TrimSpace(fact.Value) == "" {
-		return fmt.Errorf("consensus fact value is required")
+	if err := validateConsensusSummaryEnvelope(summary, plan, ConsensusSummaryVersionV2); err != nil {
+		return err
 	}
-	if fact.Confidence == nil || *fact.Confidence < 0 || *fact.Confidence > 1 {
-		return fmt.Errorf("consensus fact confidence must be between zero and one")
+	if summary.CurrentPhase != "" {
+		return fmt.Errorf("consensus summary v2 current phase must be empty")
 	}
-	expectedRange, err := NewSummarySourceRange(plan, fact.SourceRange.StartSequence, fact.SourceRange.EndSequence)
+	expectedToolFacts, err := toolCompactionExpectedFacts(plan)
 	if err != nil {
-		return fmt.Errorf("consensus fact source range: %w", err)
+		return err
 	}
-	if fact.SourceRange != expectedRange || fact.SourceDigest != expectedRange.SourceDigest {
-		return fmt.Errorf("consensus fact source digest does not match its source range")
+	if !reflect.DeepEqual(summary.ToolResultSummaries, expectedToolFacts) {
+		return fmt.Errorf("tool result summaries do not match the sanitized projection")
 	}
 
-	segments := coveredSegmentsInRange(plan, fact.SourceRange)
+	factGroups := [][]ConsensusFact{
+		summary.TaskGoal,
+		summary.Decisions,
+		summary.MustPreserve,
+		summary.OpenQuestions,
+		summary.UserPreferences,
+		summary.CompletedSteps,
+		summary.PendingSteps,
+		summary.ArtifactRefs,
+	}
+	for _, facts := range factGroups {
+		for _, fact := range facts {
+			if err := validateConsensusFactV2(fact, plan); err != nil {
+				return err
+			}
+		}
+	}
+	domainTerms := make([]string, 0, len(summary.DomainTerms))
+	for term := range summary.DomainTerms {
+		domainTerms = append(domainTerms, term)
+	}
+	sort.Strings(domainTerms)
+	for _, term := range domainTerms {
+		if err := validateConsensusFactV2(summary.DomainTerms[term], plan); err != nil {
+			return fmt.Errorf("domain term %q: %w", term, err)
+		}
+	}
+	return nil
+}
+
+func validateConsensusSummaryEnvelope(summary ConsensusSummary, plan CompactionPlan, version int) error {
+	if summary.Version != version {
+		return fmt.Errorf("consensus summary version must be %d", version)
+	}
+	if summary.SourceDigest == "" || summary.SourceDigest != plan.SourceDigest {
+		return fmt.Errorf("consensus summary source digest does not match compaction plan")
+	}
+	if !reflect.DeepEqual(summary.SourceRanges, plan.CoveredRanges) {
+		return fmt.Errorf("consensus summary source ranges do not match compaction plan")
+	}
+	if summary.TaskGoal == nil || summary.Decisions == nil || summary.MustPreserve == nil || summary.OpenQuestions == nil || summary.UserPreferences == nil || summary.DomainTerms == nil || summary.CompletedSteps == nil || summary.PendingSteps == nil || summary.ArtifactRefs == nil || summary.ToolResultSummaries == nil || summary.SourceRanges == nil {
+		return fmt.Errorf("consensus summary collection fields must not be null")
+	}
+	return nil
+}
+
+func validateConsensusFact(fact ConsensusFact, plan CompactionPlan) error {
+	segments, err := validateConsensusFactBase(fact, plan)
+	if err != nil {
+		return err
+	}
 	switch fact.Provenance {
 	case ConsensusProvenanceUserConfirmed:
 		if !allSegmentsMatch(segments, func(segment ContextSegment) bool { return normalizedHistoryRole(segment.Role) == "user" }) {
@@ -251,6 +309,83 @@ func validateConsensusFact(fact ConsensusFact, plan CompactionPlan) error {
 		return fmt.Errorf("unsupported consensus fact provenance %q", fact.Provenance)
 	}
 	return nil
+}
+
+func validateConsensusFactBase(fact ConsensusFact, plan CompactionPlan) ([]ContextSegment, error) {
+	if strings.TrimSpace(fact.Field) == "" {
+		return nil, fmt.Errorf("consensus fact field is required")
+	}
+	if strings.TrimSpace(fact.Value) == "" {
+		return nil, fmt.Errorf("consensus fact value is required")
+	}
+	if fact.Confidence == nil || *fact.Confidence < 0 || *fact.Confidence > 1 {
+		return nil, fmt.Errorf("consensus fact confidence must be between zero and one")
+	}
+	expectedRange, err := NewSummarySourceRange(plan, fact.SourceRange.StartSequence, fact.SourceRange.EndSequence)
+	if err != nil {
+		return nil, fmt.Errorf("consensus fact source range: %w", err)
+	}
+	if fact.SourceRange != expectedRange || fact.SourceDigest != expectedRange.SourceDigest {
+		return nil, fmt.Errorf("consensus fact source digest does not match its source range")
+	}
+	return coveredSegmentsInRange(plan, fact.SourceRange), nil
+}
+
+func validateConsensusFactV2(fact ConsensusFact, plan CompactionPlan) error {
+	segments, err := validateConsensusFactBase(fact, plan)
+	if err != nil {
+		return err
+	}
+	for _, segment := range segments {
+		if segment.Sequence == plan.ToolCallSequence || segment.Sequence == plan.ToolResultSequence || segment.Sequence == plan.ToolFinalSequence {
+			return fmt.Errorf("ordinary summary fact cannot cite hidden tool segments")
+		}
+	}
+	switch fact.Provenance {
+	case ConsensusProvenanceUserConfirmed:
+		if !allSegmentsMatch(segments, func(segment ContextSegment) bool { return normalizedHistoryRole(segment.Role) == "user" }) {
+			return fmt.Errorf("user_confirmed fact must cite only user segments")
+		}
+	case ConsensusProvenanceAssistantInferred:
+		if !allSegmentsMatch(segments, func(segment ContextSegment) bool { return normalizedHistoryRole(segment.Role) == "assistant" }) {
+			return fmt.Errorf("assistant_inferred fact must cite only assistant segments")
+		}
+	case ConsensusProvenancePolicy:
+		return fmt.Errorf("policy provenance cannot cite compacted user-level history")
+	case ConsensusProvenanceToolObserved:
+		return fmt.Errorf("tool_observed provenance is only allowed in tool result summaries")
+	default:
+		return fmt.Errorf("unsupported consensus fact provenance %q", fact.Provenance)
+	}
+	return nil
+}
+
+func toolCompactionExpectedFacts(plan CompactionPlan) ([]ConsensusFact, error) {
+	if plan.ToolAtomicRange == nil || plan.toolProjection == nil || plan.ToolProjectionDigest == "" {
+		return nil, fmt.Errorf("tool compaction plan has no sanitized projection")
+	}
+	if err := plan.toolProjection.Validate(); err != nil || plan.toolProjection.ProjectionDigest() != plan.ToolProjectionDigest {
+		return nil, fmt.Errorf("tool compaction projection integrity check failed")
+	}
+	fields := plan.toolProjection.Fields()
+	fieldNames := make([]string, 0, len(fields))
+	for fieldName := range fields {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Strings(fieldNames)
+	facts := make([]ConsensusFact, 0, len(fieldNames))
+	for _, fieldName := range fieldNames {
+		confidence := 1.0
+		facts = append(facts, ConsensusFact{
+			Field:        fieldName,
+			Value:        common.JsonRawMessageToString(fields[fieldName]),
+			Provenance:   ConsensusProvenanceToolObserved,
+			SourceRange:  *plan.ToolAtomicRange,
+			SourceDigest: plan.ToolAtomicRange.SourceDigest,
+			Confidence:   &confidence,
+		})
+	}
+	return facts, nil
 }
 
 func coveredSegmentsInRange(plan CompactionPlan, sourceRange SummarySourceRange) []ContextSegment {

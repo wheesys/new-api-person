@@ -77,11 +77,12 @@ func captureContextConsensusPolicy(c *gin.Context) error {
 		return fmt.Errorf("context ID, revision, and idempotency key require managed context mode")
 	}
 	policy := contextconsensus.CompactionPolicy{
-		SystemEnabled:        settings.ContextConsensusEnabled && settings.AutoCompactionEnabled,
-		PolicyVersion:        "context-consensus-v1",
-		PreservedRecentTurns: settings.PreservedRecentTurns,
-		TargetInputTokens:    settings.MaxCompactionInputTokens,
-		MaxSummaryTokens:     settings.MaxSummaryTokens,
+		SystemEnabled:             settings.ContextConsensusEnabled && settings.AutoCompactionEnabled,
+		AllowToolResultCompaction: settings.AllowToolResultCompaction,
+		PolicyVersion:             "context-consensus-v1",
+		PreservedRecentTurns:      settings.PreservedRecentTurns,
+		TargetInputTokens:         settings.MaxCompactionInputTokens,
+		MaxSummaryTokens:          settings.MaxSummaryTokens,
 	}
 	snapshot := policy.Snapshot(
 		common.GetContextKeyBool(c, constant.ContextKeyTokenContextCompaction),

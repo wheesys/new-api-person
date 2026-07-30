@@ -43,6 +43,7 @@ type InternalCompactionExecutorRequest struct {
 	AllowedChannelIDs      []int
 	PolicyVersion          string
 	SourceDigest           string
+	SummaryVersion         int
 	MaxOutputTokens        int
 	MaxInputTokens         int
 	SummaryRequest         *dto.GeneralOpenAIRequest
@@ -151,7 +152,8 @@ func newInternalCompactionExecutor(request InternalCompactionExecutorRequest, de
 	if request.MaxInputTokens <= 0 {
 		return nil, fmt.Errorf("compaction max input tokens must be positive")
 	}
-	if request.PolicyVersion != request.Plan.PolicyVersion || request.SourceDigest != request.Plan.SourceDigest || request.MaxOutputTokens != request.Plan.MaxSummaryTokens {
+	if request.PolicyVersion != request.Plan.PolicyVersion || request.SourceDigest != request.Plan.SourceDigest ||
+		request.SummaryVersion != request.Plan.SummaryVersion || request.MaxOutputTokens != request.Plan.MaxSummaryTokens {
 		return nil, fmt.Errorf("compaction request does not match its frozen plan")
 	}
 	parentRequestId := common.GetContextKeyString(request.ParentContext, common.RequestIdKey)
@@ -524,10 +526,24 @@ func (lifecycle *internalCompactionLifecycle) ExecuteCompactionChild(_ context.C
 	if lifecycle.managedRevisionPlan != nil {
 		summary, err = contextconsensus.ParseAndValidateManagedRevisionSummary(summaryBody, *lifecycle.managedRevisionPlan)
 	} else {
-		summary, err = contextconsensus.ParseAndValidateConsensusSummaryV1(summaryBody, lifecycle.plan)
+		switch lifecycle.plan.SummaryVersion {
+		case contextconsensus.ConsensusSummaryVersion:
+			summary, err = contextconsensus.ParseAndValidateConsensusSummaryV1(summaryBody, lifecycle.plan)
+		case contextconsensus.ConsensusSummaryVersionV2:
+			summary, err = contextconsensus.ParseAndValidateConsensusSummaryV2(summaryBody, lifecycle.plan)
+		default:
+			err = fmt.Errorf("unsupported consensus summary version %d", lifecycle.plan.SummaryVersion)
+		}
 	}
 	if err != nil {
 		return output, contextconsensus.NewBillableCompactionExecutionError(output, fmt.Errorf("validate compaction summary: %w", err))
+	}
+	if lifecycle.plan.SummaryVersion == contextconsensus.ConsensusSummaryVersionV2 {
+		canonicalSummary, marshalErr := common.Marshal(summary)
+		if marshalErr != nil {
+			return output, contextconsensus.NewBillableCompactionExecutionError(output, fmt.Errorf("encode validated compaction summary: %w", marshalErr))
+		}
+		output.SummaryDigest = hex.EncodeToString(common.Sha256Raw(canonicalSummary))
 	}
 	output.Summary = summary
 	return output, nil

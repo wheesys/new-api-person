@@ -109,6 +109,45 @@ func TestBuildSmartRouteRequestAuditsProviderBoundExplicitModelWithoutRetryCandi
 	assert.Contains(t, string(bodyBytes), "file-sensitive-reference")
 }
 
+func TestBuildSmartRouteRequestSuppressesDebugLogsForToolExchange(t *testing.T) {
+	body := strings.NewReader(`{
+  "model":"gpt-5",
+  "messages":[
+    {"role":"user","content":"lookup"},
+    {"role":"assistant","tool_calls":[{"id":"call-sensitive","type":"function","function":{"name":"lookup","arguments":"{\"query\":\"do-not-log\"}"}}]},
+    {"role":"tool","tool_call_id":"call-sensitive","content":"{\"status\":\"ok\"}"},
+    {"role":"assistant","content":"done"},
+    {"role":"user","content":"continue"}
+  ],
+  "tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]
+}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+
+	_, err := buildSmartRouteRequest(context, &ModelRequest{Model: "gpt-5"}, "default")
+
+	require.NoError(t, err)
+	assert.True(t, common.GetContextKeyBool(context, constant.ContextKeySuppressDebugLog))
+}
+
+func TestBuildSmartRouteRequestSuppressesDebugLogsForInvalidToolResult(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-5","messages":[{"role":"tool","tool_call_id":"orphan-sensitive","content":"do-not-log"}]}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+
+	_, err := buildSmartRouteRequest(context, &ModelRequest{Model: "gpt-5"}, "default")
+
+	require.Error(t, err)
+	assert.True(t, common.GetContextKeyBool(context, constant.ContextKeySuppressDebugLog))
+}
+
 func TestFreezeSmartRoutingCandidatesOnlyWhenSystemPreparationEnabled(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	candidates := []smartrouting.SmartRouteCandidate{{ModelName: "gpt-4o", ChannelID: 17}}

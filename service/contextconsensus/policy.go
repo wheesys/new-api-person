@@ -3,11 +3,12 @@ package contextconsensus
 import "github.com/QuantumNous/new-api/relaykit/types"
 
 type CompactionPolicy struct {
-	SystemEnabled        bool
-	PolicyVersion        string
-	PreservedRecentTurns int
-	TargetInputTokens    int
-	MaxSummaryTokens     int
+	SystemEnabled             bool
+	AllowToolResultCompaction bool
+	PolicyVersion             string
+	PreservedRecentTurns      int
+	TargetInputTokens         int
+	MaxSummaryTokens          int
 }
 
 // ManagedContextRequest is the gateway-only managed session contract captured
@@ -25,13 +26,14 @@ type ManagedContextRequest struct {
 }
 
 type CompactionPolicySnapshot struct {
-	SystemEnabled        bool   `json:"system_enabled"`
-	APIKeyAllowed        bool   `json:"api_key_allowed"`
-	RequestAuthorized    bool   `json:"request_authorized"`
-	PolicyVersion        string `json:"policy_version"`
-	PreservedRecentTurns int    `json:"preserved_recent_turns"`
-	TargetInputTokens    int    `json:"target_input_tokens"`
-	MaxSummaryTokens     int    `json:"max_summary_tokens"`
+	SystemEnabled             bool   `json:"system_enabled"`
+	AllowToolResultCompaction bool   `json:"allow_tool_result_compaction"`
+	APIKeyAllowed             bool   `json:"api_key_allowed"`
+	RequestAuthorized         bool   `json:"request_authorized"`
+	PolicyVersion             string `json:"policy_version"`
+	PreservedRecentTurns      int    `json:"preserved_recent_turns"`
+	TargetInputTokens         int    `json:"target_input_tokens"`
+	MaxSummaryTokens          int    `json:"max_summary_tokens"`
 }
 
 type CompactionAuthorizationDecision struct {
@@ -41,13 +43,14 @@ type CompactionAuthorizationDecision struct {
 
 func (policy CompactionPolicy) Snapshot(apiKeyAllowed, requestAuthorized bool) CompactionPolicySnapshot {
 	return CompactionPolicySnapshot{
-		SystemEnabled:        policy.SystemEnabled,
-		APIKeyAllowed:        apiKeyAllowed,
-		RequestAuthorized:    requestAuthorized,
-		PolicyVersion:        policy.PolicyVersion,
-		PreservedRecentTurns: policy.PreservedRecentTurns,
-		TargetInputTokens:    policy.TargetInputTokens,
-		MaxSummaryTokens:     policy.MaxSummaryTokens,
+		SystemEnabled:             policy.SystemEnabled,
+		AllowToolResultCompaction: policy.AllowToolResultCompaction,
+		APIKeyAllowed:             apiKeyAllowed,
+		RequestAuthorized:         requestAuthorized,
+		PolicyVersion:             policy.PolicyVersion,
+		PreservedRecentTurns:      policy.PreservedRecentTurns,
+		TargetInputTokens:         policy.TargetInputTokens,
+		MaxSummaryTokens:          policy.MaxSummaryTokens,
 	}
 }
 

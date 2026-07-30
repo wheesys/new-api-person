@@ -41,6 +41,7 @@ type contextConsensusMainCommit struct {
 	compactionRequestID  string
 	compactionQuota      int
 	compactionResultCode string
+	preparedProtocol     types.RelayFormat
 	committed            bool
 }
 
@@ -90,7 +91,7 @@ func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayF
 	if err != nil {
 		return nil, err
 	}
-	commit, allOverLimit, inputBefore, err := evaluateContextConsensusCandidates(c, relayFormat, sourceBody, candidates, counter, resolver, settings.ContextSafetyMarginTokens, prepareContextConsensusCandidate)
+	commit, allOverLimit, inputBefore, err := evaluateContextConsensusCandidates(c, relayFormat, sourceBody, candidates, counter, resolver, settings.ContextSafetyMarginTokens, "", prepareContextConsensusCandidate)
 	if err != nil {
 		return nil, err
 	}
@@ -117,17 +118,16 @@ func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayF
 	if err != nil {
 		return nil, fmt.Errorf("extract compaction source: %w", err)
 	}
-	plan, err := contextconsensus.BuildCompactionPlan(contextconsensus.CompactionPlanRequest{
-		Protocol: relayFormat,
-		Body:     sourceBody,
-		Envelope: envelope,
-		Policy:   policy,
-	})
+	toolPolicyProvider, err := newServerToolSanitizationPolicyProvider()
+	if err != nil {
+		return nil, fmt.Errorf("build tool sanitization policy provider: %w", err)
+	}
+	plan, err := buildContextConsensusCompactionPlan(relayFormat, sourceBody, envelope, policy, toolPolicyProvider)
 	if err != nil {
 		return nil, err
 	}
 	compactionModel := strings.TrimSpace(settings.CompactionModelPool[0])
-	summaryRequest, err := contextconsensus.BuildCompactionPrompt(contextconsensus.CompactionPromptRequest{
+	summaryRequest, err := buildContextConsensusCompactionPrompt(contextconsensus.CompactionPromptRequest{
 		Model:    compactionModel,
 		Protocol: relayFormat,
 		Body:     sourceBody,
@@ -159,6 +159,7 @@ func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayF
 		AllowedChannelIDs: settings.CompactionChannelIDs,
 		PolicyVersion:     policy.PolicyVersion,
 		SourceDigest:      plan.SourceDigest,
+		SummaryVersion:    plan.SummaryVersion,
 		MaxOutputTokens:   plan.MaxSummaryTokens,
 		MaxInputTokens:    settings.MaxCompactionInputTokens,
 		SummaryRequest:    summaryRequest,
@@ -189,7 +190,11 @@ func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayF
 	if err != nil {
 		return nil, err
 	}
-	commit, _, _, err = evaluateContextConsensusCandidates(c, relayFormat, rewrittenBody, candidates, counter, resolver, settings.ContextSafetyMarginTokens, prepareContextConsensusCandidate)
+	requiredFinalProtocol := types.RelayFormat("")
+	if plan.ToolContextPresent {
+		requiredFinalProtocol = types.RelayFormatOpenAI
+	}
+	commit, _, _, err = evaluateContextConsensusCandidates(c, relayFormat, rewrittenBody, candidates, counter, resolver, settings.ContextSafetyMarginTokens, requiredFinalProtocol, prepareContextConsensusCandidate)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +213,46 @@ func prepareContextConsensusMainRequest(c *gin.Context, relayFormat types.RelayF
 	return commit, nil
 }
 
+func newServerToolSanitizationPolicyProvider() (*contextconsensus.StaticToolSanitizationPolicyProvider, error) {
+	// Tool result policies are compile-time server capabilities. Do not populate
+	// this registry from request, admin, database, or environment input.
+	return contextconsensus.NewStaticToolSanitizationPolicyProvider([]contextconsensus.ToolResultSanitizationPolicy{})
+}
+
+func buildContextConsensusCompactionPlan(
+	relayFormat types.RelayFormat,
+	sourceBody []byte,
+	envelope *contextconsensus.ContextEnvelope,
+	policy contextconsensus.CompactionPolicySnapshot,
+	toolPolicyProvider contextconsensus.ToolSanitizationPolicyProvider,
+) (contextconsensus.CompactionPlan, error) {
+	request := contextconsensus.CompactionPlanRequest{
+		Protocol: relayFormat,
+		Body:     sourceBody,
+		Envelope: envelope,
+		Policy:   policy,
+	}
+	toolContextPresent := envelope != nil && (len(envelope.ToolState.Exchanges) > 0 || envelope.ToolState.SchemaDigest != "")
+	if !toolContextPresent || !policy.AllowToolResultCompaction {
+		return contextconsensus.BuildCompactionPlan(request)
+	}
+	return contextconsensus.BuildToolCompactionPlanV2(contextconsensus.ToolCompactionPlanRequest{
+		CompactionPlanRequest: request,
+		PolicyProvider:        toolPolicyProvider,
+	})
+}
+
+func buildContextConsensusCompactionPrompt(request contextconsensus.CompactionPromptRequest) (*dto.GeneralOpenAIRequest, error) {
+	switch request.Plan.SummaryVersion {
+	case contextconsensus.ConsensusSummaryVersion:
+		return contextconsensus.BuildCompactionPrompt(request)
+	case contextconsensus.ConsensusSummaryVersionV2:
+		return contextconsensus.BuildToolCompactionPromptV2(request)
+	default:
+		return nil, fmt.Errorf("unsupported consensus summary version %d", request.Plan.SummaryVersion)
+	}
+}
+
 func evaluateContextConsensusCandidates(
 	parent *gin.Context,
 	relayFormat types.RelayFormat,
@@ -216,6 +261,7 @@ func evaluateContextConsensusCandidates(
 	counter contextconsensus.TokenCounter,
 	resolver contextconsensus.ContextLimitResolver,
 	safetyMargin int,
+	requiredProtocol types.RelayFormat,
 	prepareCandidate contextConsensusCandidatePreparer,
 ) (*contextConsensusMainCommit, bool, int, error) {
 	if prepareCandidate == nil {
@@ -229,6 +275,12 @@ func evaluateContextConsensusCandidates(
 		if err != nil {
 			allOverLimit = false
 			errorsByCandidate = append(errorsByCandidate, fmt.Sprintf("model=%s channel=%d: %v", candidate.ModelName, candidate.ChannelID, err))
+			continue
+		}
+		if requiredProtocol != "" && commit.preparedProtocol != requiredProtocol {
+			commit.Close()
+			allOverLimit = false
+			errorsByCandidate = append(errorsByCandidate, fmt.Sprintf("model=%s channel=%d: final protocol %q does not match required protocol %q", candidate.ModelName, candidate.ChannelID, commit.preparedProtocol, requiredProtocol))
 			continue
 		}
 		if commit.budget.PromptTokens > inputTokens {
@@ -327,6 +379,7 @@ func prepareContextConsensusCandidate(
 	commit.request = request
 	commit.relayInfo = relayInfo
 	commit.budget = budget
+	commit.preparedProtocol = prepared.Protocol()
 	preparedSuccessfully = true
 	return commit, nil
 }

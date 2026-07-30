@@ -16,21 +16,30 @@ type SummarySourceRange struct {
 }
 
 type CompactionPlan struct {
-	Protocol            types.RelayFormat    `json:"protocol"`
-	SourceDigest        string               `json:"source_digest"`
-	CoveredSegments     []ContextSegment     `json:"covered_segments"`
-	CoveredRanges       []SummarySourceRange `json:"covered_ranges"`
-	PreservedSegments   []ContextSegment     `json:"preserved_segments"`
-	ImmutableSegments   []ContextSegment     `json:"immutable_segments"`
-	OpenToolSegments    []ContextSegment     `json:"open_tool_segments,omitempty"`
-	MediaSegments       []ContextSegment     `json:"media_segments,omitempty"`
-	TargetInputTokens   int                  `json:"target_input_tokens"`
-	MaxSummaryTokens    int                  `json:"max_summary_tokens"`
-	PolicyVersion       string               `json:"policy_version"`
-	SummaryInsertBefore int                  `json:"summary_insert_before"`
+	SummaryVersion       int                  `json:"summary_version"`
+	Protocol             types.RelayFormat    `json:"protocol"`
+	SourceDigest         string               `json:"source_digest"`
+	CoveredSegments      []ContextSegment     `json:"covered_segments"`
+	CoveredRanges        []SummarySourceRange `json:"covered_ranges"`
+	PreservedSegments    []ContextSegment     `json:"preserved_segments"`
+	ImmutableSegments    []ContextSegment     `json:"immutable_segments"`
+	OpenToolSegments     []ContextSegment     `json:"open_tool_segments,omitempty"`
+	MediaSegments        []ContextSegment     `json:"media_segments,omitempty"`
+	TargetInputTokens    int                  `json:"target_input_tokens"`
+	MaxSummaryTokens     int                  `json:"max_summary_tokens"`
+	PolicyVersion        string               `json:"policy_version"`
+	SummaryInsertBefore  int                  `json:"summary_insert_before"`
+	ToolContextPresent   bool                 `json:"tool_context_present,omitempty"`
+	ToolAtomicRange      *SummarySourceRange  `json:"tool_atomic_range,omitempty"`
+	ToolCallSequence     int                  `json:"tool_call_sequence,omitempty"`
+	ToolResultSequence   int                  `json:"tool_result_sequence,omitempty"`
+	ToolFinalSequence    int                  `json:"tool_final_sequence,omitempty"`
+	ToolProjectionDigest string               `json:"tool_projection_digest,omitempty"`
 	// These fields make plans in-process capabilities rather than forgeable JSON payloads.
 	preservedRecentTurns int
 	integrityDigest      string
+	toolProjection       *ToolResultSanitizationOutput
+	toolPolicyProvider   ToolSanitizationPolicyProvider
 }
 
 type CompactionPlanRequest struct {
@@ -46,33 +55,8 @@ type textHistorySegment struct {
 }
 
 func BuildCompactionPlan(request CompactionPlanRequest) (CompactionPlan, error) {
-	if request.Envelope == nil {
-		return CompactionPlan{}, fmt.Errorf("context envelope is required")
-	}
-	authorization := EvaluateCompactionAuthorization(request.Policy)
-	if !authorization.Allowed {
-		return CompactionPlan{}, fmt.Errorf("compaction is not authorized: %s", strings.Join(authorization.ReasonCodes, ","))
-	}
-	if strings.TrimSpace(request.Policy.PolicyVersion) == "" {
-		return CompactionPlan{}, fmt.Errorf("compaction policy version is required")
-	}
-	if request.Policy.PreservedRecentTurns < 1 {
-		return CompactionPlan{}, fmt.Errorf("preserved recent turns must be at least one")
-	}
-	if request.Policy.TargetInputTokens <= 0 {
-		return CompactionPlan{}, fmt.Errorf("target input tokens must be greater than zero")
-	}
-	if request.Policy.MaxSummaryTokens <= 0 {
-		return CompactionPlan{}, fmt.Errorf("max summary tokens must be greater than zero")
-	}
-	if request.Protocol != request.Envelope.Protocol {
-		return CompactionPlan{}, fmt.Errorf("compaction protocol does not match context envelope")
-	}
-	if digestBytes(request.Body) != request.Envelope.SourceDigest {
-		return CompactionPlan{}, fmt.Errorf("compaction source digest does not match request body")
-	}
-	if request.Envelope.ProviderBinding.Required() {
-		return CompactionPlan{}, fmt.Errorf("provider-bound context cannot be compacted")
+	if err := validateCompactionPlanRequest(request); err != nil {
+		return CompactionPlan{}, err
 	}
 	if len(request.Envelope.ToolState.Exchanges) > 0 || request.Envelope.ToolState.SchemaDigest != "" {
 		return CompactionPlan{}, fmt.Errorf("tool context cannot be compacted")
@@ -135,6 +119,7 @@ func BuildCompactionPlan(request CompactionPlanRequest) (CompactionPlan, error) 
 	}
 
 	plan := CompactionPlan{
+		SummaryVersion:       ConsensusSummaryVersion,
 		Protocol:             request.Protocol,
 		SourceDigest:         request.Envelope.SourceDigest,
 		CoveredSegments:      coveredSegments,
@@ -149,6 +134,38 @@ func BuildCompactionPlan(request CompactionPlanRequest) (CompactionPlan, error) 
 	}
 	plan.integrityDigest = digestValue(plan)
 	return plan, nil
+}
+
+func validateCompactionPlanRequest(request CompactionPlanRequest) error {
+	if request.Envelope == nil {
+		return fmt.Errorf("context envelope is required")
+	}
+	authorization := EvaluateCompactionAuthorization(request.Policy)
+	if !authorization.Allowed {
+		return fmt.Errorf("compaction is not authorized: %s", strings.Join(authorization.ReasonCodes, ","))
+	}
+	if strings.TrimSpace(request.Policy.PolicyVersion) == "" {
+		return fmt.Errorf("compaction policy version is required")
+	}
+	if request.Policy.PreservedRecentTurns < 1 {
+		return fmt.Errorf("preserved recent turns must be at least one")
+	}
+	if request.Policy.TargetInputTokens <= 0 {
+		return fmt.Errorf("target input tokens must be greater than zero")
+	}
+	if request.Policy.MaxSummaryTokens <= 0 {
+		return fmt.Errorf("max summary tokens must be greater than zero")
+	}
+	if request.Protocol != request.Envelope.Protocol {
+		return fmt.Errorf("compaction protocol does not match context envelope")
+	}
+	if digestBytes(request.Body) != request.Envelope.SourceDigest {
+		return fmt.Errorf("compaction source digest does not match request body")
+	}
+	if request.Envelope.ProviderBinding.Required() {
+		return fmt.Errorf("provider-bound context cannot be compacted")
+	}
+	return nil
 }
 
 func NewSummarySourceRange(plan CompactionPlan, startSequence, endSequence int) (SummarySourceRange, error) {

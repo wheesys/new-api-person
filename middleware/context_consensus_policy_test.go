@@ -21,21 +21,23 @@ func TestCaptureContextConsensusPolicyRequiresAllThreeAuthorizations(t *testing.
 	originalSettings := model_setting.GetSmartRoutingSettings()
 	t.Cleanup(func() {
 		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-			"smart_routing.context_consensus_enabled":   boolString(originalSettings.ContextConsensusEnabled),
-			"smart_routing.auto_compaction_enabled":     boolString(originalSettings.AutoCompactionEnabled),
-			"smart_routing.managed_context_enabled":     boolString(originalSettings.ManagedContextEnabled),
-			"smart_routing.preserved_recent_turns":      intString(originalSettings.PreservedRecentTurns),
-			"smart_routing.max_summary_tokens":          intString(originalSettings.MaxSummaryTokens),
-			"smart_routing.max_compaction_input_tokens": intString(originalSettings.MaxCompactionInputTokens),
-			"smart_routing.context_state_ttl_seconds":   intString(originalSettings.ContextStateTTLSeconds),
+			"smart_routing.context_consensus_enabled":    boolString(originalSettings.ContextConsensusEnabled),
+			"smart_routing.auto_compaction_enabled":      boolString(originalSettings.AutoCompactionEnabled),
+			"smart_routing.allow_tool_result_compaction": boolString(originalSettings.AllowToolResultCompaction),
+			"smart_routing.managed_context_enabled":      boolString(originalSettings.ManagedContextEnabled),
+			"smart_routing.preserved_recent_turns":       intString(originalSettings.PreservedRecentTurns),
+			"smart_routing.max_summary_tokens":           intString(originalSettings.MaxSummaryTokens),
+			"smart_routing.max_compaction_input_tokens":  intString(originalSettings.MaxCompactionInputTokens),
+			"smart_routing.context_state_ttl_seconds":    intString(originalSettings.ContextStateTTLSeconds),
 		}))
 	})
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"smart_routing.context_consensus_enabled":   "true",
-		"smart_routing.auto_compaction_enabled":     "true",
-		"smart_routing.preserved_recent_turns":      "4",
-		"smart_routing.max_summary_tokens":          "1024",
-		"smart_routing.max_compaction_input_tokens": "64000",
+		"smart_routing.context_consensus_enabled":    "true",
+		"smart_routing.auto_compaction_enabled":      "true",
+		"smart_routing.allow_tool_result_compaction": "true",
+		"smart_routing.preserved_recent_turns":       "4",
+		"smart_routing.max_summary_tokens":           "1024",
+		"smart_routing.max_compaction_input_tokens":  "64000",
 	}))
 
 	tests := []struct {
@@ -64,6 +66,7 @@ func TestCaptureContextConsensusPolicyRequiresAllThreeAuthorizations(t *testing.
 			assert.Equal(t, 4, snapshot.PreservedRecentTurns)
 			assert.Equal(t, 1024, snapshot.MaxSummaryTokens)
 			assert.Equal(t, 64000, snapshot.TargetInputTokens)
+			assert.True(t, snapshot.AllowToolResultCompaction)
 			assert.Empty(t, context.Request.Header.Get(contextModeHeader))
 		})
 	}
