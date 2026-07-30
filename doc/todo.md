@@ -100,7 +100,7 @@
 - [ ] 完成 `ContextConsensus` 阶段 D：工具结果安全压缩、provider file 生命周期和聚合可视化。
   - [ ] 完成阶段 D-1：首批 OpenAI Chat Completions 单工具串行原子段压缩和聚合诊断。
     - [x] 完成阶段 D-1a：补齐 call/result 协议与因果序号证据，建立只含 digest 的结构资格评估；现有工具压缩硬门禁保持不变，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`。
-    - [ ] 完成阶段 D-1b：实现服务端注册、版本化、默认拒绝的结构化工具结果白名单脱敏策略。
+    - [x] 完成阶段 D-1b：实现服务端构造、sanitizer/policy/tool/schema 版本精确绑定且默认拒绝的 JSON Pointer 白名单脱敏注册表；拒绝未知字段、重复键、敏感值和超限结构，仅输出带进程内完整性证明的有界标量投影，见 `doc/auto-smart-routing-context-consensus-stage-d1b-implementation-2026-07-30.md`。
     - [ ] 完成阶段 D-1c：新增 Summary v2，并闭合单个旧串行 Chat 工具原子段的 plan、prompt、rewrite 和 runtime。
     - [ ] 完成阶段 D-1d：增加有限 reason code 聚合诊断 API 和后台页面，不展示原始工具状态或会话内容。
   - [ ] 完成阶段 D-2：统一并行 group 语义后评估稳定 ID 协议的并行工具组；Gemini 同名并行继续失败关闭。

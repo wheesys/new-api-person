@@ -1,10 +1,14 @@
 package contextconsensus
 
 import (
+	"encoding/hex"
+	"errors"
 	"strings"
 
 	"github.com/QuantumNous/new-api/types"
 )
+
+var ErrToolCompactionEvidenceInvalid = errors.New("tool compaction structural evidence is invalid")
 
 const (
 	ToolCompactionReasonEnvelopeUnavailable = "tool_compaction_envelope_unavailable"
@@ -18,6 +22,7 @@ const (
 	ToolCompactionReasonOpaqueState         = "tool_compaction_opaque_state"
 	ToolCompactionReasonIdentityMissing     = "tool_compaction_identity_missing"
 	ToolCompactionReasonDigestMissing       = "tool_compaction_digest_missing"
+	ToolCompactionReasonDigestInvalid       = "tool_compaction_digest_invalid"
 	ToolCompactionReasonSequenceInvalid     = "tool_compaction_sequence_invalid"
 )
 
@@ -33,6 +38,26 @@ type ToolCompactionStructuralEvidence struct {
 	ArgumentsDigest    string             `json:"arguments_digest"`
 	ResultDigest       string             `json:"result_digest"`
 	SchemaDigest       string             `json:"schema_digest"`
+	integrityDigest    string
+}
+
+func (evidence ToolCompactionStructuralEvidence) Validate() error {
+	if evidence.Protocol != types.RelayFormatOpenAI || evidence.CallSequence < 0 || evidence.ResultSequence <= evidence.CallSequence ||
+		evidence.Status != ToolExchangeCompleted || !validToolCompactionDigest(evidence.CallIdentityDigest) ||
+		!validToolCompactionDigest(evidence.ToolIdentityDigest) || !validToolCompactionDigest(evidence.ArgumentsDigest) ||
+		!validToolCompactionDigest(evidence.ResultDigest) || !validToolCompactionDigest(evidence.SchemaDigest) ||
+		evidence.integrityDigest == "" || evidence.integrityDigest != digestValue(evidence) {
+		return ErrToolCompactionEvidenceInvalid
+	}
+	return nil
+}
+
+func validToolCompactionDigest(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 type ToolCompactionStructuralAssessment struct {
@@ -85,6 +110,11 @@ func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionS
 	if strings.TrimSpace(exchange.ArgumentsDigest) == "" || strings.TrimSpace(exchange.ResultDigest) == "" {
 		reasonCodes = append(reasonCodes, ToolCompactionReasonDigestMissing)
 	}
+	if (exchange.ArgumentsDigest != "" && !validToolCompactionDigest(exchange.ArgumentsDigest)) ||
+		(exchange.ResultDigest != "" && !validToolCompactionDigest(exchange.ResultDigest)) ||
+		(envelope.ToolState.SchemaDigest != "" && !validToolCompactionDigest(envelope.ToolState.SchemaDigest)) {
+		reasonCodes = append(reasonCodes, ToolCompactionReasonDigestInvalid)
+	}
 	if exchange.ResultSequence == nil || *exchange.ResultSequence <= exchange.Sequence {
 		reasonCodes = append(reasonCodes, ToolCompactionReasonSequenceInvalid)
 	}
@@ -92,18 +122,20 @@ func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionS
 		return ToolCompactionStructuralAssessment{ReasonCodes: reasonCodes}
 	}
 
+	evidence := ToolCompactionStructuralEvidence{
+		Protocol:           envelope.Protocol,
+		CallSequence:       exchange.Sequence,
+		ResultSequence:     *exchange.ResultSequence,
+		Status:             exchange.Status,
+		CallIdentityDigest: digestString(exchange.CallID),
+		ToolIdentityDigest: digestString(exchange.FunctionName),
+		ArgumentsDigest:    exchange.ArgumentsDigest,
+		ResultDigest:       exchange.ResultDigest,
+		SchemaDigest:       envelope.ToolState.SchemaDigest,
+	}
+	evidence.integrityDigest = digestValue(evidence)
 	return ToolCompactionStructuralAssessment{
 		ReadyForSanitization: true,
-		Evidence: &ToolCompactionStructuralEvidence{
-			Protocol:           envelope.Protocol,
-			CallSequence:       exchange.Sequence,
-			ResultSequence:     *exchange.ResultSequence,
-			Status:             exchange.Status,
-			CallIdentityDigest: digestString(exchange.CallID),
-			ToolIdentityDigest: digestString(exchange.FunctionName),
-			ArgumentsDigest:    exchange.ArgumentsDigest,
-			ResultDigest:       exchange.ResultDigest,
-			SchemaDigest:       envelope.ToolState.SchemaDigest,
-		},
+		Evidence:             &evidence,
 	}
 }

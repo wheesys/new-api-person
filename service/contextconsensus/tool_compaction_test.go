@@ -28,6 +28,7 @@ func TestAssessSingleSerialToolCompactionProducesSafeStructuralEvidence(t *testi
 	require.True(t, assessment.ReadyForSanitization)
 	require.Empty(t, assessment.ReasonCodes)
 	require.NotNil(t, assessment.Evidence)
+	require.NoError(t, assessment.Evidence.Validate())
 	assert.Equal(t, 1, assessment.Evidence.CallSequence)
 	assert.Equal(t, 2, assessment.Evidence.ResultSequence)
 	assert.Equal(t, ToolExchangeCompleted, assessment.Evidence.Status)
@@ -37,6 +38,12 @@ func TestAssessSingleSerialToolCompactionProducesSafeStructuralEvidence(t *testi
 	for _, sensitiveValue := range []string{"call-sensitive-id", "lookup_private_account", "secret-account", "secret-result-value"} {
 		assert.NotContains(t, string(encoded), sensitiveValue)
 	}
+	var serializedEvidence ToolCompactionStructuralEvidence
+	require.NoError(t, common.Unmarshal(encodedEvidence(t, assessment.Evidence), &serializedEvidence))
+	require.ErrorIs(t, serializedEvidence.Validate(), ErrToolCompactionEvidenceInvalid)
+	tamperedEvidence := *assessment.Evidence
+	tamperedEvidence.ResultDigest = digestString("different-result")
+	require.ErrorIs(t, tamperedEvidence.Validate(), ErrToolCompactionEvidenceInvalid)
 
 	_, err = BuildCompactionPlan(CompactionPlanRequest{
 		Protocol: types.RelayFormatOpenAI,
@@ -47,16 +54,23 @@ func TestAssessSingleSerialToolCompactionProducesSafeStructuralEvidence(t *testi
 	require.ErrorContains(t, err, "tool context cannot be compacted")
 }
 
+func encodedEvidence(t *testing.T, evidence *ToolCompactionStructuralEvidence) []byte {
+	t.Helper()
+	encoded, err := common.Marshal(evidence)
+	require.NoError(t, err)
+	return encoded
+}
+
 func TestAssessSingleSerialToolCompactionFailsClosed(t *testing.T) {
 	resultSequence := 2
 	baseEnvelope := ContextEnvelope{
 		Protocol:        types.RelayFormatOpenAI,
 		ProviderBinding: ProtocolBinding{BindingLevel: BindingLevelNone, RelayFormat: types.RelayFormatOpenAI},
 		ToolState: ToolGraph{
-			SchemaDigest: "schema-digest",
+			SchemaDigest: digestString("schema"),
 			Exchanges: []ToolExchange{{
 				Protocol: types.RelayFormatOpenAI, Sequence: 1, ResultSequence: &resultSequence,
-				CallID: "call-1", FunctionName: "lookup", ArgumentsDigest: "arguments-digest", ResultDigest: "result-digest",
+				CallID: "call-1", FunctionName: "lookup", ArgumentsDigest: digestString("arguments"), ResultDigest: digestString("result"),
 				Status: ToolExchangeCompleted, RawCallPresent: true, RawResultPresent: true,
 			}},
 		},
@@ -79,6 +93,7 @@ func TestAssessSingleSerialToolCompactionFailsClosed(t *testing.T) {
 		{name: "opaque state", mutate: func(envelope *ContextEnvelope) { envelope.ToolState.Exchanges[0].OpaqueStatePresent = true }, reasonCode: ToolCompactionReasonOpaqueState},
 		{name: "identity missing", mutate: func(envelope *ContextEnvelope) { envelope.ToolState.Exchanges[0].CallID = "" }, reasonCode: ToolCompactionReasonIdentityMissing},
 		{name: "digest missing", mutate: func(envelope *ContextEnvelope) { envelope.ToolState.Exchanges[0].ResultDigest = "" }, reasonCode: ToolCompactionReasonDigestMissing},
+		{name: "digest malformed", mutate: func(envelope *ContextEnvelope) { envelope.ToolState.Exchanges[0].ResultDigest = "not-a-digest" }, reasonCode: ToolCompactionReasonDigestInvalid},
 		{name: "sequence invalid", mutate: func(envelope *ContextEnvelope) { envelope.ToolState.Exchanges[0].ResultSequence = nil }, reasonCode: ToolCompactionReasonSequenceInvalid},
 	}
 	for _, test := range tests {
