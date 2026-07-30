@@ -41,6 +41,7 @@ const (
 type ToolExchange struct {
 	Protocol           types.RelayFormat  `json:"protocol"`
 	Sequence           int                `json:"sequence"`
+	ResultSequence     *int               `json:"result_sequence,omitempty"`
 	ParallelGroup      int                `json:"parallel_group"`
 	CallID             string             `json:"-"`
 	FunctionName       string             `json:"-"`

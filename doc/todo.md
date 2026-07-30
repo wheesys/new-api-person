@@ -97,7 +97,14 @@
       - [x] 完成阶段 C-3b1：为主调用与摘要子调用增加数据库持久化计费 operation，原子处理 API Key 额度、用户/渠道统计、冻结价格结果及消费日志 outbox；支持 active/previous key 定位迁移和独立 SQL 日志库，ClickHouse 托管计费失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`。
       - [x] 完成阶段 C-3b2：增加稳定客户端幂等键、revision intent、`settled_pending_commit`/`committed` outcome 和已提交响应回放，闭合上游成功但客户端重试时的跨请求恢复，见 `doc/auto-smart-routing-context-consensus-stage-c3b2-implementation-2026-07-29.md`。
     - [x] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生非流式 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3c-implementation-2026-07-30.md`。
-- [ ] 如需继续推进，评估智能路由后台配置与指标展示页面。
+- [ ] 完成 `ContextConsensus` 阶段 D：工具结果安全压缩、provider file 生命周期和聚合可视化。
+  - [ ] 完成阶段 D-1：首批 OpenAI Chat Completions 单工具串行原子段压缩和聚合诊断。
+    - [x] 完成阶段 D-1a：补齐 call/result 协议与因果序号证据，建立只含 digest 的结构资格评估；现有工具压缩硬门禁保持不变，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`。
+    - [ ] 完成阶段 D-1b：实现服务端注册、版本化、默认拒绝的结构化工具结果白名单脱敏策略。
+    - [ ] 完成阶段 D-1c：新增 Summary v2，并闭合单个旧串行 Chat 工具原子段的 plan、prompt、rewrite 和 runtime。
+    - [ ] 完成阶段 D-1d：增加有限 reason code 聚合诊断 API 和后台页面，不展示原始工具状态或会话内容。
+  - [ ] 完成阶段 D-2：统一并行 group 语义后评估稳定 ID 协议的并行工具组；Gemini 同名并行继续失败关闭。
+  - [ ] 完成阶段 D-3：具备 adaptor 权威所有权、到期和删除能力后，实现 provider file 生命周期。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。
 - [ ] 如需继续推进，检查后台页面是否需要增加渠道能力预览说明。

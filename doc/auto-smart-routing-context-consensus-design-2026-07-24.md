@@ -589,6 +589,17 @@ allow_tool_result_compaction=false
 - 单独评审工具结果脱敏和压缩。
 - 增加后台配置、状态诊断、失败原因和指标页面。
 
+实施拆分：
+
+- D-1a：补齐工具图的 call/result 协议与因果序号证据，建立 OpenAI Chat 单工具串行结构资格评估；只输出 digest 和有限 reason code，不开放运行时压缩。
+- D-1b：实现服务端注册、版本化、默认拒绝的结构化 JSON Pointer 白名单脱敏策略；未知字段、非 JSON、敏感值和超限结构失败关闭。
+- D-1c：新增 Summary v2，闭合单个旧串行 Chat 工具原子段的 plan、prompt、rewrite 和 runtime；call、result、最终 assistant 回复整体压缩或整体保留。
+- D-1d：复用现有管理员鉴权和有界日志聚合，增加只读诊断 API 与后台页面；禁止展示原始 call ID、函数名、参数、结果、digest、文件引用或摘要正文。
+- D-2：统一并行 group 语义后评估稳定 ID 协议的并行工具组；Gemini 同名并行继续失败关闭。
+- D-3：在 adaptor 提供权威所有权、到期和删除能力后实现 provider file 生命周期。
+
+实施状态：阶段 D-1a 已完成工具结果因果序号、跨协议/逆序 result 拒绝和只含 digest 的单工具串行结构资格评估，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`。`BuildCompactionPlan` 继续拒绝所有工具上下文，Summary v1、managed、其他协议、并行工具和 provider file 行为不变。
+
 ## 23. 测试矩阵
 
 ### 23.1 协议与状态
@@ -640,6 +651,6 @@ allow_tool_result_compaction=false
 
 ## 25. 推荐下一步
 
-下一步进入阶段 D 前置评审：先冻结工具结果脱敏、单/并行工具图、provider file 生命周期和可视化诊断边界，再决定实施拆分。不得把阶段 C-3c 的纯文本 OpenAI Responses binding 直接推广到工具、多模态或其他 provider opaque state。
+下一步完成阶段 D-1b：建立服务端注册、版本化、默认拒绝的结构化工具结果脱敏策略。策略必须绑定 tool identity digest、schema digest 和 sanitizer version，只允许显式 JSON Pointer 白名单及有界标量；原始参数、结果、工具名称、schema、凭据、URL、provider file 和 opaque state 不得进入摘要子请求。
 
 发布前应在真实 Redis 和 OpenAI 测试账号上补充网络中断、Redis 超时、进程退出、active/previous key 轮换及旧密钥退役故障注入。`managed_context_enabled` 在这些门禁通过前继续默认关闭。

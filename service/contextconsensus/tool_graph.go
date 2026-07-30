@@ -75,11 +75,12 @@ func ValidateToolGraph(events []ToolEvent) (ToolGraph, []ValidationIssue) {
 
 		case ToolEventResult:
 			exchangeIndex, found := callIndexByID[strings.TrimSpace(event.CallID)]
+			matchedFunctionName := ""
 			if event.MatchByName {
-				pending := pendingByFunctionName[strings.TrimSpace(event.FunctionName)]
+				matchedFunctionName = strings.TrimSpace(event.FunctionName)
+				pending := pendingByFunctionName[matchedFunctionName]
 				if len(pending) > 0 {
 					exchangeIndex = pending[0]
-					pendingByFunctionName[strings.TrimSpace(event.FunctionName)] = pending[1:]
 					found = true
 				}
 			}
@@ -91,7 +92,20 @@ func ValidateToolGraph(events []ToolEvent) (ToolGraph, []ValidationIssue) {
 				issues = append(issues, ValidationIssue{Code: "duplicate_tool_result", Path: path, Message: "tool call has more than one result"})
 				continue
 			}
+			if event.Protocol != graph.Exchanges[exchangeIndex].Protocol {
+				issues = append(issues, ValidationIssue{Code: "tool_result_protocol_mismatch", Path: path, Message: "tool result protocol does not match its call"})
+				continue
+			}
+			if event.Sequence <= graph.Exchanges[exchangeIndex].Sequence {
+				issues = append(issues, ValidationIssue{Code: "tool_result_order_invalid", Path: path, Message: "tool result must occur after its call"})
+				continue
+			}
+			if event.MatchByName {
+				pendingByFunctionName[matchedFunctionName] = pendingByFunctionName[matchedFunctionName][1:]
+			}
+			resultSequence := event.Sequence
 			graph.Exchanges[exchangeIndex].ResultDigest = event.PayloadDigest
+			graph.Exchanges[exchangeIndex].ResultSequence = &resultSequence
 			graph.Exchanges[exchangeIndex].RawResultPresent = true
 			graph.Exchanges[exchangeIndex].Status = ToolExchangeCompleted
 			graph.Exchanges[exchangeIndex].OpaqueStatePresent = graph.Exchanges[exchangeIndex].OpaqueStatePresent || event.OpaqueStatePresent
