@@ -3,6 +3,7 @@ package contextconsensus
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -11,6 +12,12 @@ import (
 var ErrToolCompactionEvidenceInvalid = errors.New("tool compaction structural evidence is invalid")
 
 const (
+	ToolCompactionDiagnosticSchemaVersion = 1
+
+	ToolCompactionDiagnosticNotApplicable        = "not_applicable"
+	ToolCompactionDiagnosticReadyForSanitization = "ready_for_sanitization"
+	ToolCompactionDiagnosticBlocked              = "blocked"
+
 	ToolCompactionReasonEnvelopeUnavailable = "tool_compaction_envelope_unavailable"
 	ToolCompactionReasonProtocolUnsupported = "tool_compaction_protocol_unsupported"
 	ToolCompactionReasonProviderBound       = "tool_compaction_provider_bound"
@@ -25,6 +32,90 @@ const (
 	ToolCompactionReasonDigestInvalid       = "tool_compaction_digest_invalid"
 	ToolCompactionReasonSequenceInvalid     = "tool_compaction_sequence_invalid"
 )
+
+const toolCompactionReasonCodeCount = 13
+
+// ToolCompactionDiagnostic is the only tool-compaction assessment that may be
+// persisted. It intentionally excludes structural evidence and digests.
+type ToolCompactionDiagnostic struct {
+	SchemaVersion int      `json:"schema_version"`
+	Status        string   `json:"status"`
+	ReasonCodes   []string `json:"reason_codes"`
+}
+
+func NewToolCompactionDiagnostic(envelope *ContextEnvelope, applicable bool) ToolCompactionDiagnostic {
+	diagnostic := ToolCompactionDiagnostic{
+		SchemaVersion: ToolCompactionDiagnosticSchemaVersion,
+		Status:        ToolCompactionDiagnosticNotApplicable,
+		ReasonCodes:   []string{},
+	}
+	if !applicable {
+		return diagnostic
+	}
+
+	assessment := AssessSingleSerialToolCompaction(envelope)
+	if assessment.ReadyForSanitization {
+		diagnostic.Status = ToolCompactionDiagnosticReadyForSanitization
+		return diagnostic
+	}
+	diagnostic.Status = ToolCompactionDiagnosticBlocked
+	diagnostic.ReasonCodes = append([]string{}, assessment.ReasonCodes...)
+	return diagnostic
+}
+
+func (diagnostic ToolCompactionDiagnostic) Validate() error {
+	if diagnostic.SchemaVersion != ToolCompactionDiagnosticSchemaVersion {
+		return fmt.Errorf("unsupported tool compaction diagnostic schema")
+	}
+	if len(diagnostic.ReasonCodes) > toolCompactionReasonCodeCount {
+		return fmt.Errorf("too many tool compaction diagnostic reason codes")
+	}
+	seen := make(map[string]struct{}, len(diagnostic.ReasonCodes))
+	for _, reasonCode := range diagnostic.ReasonCodes {
+		if !validToolCompactionReasonCode(reasonCode) {
+			return fmt.Errorf("unknown tool compaction diagnostic reason code")
+		}
+		if _, duplicate := seen[reasonCode]; duplicate {
+			return fmt.Errorf("duplicate tool compaction diagnostic reason code")
+		}
+		seen[reasonCode] = struct{}{}
+	}
+
+	switch diagnostic.Status {
+	case ToolCompactionDiagnosticNotApplicable, ToolCompactionDiagnosticReadyForSanitization:
+		if len(diagnostic.ReasonCodes) != 0 {
+			return fmt.Errorf("tool compaction diagnostic status cannot include reason codes")
+		}
+	case ToolCompactionDiagnosticBlocked:
+		if len(diagnostic.ReasonCodes) == 0 {
+			return fmt.Errorf("blocked tool compaction diagnostic requires a reason code")
+		}
+	default:
+		return fmt.Errorf("unknown tool compaction diagnostic status")
+	}
+	return nil
+}
+
+func validToolCompactionReasonCode(reasonCode string) bool {
+	switch reasonCode {
+	case ToolCompactionReasonEnvelopeUnavailable,
+		ToolCompactionReasonProtocolUnsupported,
+		ToolCompactionReasonProviderBound,
+		ToolCompactionReasonMediaPresent,
+		ToolCompactionReasonSchemaMissing,
+		ToolCompactionReasonGraphAmbiguous,
+		ToolCompactionReasonExchangeCount,
+		ToolCompactionReasonExchangeIncomplete,
+		ToolCompactionReasonOpaqueState,
+		ToolCompactionReasonIdentityMissing,
+		ToolCompactionReasonDigestMissing,
+		ToolCompactionReasonDigestInvalid,
+		ToolCompactionReasonSequenceInvalid:
+		return true
+	default:
+		return false
+	}
+}
 
 // ToolCompactionStructuralEvidence contains only digests and causal metadata.
 // It is not authorization to send tool content to a compaction model.

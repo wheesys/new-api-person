@@ -255,6 +255,7 @@ export type ModelTabCategory =
   | 'deployments'
   | 'pricing'
   | 'group-management'
+  | 'context-consensus'
 
 /**
  * Deployment entity from API

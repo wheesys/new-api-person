@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useEffect } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ContextConsensusDiagnostics } from '@/features/context-consensus-diagnostics'
 
 import { ModelsDialogs } from './components/models-dialogs'
 import {
@@ -49,6 +50,9 @@ const SECTION_META: Record<ModelsSectionId, { titleKey: string }> = {
   'group-management': {
     titleKey: 'Group Management',
   },
+  'context-consensus': {
+    titleKey: 'Context Diagnostics',
+  },
 }
 
 function ModelsContent() {
@@ -58,6 +62,7 @@ function ModelsContent() {
   const params = route.useParams()
   const activeSection = (params.section ??
     MODELS_DEFAULT_SECTION) as ModelsSectionId
+  const activeTabRef = useRef<HTMLButtonElement | null>(null)
 
   // keep context state in sync (for components that rely on it)
   useEffect(() => {
@@ -65,6 +70,19 @@ function ModelsContent() {
       setTabCategory(activeSection)
     }
   }, [activeSection, setTabCategory, tabCategory])
+
+  useEffect(() => {
+    const revealActiveTab = () => {
+      activeTabRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      })
+    }
+
+    revealActiveTab()
+    window.addEventListener('resize', revealActiveTab)
+    return () => window.removeEventListener('resize', revealActiveTab)
+  }, [activeSection])
 
   const handleSectionChange = useCallback(
     (section: string) => {
@@ -89,10 +107,18 @@ function ModelsContent() {
         <SectionPageLayout.Actions>{sectionActions}</SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex h-full min-h-0 flex-col gap-4'>
-            <Tabs value={activeSection} onValueChange={handleSectionChange}>
-              <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
+            <Tabs
+              value={activeSection}
+              onValueChange={handleSectionChange}
+              className='min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+            >
+              <TabsList className='max-w-none shrink-0 justify-start'>
                 {MODELS_SECTION_IDS.map((section) => (
-                  <TabsTrigger key={section} value={section}>
+                  <TabsTrigger
+                    key={section}
+                    value={section}
+                    ref={section === activeSection ? activeTabRef : undefined}
+                  >
                     {t(SECTION_META[section].titleKey)}
                   </TabsTrigger>
                 ))}
@@ -103,6 +129,11 @@ function ModelsContent() {
               {activeSection === 'pricing' && <ModelsPricingSection />}
               {activeSection === 'group-management' && (
                 <ModelsGroupManagementSection />
+              )}
+              {activeSection === 'context-consensus' && (
+                <div className='h-full overflow-y-auto pb-1'>
+                  <ContextConsensusDiagnostics />
+                </div>
               )}
             </div>
           </div>

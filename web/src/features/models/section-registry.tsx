@@ -37,6 +37,11 @@ const MODELS_SECTIONS = [
     titleKey: 'Group Management',
     build: () => null, // Content is rendered directly in the page component
   },
+  {
+    id: 'context-consensus',
+    titleKey: 'Context Diagnostics',
+    build: () => null, // Content is rendered directly in the page component
+  },
 ] as const
 
 export type ModelsSectionId = (typeof MODELS_SECTIONS)[number]['id']

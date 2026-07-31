@@ -4,17 +4,19 @@ import { describe, test } from 'node:test'
 import type { TFunction } from 'i18next'
 
 import { BILLING_SECTION_IDS } from '../system-settings/billing/section-registry'
-import { getModelsSectionNavItems, MODELS_SECTION_IDS } from './section-registry'
+import {
+  getModelsSectionNavItems,
+  MODELS_SECTION_IDS,
+} from './section-registry'
 
 const translate = ((key: string) => key) as TFunction
 
 describe('models management navigation sections', () => {
   test('exposes model pricing and group management from model management', () => {
-    assert.deepEqual([...MODELS_SECTION_IDS], [
-      'metadata',
-      'pricing',
-      'group-management',
-    ])
+    assert.deepEqual(
+      [...MODELS_SECTION_IDS],
+      ['metadata', 'pricing', 'group-management', 'context-consensus']
+    )
 
     assert.deepEqual(
       getModelsSectionNavItems(translate).map((item) => ({
@@ -25,6 +27,10 @@ describe('models management navigation sections', () => {
         { title: 'Metadata', url: '/models/metadata' },
         { title: 'Pricing', url: '/models/pricing' },
         { title: 'Group Management', url: '/models/group-management' },
+        {
+          title: 'Context Diagnostics',
+          url: '/models/context-consensus',
+        },
       ]
     )
   })

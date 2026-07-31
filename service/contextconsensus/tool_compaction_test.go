@@ -116,3 +116,48 @@ func TestAssessSingleSerialToolCompactionRejectsMissingEnvelope(t *testing.T) {
 	assert.False(t, assessment.ReadyForSanitization)
 	assert.Equal(t, []string{ToolCompactionReasonEnvelopeUnavailable}, assessment.ReasonCodes)
 }
+
+func TestToolCompactionDiagnosticExcludesStructuralEvidenceAndValidatesFiniteReasons(t *testing.T) {
+	resultSequence := 2
+	envelope := &ContextEnvelope{
+		Protocol: types.RelayFormatOpenAI,
+		ToolState: ToolGraph{
+			SchemaDigest: digestString("schema"),
+			Exchanges: []ToolExchange{{
+				Protocol: types.RelayFormatOpenAI, Sequence: 1, ResultSequence: &resultSequence,
+				CallID: "call-sensitive-id", FunctionName: "lookup-sensitive-tool",
+				ArgumentsDigest: digestString("secret-arguments"), ResultDigest: digestString("secret-result"),
+				Status: ToolExchangeCompleted, RawCallPresent: true, RawResultPresent: true,
+			}},
+		},
+	}
+
+	ready := NewToolCompactionDiagnostic(envelope, true)
+	require.NoError(t, ready.Validate())
+	assert.Equal(t, ToolCompactionDiagnosticReadyForSanitization, ready.Status)
+	encoded, err := common.Marshal(ready)
+	require.NoError(t, err)
+	for _, forbidden := range []string{"evidence", "digest", "call-sensitive-id", "lookup-sensitive-tool", "secret-arguments", "secret-result"} {
+		assert.NotContains(t, string(encoded), forbidden)
+	}
+
+	notApplicable := NewToolCompactionDiagnostic(envelope, false)
+	require.NoError(t, notApplicable.Validate())
+	assert.Equal(t, ToolCompactionDiagnosticNotApplicable, notApplicable.Status)
+
+	envelope.MediaState.FileCount = 1
+	blocked := NewToolCompactionDiagnostic(envelope, true)
+	require.NoError(t, blocked.Validate())
+	assert.Equal(t, ToolCompactionDiagnosticBlocked, blocked.Status)
+	assert.Equal(t, []string{ToolCompactionReasonMediaPresent}, blocked.ReasonCodes)
+
+	tests := []ToolCompactionDiagnostic{
+		{SchemaVersion: ToolCompactionDiagnosticSchemaVersion, Status: ToolCompactionDiagnosticBlocked},
+		{SchemaVersion: ToolCompactionDiagnosticSchemaVersion, Status: ToolCompactionDiagnosticReadyForSanitization, ReasonCodes: []string{ToolCompactionReasonMediaPresent}},
+		{SchemaVersion: ToolCompactionDiagnosticSchemaVersion, Status: ToolCompactionDiagnosticBlocked, ReasonCodes: []string{"sensitive-unknown-reason"}},
+		{SchemaVersion: ToolCompactionDiagnosticSchemaVersion, Status: ToolCompactionDiagnosticBlocked, ReasonCodes: []string{ToolCompactionReasonMediaPresent, ToolCompactionReasonMediaPresent}},
+	}
+	for _, diagnostic := range tests {
+		assert.Error(t, diagnostic.Validate())
+	}
+}

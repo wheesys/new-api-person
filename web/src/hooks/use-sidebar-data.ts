@@ -132,6 +132,10 @@ export function useSidebarData(): SidebarData {
                 title: t('Group Management'),
                 url: '/models/group-management',
               },
+              {
+                title: t('Context Diagnostics'),
+                url: '/models/context-consensus',
+              },
             ],
           },
           {

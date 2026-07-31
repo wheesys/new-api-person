@@ -260,13 +260,8 @@ func buildSmartRouteRequest(c *gin.Context, modelRequest *ModelRequest, usingGro
 		})
 		if envelope != nil {
 			request.ContextConstraint = envelope.RoutingConstraint(request.EstimatedPromptTokens)
-			toolContextPresent := len(envelope.ToolState.Exchanges) > 0 || envelope.ToolState.SchemaDigest != ""
-			for _, segment := range envelope.PreservedSegments {
-				if segment.Kind == contextconsensus.SegmentKindToolCall || segment.Kind == contextconsensus.SegmentKindToolResult {
-					toolContextPresent = true
-					break
-				}
-			}
+			toolContextPresent := contextEnvelopeHasToolContext(envelope)
+			request.ToolCompactionDiagnostic = contextconsensus.NewToolCompactionDiagnostic(envelope, toolContextPresent)
 			if toolContextPresent {
 				common.SetContextKey(c, constant.ContextKeySuppressDebugLog, true)
 			}
@@ -276,6 +271,21 @@ func buildSmartRouteRequest(c *gin.Context, modelRequest *ModelRequest, usingGro
 		}
 	}
 	return request, nil
+}
+
+func contextEnvelopeHasToolContext(envelope *contextconsensus.ContextEnvelope) bool {
+	if envelope == nil {
+		return false
+	}
+	if len(envelope.ToolState.Exchanges) > 0 || envelope.ToolState.SchemaDigest != "" {
+		return true
+	}
+	for _, segment := range envelope.PreservedSegments {
+		if segment.Kind == contextconsensus.SegmentKindToolCall || segment.Kind == contextconsensus.SegmentKindToolResult {
+			return true
+		}
+	}
+	return false
 }
 
 func buildSmartRouteCandidates(c *gin.Context, request smartrouting.SmartRouteRequest, usingGroup string) ([]smartrouting.SmartRouteCandidate, error) {
@@ -496,20 +506,21 @@ func smartRoutingContextConsensusLog(request smartrouting.SmartRouteRequest) sma
 		mode = "stateless_full_context"
 	}
 	return smartrouting.ContextConsensusLog{
-		Mode:                    mode,
-		Version:                 1,
-		ValidationMode:          constraint.ValidationMode,
-		ValidationResult:        constraint.ValidationResult,
-		Protocol:                string(constraint.Protocol),
-		Compacted:               false,
-		PreservedRecentMessages: preservedRecentMessages(request.TokenMeta),
-		PreservedSegmentCount:   constraint.PreservedSegmentCount,
-		ToolExchangeCount:       constraint.ToolExchangeCount,
-		InputTokensBefore:       constraint.EffectivePromptTokens,
-		BindingLevel:            string(constraint.RequiredBinding),
-		BindingReasonCodes:      append([]string(nil), constraint.ReasonCodes...),
-		SwitchAllowed:           smartRoutingContextSwitchAllowed(request),
-		WouldBlock:              constraint.WouldBlock,
+		Mode:                     mode,
+		Version:                  1,
+		ValidationMode:           constraint.ValidationMode,
+		ValidationResult:         constraint.ValidationResult,
+		Protocol:                 string(constraint.Protocol),
+		Compacted:                false,
+		PreservedRecentMessages:  preservedRecentMessages(request.TokenMeta),
+		PreservedSegmentCount:    constraint.PreservedSegmentCount,
+		ToolExchangeCount:        constraint.ToolExchangeCount,
+		InputTokensBefore:        constraint.EffectivePromptTokens,
+		BindingLevel:             string(constraint.RequiredBinding),
+		BindingReasonCodes:       append([]string(nil), constraint.ReasonCodes...),
+		SwitchAllowed:            smartRoutingContextSwitchAllowed(request),
+		WouldBlock:               constraint.WouldBlock,
+		ToolCompactionDiagnostic: request.ToolCompactionDiagnostic,
 	}
 }
 

@@ -71,25 +71,26 @@ const (
 )
 
 type SmartRouteRequest struct {
-	OriginalModel         string
-	EndpointType          EndpointType
-	UsingGroup            string
-	TokenID               int
-	UserID                int
-	Stream                bool
-	EstimatedPromptTokens int
-	MaxOutputTokens       int
-	ContextTokensRequired int
-	HasTools              bool
-	ToolCount             int
-	RequiresJSONSchema    bool
-	HasImages             bool
-	HasAudio              bool
-	HasFiles              bool
-	ReasoningRequested    bool
-	RequiresReliability   bool
-	TokenMeta             *types.TokenCountMeta
-	ContextConstraint     contextconsensus.ContextRoutingConstraint
+	OriginalModel            string
+	EndpointType             EndpointType
+	UsingGroup               string
+	TokenID                  int
+	UserID                   int
+	Stream                   bool
+	EstimatedPromptTokens    int
+	MaxOutputTokens          int
+	ContextTokensRequired    int
+	HasTools                 bool
+	ToolCount                int
+	RequiresJSONSchema       bool
+	HasImages                bool
+	HasAudio                 bool
+	HasFiles                 bool
+	ReasoningRequested       bool
+	RequiresReliability      bool
+	TokenMeta                *types.TokenCountMeta
+	ContextConstraint        contextconsensus.ContextRoutingConstraint
+	ToolCompactionDiagnostic contextconsensus.ToolCompactionDiagnostic
 }
 
 type VirtualModelProfile struct {
@@ -178,27 +179,28 @@ type Decision struct {
 }
 
 type ContextConsensusLog struct {
-	Mode                    string
-	Version                 int
-	ValidationMode          string
-	ValidationResult        string
-	Protocol                string
-	Compacted               bool
-	PreservedRecentMessages int
-	PreservedSegmentCount   int
-	ToolExchangeCount       int
-	InputTokensBefore       int
-	InputTokensAfter        int
-	SummaryDigest           string
-	CompactionModel         string
-	CompactionChannelID     int
-	CompactionRequestID     string
-	CompactionQuota         int
-	CompactionResultCode    string
-	BindingLevel            string
-	BindingReasonCodes      []string
-	SwitchAllowed           bool
-	WouldBlock              bool
+	Mode                     string
+	Version                  int
+	ValidationMode           string
+	ValidationResult         string
+	Protocol                 string
+	Compacted                bool
+	PreservedRecentMessages  int
+	PreservedSegmentCount    int
+	ToolExchangeCount        int
+	InputTokensBefore        int
+	InputTokensAfter         int
+	SummaryDigest            string
+	CompactionModel          string
+	CompactionChannelID      int
+	CompactionRequestID      string
+	CompactionQuota          int
+	CompactionResultCode     string
+	BindingLevel             string
+	BindingReasonCodes       []string
+	SwitchAllowed            bool
+	WouldBlock               bool
+	ToolCompactionDiagnostic contextconsensus.ToolCompactionDiagnostic
 }
 
 type policyWeights struct {
@@ -440,6 +442,14 @@ func (decision Decision) LogFields() map[string]interface{} {
 			contextConsensus["binding_reason_codes"] = append([]string(nil), decision.ContextConsensus.BindingReasonCodes...)
 			contextConsensus["switch_allowed"] = decision.ContextConsensus.SwitchAllowed
 			contextConsensus["would_block"] = decision.ContextConsensus.WouldBlock
+			if decision.ContextConsensus.ToolCompactionDiagnostic.SchemaVersion > 0 {
+				diagnostic := decision.ContextConsensus.ToolCompactionDiagnostic
+				contextConsensus["tool_compaction_diagnostic"] = map[string]interface{}{
+					"schema_version": diagnostic.SchemaVersion,
+					"status":         diagnostic.Status,
+					"reason_codes":   append([]string{}, diagnostic.ReasonCodes...),
+				}
+			}
 		}
 		fields["context_consensus"] = contextConsensus
 	}

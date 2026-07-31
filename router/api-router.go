@@ -42,6 +42,7 @@ func SetApiRouter(router *gin.Engine) {
 		smartRoutingMetricsRoute.Use(middleware.AdminAuth(), middleware.CriticalRateLimit())
 		{
 			smartRoutingMetricsRoute.GET("/metrics", controller.GetSmartRoutingMetrics)
+			smartRoutingMetricsRoute.GET("/context-consensus/diagnostics", controller.GetContextConsensusDiagnostics)
 		}
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)

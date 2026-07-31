@@ -77,3 +77,54 @@ func TestGetSmartRoutingMetricsReturnsSuccessfulDecisionAggregate(t *testing.T) 
 	assert.Equal(t, 1, response.Data.SchemaVersion)
 	assert.Equal(t, int64(1), response.Data.Summary.SuccessfulDecisions)
 }
+
+func TestGetContextConsensusDiagnosticsReturnsOnlyAggregateFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, err := gorm.Open(sqlite.Open("file:context-consensus-diagnostics-controller?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, database.AutoMigrate(&model.Log{}))
+	originalLogDatabase := model.LOG_DB
+	model.LOG_DB = database
+	t.Cleanup(func() { model.LOG_DB = originalLogDatabase })
+
+	other := `{"smart_routing":{"context_consensus":{"protocol":"openai","tool_compaction_diagnostic":{"schema_version":1,"status":"blocked","reason_codes":["tool_compaction_media_present"]}}},"sensitive":"tool-result-must-not-leak"}`
+	require.NoError(t, database.Create(&model.Log{
+		CreatedAt: 1000,
+		Type:      model.LogTypeConsume,
+		ChannelId: 11,
+		ModelName: "sensitive-model-name",
+		RequestId: "sensitive-request-id",
+		Other:     other,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest("GET", "/api/smart-routing/context-consensus/diagnostics?start_timestamp=900&end_timestamp=1100", nil)
+	GetContextConsensusDiagnostics(context)
+
+	assert.Equal(t, 200, recorder.Code)
+	for _, forbidden := range []string{"tool-result-must-not-leak", "sensitive-model-name", "sensitive-request-id"} {
+		assert.NotContains(t, recorder.Body.String(), forbidden)
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			SchemaVersion int `json:"schema_version"`
+			Summary       struct {
+				ToolContexts int64 `json:"tool_contexts"`
+				Blocked      int64 `json:"blocked"`
+			} `json:"summary"`
+			ByReasonCode []struct {
+				ReasonCode string `json:"reason_code"`
+				Count      int64  `json:"count"`
+			} `json:"by_reason_code"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Equal(t, 1, response.Data.SchemaVersion)
+	assert.Equal(t, int64(1), response.Data.Summary.ToolContexts)
+	assert.Equal(t, int64(1), response.Data.Summary.Blocked)
+	require.Len(t, response.Data.ByReasonCode, 1)
+	assert.Equal(t, "tool_compaction_media_present", response.Data.ByReasonCode[0].ReasonCode)
+}

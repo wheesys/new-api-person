@@ -126,10 +126,13 @@ func TestBuildSmartRouteRequestSuppressesDebugLogsForToolExchange(t *testing.T) 
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = request
 
-	_, err := buildSmartRouteRequest(context, &ModelRequest{Model: "gpt-5"}, "default")
+	routeRequest, err := buildSmartRouteRequest(context, &ModelRequest{Model: "gpt-5"}, "default")
 
 	require.NoError(t, err)
 	assert.True(t, common.GetContextKeyBool(context, constant.ContextKeySuppressDebugLog))
+	require.NoError(t, routeRequest.ToolCompactionDiagnostic.Validate())
+	assert.Equal(t, contextconsensus.ToolCompactionDiagnosticReadyForSanitization, routeRequest.ToolCompactionDiagnostic.Status)
+	assert.Empty(t, routeRequest.ToolCompactionDiagnostic.ReasonCodes)
 }
 
 func TestBuildSmartRouteRequestSuppressesDebugLogsForInvalidToolResult(t *testing.T) {

@@ -3,6 +3,7 @@ package smartrouting
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
 	"github.com/stretchr/testify/assert"
@@ -67,6 +68,11 @@ func TestDecisionLogFieldsRecordsCompactionMetadataWithoutPayload(t *testing.T) 
 			CompactionQuota:         42,
 			CompactionResultCode:    "success",
 			PreservedRecentMessages: 6,
+			ToolCompactionDiagnostic: contextconsensus.ToolCompactionDiagnostic{
+				SchemaVersion: contextconsensus.ToolCompactionDiagnosticSchemaVersion,
+				Status:        contextconsensus.ToolCompactionDiagnosticBlocked,
+				ReasonCodes:   []string{contextconsensus.ToolCompactionReasonMediaPresent},
+			},
 		},
 	}
 
@@ -79,6 +85,18 @@ func TestDecisionLogFieldsRecordsCompactionMetadataWithoutPayload(t *testing.T) 
 	assert.Equal(t, "child-request", contextLog["compaction_request_id"])
 	assert.NotContains(t, contextLog, "summary")
 	assert.NotContains(t, contextLog, "request_body")
+	diagnostic, ok := contextLog["tool_compaction_diagnostic"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, map[string]interface{}{
+		"schema_version": contextconsensus.ToolCompactionDiagnosticSchemaVersion,
+		"status":         contextconsensus.ToolCompactionDiagnosticBlocked,
+		"reason_codes":   []string{contextconsensus.ToolCompactionReasonMediaPresent},
+	}, diagnostic)
+	encoded, err := common.Marshal(diagnostic)
+	require.NoError(t, err)
+	for _, forbidden := range []string{"evidence", "_digest", "call_id", "function_name", "arguments", "tool_result", "schema_digest", "file_id", "summary_body"} {
+		assert.NotContains(t, string(encoded), forbidden)
+	}
 }
 
 func TestResolveVirtualModel(t *testing.T) {

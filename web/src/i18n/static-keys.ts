@@ -38,6 +38,28 @@ export const STATIC_I18N_KEYS = [
   'Metadata',
   'Pricing',
   'Group Management',
+  'Context Diagnostics',
+
+  // ContextConsensus diagnostic reason and protocol labels
+  'Context envelope unavailable',
+  'Protocol is not supported',
+  'Provider-bound state is present',
+  'Media content is present',
+  'Tool schema is missing',
+  'Tool graph is ambiguous',
+  'Tool exchange count is not supported',
+  'Tool exchange is incomplete',
+  'Opaque tool state is present',
+  'Tool identity is incomplete',
+  'Structural digest is missing',
+  'Structural digest is invalid',
+  'Tool sequence is invalid',
+  'Unknown structural restriction',
+  'OpenAI Chat Completions',
+  'OpenAI Responses',
+  'Claude Messages',
+  'Google Gemini',
+  'Unknown request protocol',
 
   // System settings sidebar
   'System Administration',
