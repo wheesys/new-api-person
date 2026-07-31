@@ -109,15 +109,26 @@ func TestManagedConsensusKeyDeriverSeparatesProviderFileDomains(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, credentialFingerprint, 64)
 	assert.NotContains(t, credentialFingerprint, "credential-secret")
+	endpointFingerprint, err := deriver.DeriveProviderFileEndpointFingerprint("https://api.openai.com")
+	require.NoError(t, err)
+	scopeFingerprint, err := deriver.DeriveProviderFileScopeFingerprint("org-a", "")
+	require.NoError(t, err)
+	assert.NotEqual(t, endpointFingerprint, scopeFingerprint)
+	uploadFingerprint, err := deriver.DeriveProviderFileUploadFingerprint(ManagedProviderFileUploadFingerprintIdentity{
+		OwnerHMAC: storageKey.OwnerHMAC, ContentDigest: strings.Repeat("b", 64), TargetFingerprint: targetFingerprint,
+		Purpose: "user_data", ExpirationSeconds: 3600,
+	})
+	require.NoError(t, err)
+	assert.Len(t, uploadFingerprint, 64)
 
 	eventHMAC, err := deriver.DeriveProviderFileEventHMAC(ManagedProviderFileEventIdentity{
-		LifecycleID: 3, Sequence: 1, EventType: "intent_created", ToState: "intent",
+		LifecycleHMAC: storageKey.UploadIntentHMAC, Sequence: 1, EventType: "intent_created", ToState: "intent",
 		EvidenceDigest: strings.Repeat("a", 64), CreatedAtUnix: 100,
 	})
 	require.NoError(t, err)
 	assert.Len(t, eventHMAC, 64)
 	_, err = deriver.DeriveProviderFileEventHMAC(ManagedProviderFileEventIdentity{
-		LifecycleID: 3, Sequence: 2, EventType: "activated", FromState: "intent", ToState: "active",
+		LifecycleHMAC: storageKey.UploadIntentHMAC, Sequence: 2, EventType: "activated", FromState: "intent", ToState: "active",
 		EvidenceDigest: strings.Repeat("a", 64), CreatedAtUnix: 101,
 	})
 	require.ErrorContains(t, err, "event identity")

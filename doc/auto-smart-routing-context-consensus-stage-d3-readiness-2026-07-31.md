@@ -53,7 +53,7 @@
 ## 实施拆分
 
 - D-3b.1：已完成领域契约、版本化 HMAC/AEAD、跨数据库持久化模型和默认关闭配置，见 `doc/auto-smart-routing-context-consensus-stage-d3b1-implementation-2026-07-31.md`。
-- D-3b.2：专用上传/查询 API、原生 OpenAI 单 Key 客户端、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定。
+- D-3b.2：已完成专用上传/查询 API、原生 OpenAI 单 Key 客户端、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
 - D-3c.1：删除 outbox、CAS lease worker、有限重试、审计链、告警和渠道变更保护，继续保持生产关闭。
 - D-3c.2：真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。
 

@@ -81,6 +81,11 @@ func TestManagedProviderFileLifecycleIntentIsIdempotentAndOwnerBound(t *testing.
 	assert.False(t, createdNow)
 	assert.Equal(t, created.Id, replayed.Id)
 	require.NoError(t, created.Validate())
+	intentLookup, err := FindManagedProviderFileLifecycleByUploadIntent(context.Background(), []ManagedProviderFileUploadIntentLookupCandidate{{
+		UploadIntentHMAC: intent.UploadIntentHMAC, OwnerHMAC: intent.OwnerHMAC, KeyVersion: intent.LookupKeyVersion,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, created.Id, intentLookup.Id)
 
 	staleEvent := managedProviderFileEvent(2, ManagedProviderFileLifecycleEventUploadDispatched,
 		ManagedProviderFileLifecycleStateIntent, ManagedProviderFileLifecycleStateUploadDispatched, 0, "", "c")
@@ -101,6 +106,13 @@ func TestManagedProviderFileLifecycleIntentIsIdempotentAndOwnerBound(t *testing.
 	conflictingHandle.UploadIntentHMAC = managedProviderFileDigest("d")
 	_, _, err = CreateManagedProviderFileLifecycleIntent(context.Background(), conflictingHandle, event)
 	assert.ErrorIs(t, err, ErrManagedProviderFileLifecycleConflict)
+	replayedWithDifferentGeneratedHandle := intent
+	replayedWithDifferentGeneratedHandle.HandleLookupHMAC = managedProviderFileDigest("e")
+	replayed, createdNow, err = CreateManagedProviderFileLifecycleIntent(context.Background(), replayedWithDifferentGeneratedHandle, event)
+	require.NoError(t, err)
+	assert.False(t, createdNow)
+	assert.Equal(t, created.Id, replayed.Id)
+	assert.Equal(t, intent.HandleLookupHMAC, replayed.HandleLookupHMAC)
 
 	var eventCount int64
 	require.NoError(t, DB.Model(&ManagedProviderFileLifecycleEvent{}).Where("lifecycle_id = ?", created.Id).Count(&eventCount).Error)
@@ -224,6 +236,42 @@ func TestManagedProviderFileActivationLookupAndDeletionScrubSensitivePayload(t *
 		assert.Equal(t, events[index-1].EventHMAC, events[index].PreviousEventHMAC)
 	}
 	assert.Equal(t, events[len(events)-1].EventHMAC, deleted.LastEventHMAC)
+}
+
+func TestManagedProviderFileVerificationFailurePreservesEncryptedRecoveryReference(t *testing.T) {
+	prepareManagedProviderFileModelTest(t)
+	intent := managedProviderFileIntent()
+	created, _, err := CreateManagedProviderFileLifecycleIntent(context.Background(), intent,
+		managedProviderFileEvent(1, ManagedProviderFileLifecycleEventIntentCreated, "", ManagedProviderFileLifecycleStateIntent, 0, "", "b"))
+	require.NoError(t, err)
+	dispatchedEvent := managedProviderFileEvent(2, ManagedProviderFileLifecycleEventUploadDispatched,
+		ManagedProviderFileLifecycleStateIntent, ManagedProviderFileLifecycleStateUploadDispatched, 0, "", "c")
+	dispatchedEvent.LifecycleId = created.Id
+	dispatchedEvent.PreviousEventHMAC = created.LastEventHMAC
+	require.NoError(t, AdvanceManagedProviderFileUploadState(context.Background(), ManagedProviderFileUploadTransition{
+		LifecycleId: created.Id, ExpectedVersion: created.Version, RequestFingerprint: intent.RequestFingerprint,
+		ExpectedState: ManagedProviderFileLifecycleStateIntent, NextState: ManagedProviderFileLifecycleStateUploadDispatched, Event: dispatchedEvent,
+	}))
+	created.Version++
+	created.LastEventSequence++
+	created.LastEventHMAC = dispatchedEvent.EventHMAC
+	verificationEvent := managedProviderFileEvent(3, ManagedProviderFileLifecycleEventVerificationFailed,
+		ManagedProviderFileLifecycleStateUploadDispatched, ManagedProviderFileLifecycleStateVerificationFailed, 0, "metadata_unverified", "d")
+	verificationEvent.LifecycleId = created.Id
+	verificationEvent.PreviousEventHMAC = created.LastEventHMAC
+	providerCreatedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	require.NoError(t, RecordManagedProviderFileVerificationFailure(context.Background(), ManagedProviderFileVerificationFailure{
+		LifecycleId: created.Id, ExpectedVersion: created.Version, RequestFingerprint: intent.RequestFingerprint,
+		ProviderLookupHMAC: managedProviderFileDigest("e"), ProviderPayload: []byte("encrypted-reference"), ProviderBytes: 17,
+		ProviderCreatedAt: providerCreatedAt, ExpiresAt: providerCreatedAt.Add(time.Hour), ReasonCode: "metadata_unverified", Event: verificationEvent,
+	}))
+	var stored ManagedProviderFileLifecycle
+	require.NoError(t, DB.First(&stored, "id = ?", created.Id).Error)
+	require.NoError(t, stored.Validate())
+	assert.Equal(t, ManagedProviderFileLifecycleStateVerificationFailed, stored.State)
+	assert.NotEmpty(t, stored.ProviderPayload)
+	assert.Nil(t, stored.MetadataVerifiedAt)
+	assert.Nil(t, stored.ActivatedAt)
 }
 
 func TestManagedProviderFileDeletionRejectsStaleLeaseAndBoundsRetries(t *testing.T) {

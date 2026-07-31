@@ -56,6 +56,20 @@ type ManagedProviderFileStorageKey struct {
 	KeyVersion       string
 }
 
+type ManagedProviderFileUploadIntentKey struct {
+	RepositoryKey    string
+	OwnerHMAC        string
+	UploadIntentHMAC string
+	KeyVersion       string
+}
+
+type ManagedProviderFileHandleKey struct {
+	RepositoryKey string
+	OwnerHMAC     string
+	HandleHMAC    string
+	KeyVersion    string
+}
+
 type ManagedProviderFileTargetIdentity struct {
 	ChannelID         int
 	ChannelType       int
@@ -66,8 +80,16 @@ type ManagedProviderFileTargetIdentity struct {
 	Project           string
 }
 
+type ManagedProviderFileUploadFingerprintIdentity struct {
+	OwnerHMAC         string
+	ContentDigest     string
+	TargetFingerprint string
+	Purpose           string
+	ExpirationSeconds int
+}
+
 type ManagedProviderFileEventIdentity struct {
-	LifecycleID       int64
+	LifecycleHMAC     string
 	Sequence          int64
 	PreviousEventHMAC string
 	EventType         string
@@ -82,6 +104,13 @@ type ManagedProviderFileEventIdentity struct {
 type ManagedConsensusKeyDeriver struct {
 	key        []byte
 	keyVersion string
+}
+
+func (deriver *ManagedConsensusKeyDeriver) KeyVersion() string {
+	if deriver == nil {
+		return ""
+	}
+	return deriver.keyVersion
 }
 
 func NewManagedConsensusKeyDeriver(key []byte, keyVersion string) (*ManagedConsensusKeyDeriver, error) {
@@ -203,34 +232,71 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveCredentialFingerprint(channelID
 }
 
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileStorageKey(owner ManagedConsensusOwner, handle, idempotencyKey string) (ManagedProviderFileStorageKey, error) {
+	handleKey, err := deriver.DeriveProviderFileHandleKey(owner, handle)
+	if err != nil {
+		return ManagedProviderFileStorageKey{}, err
+	}
+	uploadIntentKey, err := deriver.DeriveProviderFileUploadIntentKey(owner, idempotencyKey)
+	if err != nil {
+		return ManagedProviderFileStorageKey{}, err
+	}
+	return ManagedProviderFileStorageKey{
+		RepositoryKey: handleKey.RepositoryKey,
+		OwnerHMAC:     handleKey.OwnerHMAC, HandleHMAC: handleKey.HandleHMAC, UploadIntentHMAC: uploadIntentKey.UploadIntentHMAC,
+		KeyVersion: handleKey.KeyVersion,
+	}, nil
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileUploadIntentKey(owner ManagedConsensusOwner, idempotencyKey string) (ManagedProviderFileUploadIntentKey, error) {
 	ownerHMAC, err := deriver.deriveProviderFileOwnerHMAC(owner)
 	if err != nil {
-		return ManagedProviderFileStorageKey{}, err
-	}
-	if strings.TrimSpace(handle) == "" || strings.TrimSpace(handle) != handle || len(handle) > 256 {
-		return ManagedProviderFileStorageKey{}, fmt.Errorf("managed provider file handle is invalid")
+		return ManagedProviderFileUploadIntentKey{}, err
 	}
 	if strings.TrimSpace(idempotencyKey) == "" || strings.TrimSpace(idempotencyKey) != idempotencyKey || len(idempotencyKey) > 256 {
-		return ManagedProviderFileStorageKey{}, fmt.Errorf("managed provider file idempotency key is invalid")
-	}
-	handleHMAC, err := deriver.calculateHexHMAC("provider_file_handle", struct {
-		OwnerHMAC string `json:"owner_hmac"`
-		Handle    string `json:"handle"`
-	}{OwnerHMAC: ownerHMAC, Handle: handle})
-	if err != nil {
-		return ManagedProviderFileStorageKey{}, err
+		return ManagedProviderFileUploadIntentKey{}, fmt.Errorf("managed provider file idempotency key is invalid")
 	}
 	uploadIntentHMAC, err := deriver.calculateHexHMAC("provider_file_upload_intent", struct {
 		OwnerHMAC      string `json:"owner_hmac"`
 		IdempotencyKey string `json:"idempotency_key"`
 	}{OwnerHMAC: ownerHMAC, IdempotencyKey: idempotencyKey})
 	if err != nil {
-		return ManagedProviderFileStorageKey{}, err
+		return ManagedProviderFileUploadIntentKey{}, err
 	}
-	return ManagedProviderFileStorageKey{
+	return ManagedProviderFileUploadIntentKey{
+		RepositoryKey: managedProviderFileRepositoryKey(ownerHMAC, uploadIntentHMAC),
+		OwnerHMAC:     ownerHMAC, UploadIntentHMAC: uploadIntentHMAC, KeyVersion: deriver.keyVersion,
+	}, nil
+}
+
+func ManagedProviderFileRepositoryKey(ownerHMAC, uploadIntentHMAC string) (string, error) {
+	if !validProviderFileHexHMAC(ownerHMAC) || !validProviderFileHexHMAC(uploadIntentHMAC) {
+		return "", fmt.Errorf("managed provider file repository identity is invalid")
+	}
+	return managedProviderFileRepositoryKey(ownerHMAC, uploadIntentHMAC), nil
+}
+
+func managedProviderFileRepositoryKey(ownerHMAC, uploadIntentHMAC string) string {
+	return managedProviderFileRepositoryPrefix + ":" + ownerHMAC + ":intent:" + uploadIntentHMAC
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileHandleKey(owner ManagedConsensusOwner, handle string) (ManagedProviderFileHandleKey, error) {
+	ownerHMAC, err := deriver.deriveProviderFileOwnerHMAC(owner)
+	if err != nil {
+		return ManagedProviderFileHandleKey{}, err
+	}
+	if strings.TrimSpace(handle) == "" || strings.TrimSpace(handle) != handle || len(handle) > 256 {
+		return ManagedProviderFileHandleKey{}, fmt.Errorf("managed provider file handle is invalid")
+	}
+	handleHMAC, err := deriver.calculateHexHMAC("provider_file_handle", struct {
+		OwnerHMAC string `json:"owner_hmac"`
+		Handle    string `json:"handle"`
+	}{OwnerHMAC: ownerHMAC, Handle: handle})
+	if err != nil {
+		return ManagedProviderFileHandleKey{}, err
+	}
+	return ManagedProviderFileHandleKey{
 		RepositoryKey: managedProviderFileRepositoryPrefix + ":" + ownerHMAC + ":" + handleHMAC,
-		OwnerHMAC:     ownerHMAC, HandleHMAC: handleHMAC, UploadIntentHMAC: uploadIntentHMAC,
-		KeyVersion: deriver.keyVersion,
+		OwnerHMAC:     ownerHMAC, HandleHMAC: handleHMAC, KeyVersion: deriver.keyVersion,
 	}, nil
 }
 
@@ -284,6 +350,34 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileTargetFingerprint(i
 	})
 }
 
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileEndpointFingerprint(endpoint string) (string, error) {
+	if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(endpoint) != endpoint || len(endpoint) > 512 {
+		return "", fmt.Errorf("managed provider file endpoint is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_endpoint", struct {
+		Endpoint string `json:"endpoint"`
+	}{Endpoint: endpoint})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileScopeFingerprint(organization, project string) (string, error) {
+	if len(organization) > 256 || len(project) > 256 || strings.TrimSpace(organization) != organization || strings.TrimSpace(project) != project {
+		return "", fmt.Errorf("managed provider file scope is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_scope", struct {
+		Organization string `json:"organization"`
+		Project      string `json:"project"`
+	}{Organization: organization, Project: project})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileUploadFingerprint(identity ManagedProviderFileUploadFingerprintIdentity) (string, error) {
+	if !validProviderFileHexHMAC(identity.OwnerHMAC) || !validProviderFileHexHMAC(identity.ContentDigest) ||
+		!validProviderFileHexHMAC(identity.TargetFingerprint) || identity.Purpose != "user_data" ||
+		identity.ExpirationSeconds < 60 || identity.ExpirationSeconds > 30*24*60*60 {
+		return "", fmt.Errorf("managed provider file upload fingerprint identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_upload_fingerprint", identity)
+}
+
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileCredentialFingerprint(channelID, multiKeyIndex int, credential string) (string, error) {
 	if channelID <= 0 || multiKeyIndex < 0 || credential == "" {
 		return "", fmt.Errorf("managed provider file credential identity is invalid")
@@ -296,7 +390,7 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileCredentialFingerpri
 }
 
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileEventHMAC(identity ManagedProviderFileEventIdentity) (string, error) {
-	if identity.LifecycleID <= 0 || identity.Sequence <= 0 || identity.AttemptCount < 0 || identity.CreatedAtUnix <= 0 ||
+	if !validProviderFileHexHMAC(identity.LifecycleHMAC) || identity.Sequence <= 0 || identity.AttemptCount < 0 || identity.CreatedAtUnix <= 0 ||
 		strings.TrimSpace(identity.EventType) == "" || strings.TrimSpace(identity.EventType) != identity.EventType || len(identity.EventType) > 48 ||
 		len(identity.FromState) > 32 || len(identity.ToState) > 32 || len(identity.ResultCode) > 64 || !validProviderFileHexHMAC(identity.EvidenceDigest) ||
 		(identity.Sequence == 1 && identity.PreviousEventHMAC != "") || (identity.Sequence > 1 && !validProviderFileHexHMAC(identity.PreviousEventHMAC)) {

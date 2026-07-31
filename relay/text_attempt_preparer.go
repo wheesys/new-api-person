@@ -210,9 +210,14 @@ func (attempt *PreparedTextRelayAttempt) ValidateManagedProviderStateRequest(res
 	return resolution.ValidateStateReference(request.PreviousResponseID)
 }
 
+type providerFileLifecycleResolution interface {
+	ValidateFinalBody(body []byte) error
+	ValidateFinalTarget(channelID, channelType, multiKeyIndex int, channelIsMultiKey bool, endpoint, organization, credential string) error
+}
+
 // ValidateProviderFileLifecycleRequest verifies provider-owned file references
 // from the immutable body that will be sent upstream. It performs no network IO.
-func (attempt *PreparedTextRelayAttempt) ValidateProviderFileLifecycleRequest() (contextconsensus.ProviderFileState, error) {
+func (attempt *PreparedTextRelayAttempt) ValidateProviderFileLifecycleRequest(resolutions ...providerFileLifecycleResolution) (contextconsensus.ProviderFileState, error) {
 	emptyState := contextconsensus.ProviderFileState{}
 	if attempt == nil || attempt.adaptor == nil || attempt.info == nil || attempt.preparedRequest == nil {
 		return emptyState, fmt.Errorf("provider file lifecycle request is unavailable")
@@ -244,6 +249,19 @@ func (attempt *PreparedTextRelayAttempt) ValidateProviderFileLifecycleRequest() 
 		case "authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key", "anthropic-api-key":
 			return emptyState, fmt.Errorf("provider file lifecycle does not allow credential header overrides")
 		}
+	}
+	if len(resolutions) > 1 {
+		return emptyState, fmt.Errorf("provider file lifecycle resolution is ambiguous")
+	}
+	if len(resolutions) == 1 {
+		resolution := resolutions[0]
+		if resolution == nil || resolution.ValidateFinalBody(body) != nil || resolution.ValidateFinalTarget(
+			attempt.info.ChannelId, attempt.info.ChannelType, attempt.info.ChannelMultiKeyIndex, attempt.info.ChannelIsMultiKey,
+			attempt.info.ChannelBaseUrl, attempt.info.Organization, attempt.info.ApiKey,
+		) != nil {
+			return emptyState, fmt.Errorf("provider file lifecycle binding does not match the final request")
+		}
+		return state, nil
 	}
 	lifecycleAdaptor, ok := attempt.adaptor.(channel.ProviderFileLifecycleAdaptor)
 	if !ok {

@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
+	"github.com/QuantumNous/new-api/service/providerfile"
 	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -208,6 +209,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	providerResolution, providerBound := common.GetContextKeyType[*contextconsensus.ManagedProviderStateResolution](c, constant.ContextKeyManagedProviderState)
+	providerFileResolution, providerFilesBound := common.GetContextKeyType[*providerfile.Resolution](c, constant.ContextKeyManagedProviderFiles)
 	if managedContext && relayFormat == types.RelayFormatOpenAIResponses && relayInfo.ChannelType == constant.ChannelTypeOpenAI {
 		if err := preparedContextConsensusAttempt.ValidateManagedProviderStateRequest(providerResolution); err != nil {
 			newAPIError = managedExecutionError(err)
@@ -238,6 +240,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			OriginModel: relayInfo.OriginModelName, UpstreamModel: relayInfo.FinalRequestModel, MultiKeyIndex: relayInfo.ChannelMultiKeyIndex,
 			ChannelIsMultiKey: relayInfo.ChannelIsMultiKey, Credential: relayInfo.ApiKey,
 		}); err != nil {
+			newAPIError = managedExecutionError(err)
+			return
+		}
+	}
+	if providerFilesBound {
+		if relayFormat != types.RelayFormatOpenAIResponses || relayInfo.IsStream || relayInfo.ChannelType != constant.ChannelTypeOpenAI ||
+			relayInfo.ChannelId != providerFileResolution.ChannelID() {
+			newAPIError = managedExecutionError(fmt.Errorf("managed provider files require native non-streaming OpenAI Responses"))
+			return
+		}
+		if preparedContextConsensusAttempt == nil {
+			preparedContextConsensusChannel, err = model.GetChannelById(relayInfo.ChannelId, true)
+			if err != nil || preparedContextConsensusChannel == nil {
+				newAPIError = managedExecutionError(fmt.Errorf("managed provider file channel snapshot is unavailable"))
+				return
+			}
+			preparedContextConsensusAttempt, newAPIError = relay.PrepareAuthoritativeTextRelayAttempt(c, relayInfo)
+			if newAPIError != nil {
+				return
+			}
+			defer preparedContextConsensusAttempt.Close()
+		}
+		if _, err := preparedContextConsensusAttempt.ValidateProviderFileLifecycleRequest(providerFileResolution); err != nil {
 			newAPIError = managedExecutionError(err)
 			return
 		}

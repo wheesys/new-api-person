@@ -106,9 +106,9 @@
   - [x] 完成阶段 D-2：统一 call-derived group 语义，闭合 OpenAI Chat 稳定 ID 并行工具组的整组证据、脱敏、Summary v2 与原子重写；Responses/Claude/Gemini 运行时继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d2-implementation-2026-07-31.md`。
   - [ ] 完成阶段 D-3：具备 adaptor 权威所有权、到期和删除能力后，实现 provider file 生命周期。
     - [x] 完成阶段 D-3a：建立四协议精确文件分类、无原文证据、adaptor 显式能力契约和最终冻结请求门禁；现有 adaptor 未声明完整能力，provider-owned 文件继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3a-implementation-2026-07-31.md`。
-    - [ ] 完成阶段 D-3b：接入首个具备网关托管上传和持久化精确凭据绑定的 provider，只读核验权威所有权与实际到期时间。
+    - [x] 完成阶段 D-3b：接入首个具备网关托管上传和持久化精确凭据绑定的 provider，只读核验权威所有权与实际到期时间。
       - [x] 完成阶段 D-3b.1：实现领域契约、版本化 HMAC/AEAD、跨数据库持久化模型和默认关闭配置，见 `doc/auto-smart-routing-context-consensus-stage-d3b1-implementation-2026-07-31.md`。
-      - [ ] 完成阶段 D-3b.2：实现专用 OpenAI 单 Key 上传/查询、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定。
+      - [x] 完成阶段 D-3b.2：实现专用 OpenAI 单 Key 上传/查询、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
     - [ ] 完成阶段 D-3c：实现持久化删除 outbox、幂等到期删除、有限重试、失败告警和不可篡改终态审计后，开放首个 provider file 生命周期。
       - [ ] 完成阶段 D-3c.1：实现删除 outbox、CAS lease worker、有限重试、审计链、告警和渠道变更保护，并保持生产关闭。
       - [ ] 完成阶段 D-3c.2：完成真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。

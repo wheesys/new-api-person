@@ -32,6 +32,7 @@ const (
 	ContextKeyManagedContextOutcome  ContextKey = "managed_context_outcome"
 	ContextKeyManagedContextReplay   ContextKey = "managed_context_replay"
 	ContextKeyManagedProviderState   ContextKey = "managed_provider_state"
+	ContextKeyManagedProviderFiles   ContextKey = "managed_provider_files"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"

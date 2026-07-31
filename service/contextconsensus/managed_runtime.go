@@ -34,6 +34,23 @@ type managedConsensusPreviousKey struct {
 	Key     string `json:"key"`
 }
 
+type ManagedProviderFileUploadBinding struct {
+	IntentKey             ManagedProviderFileUploadIntentKey
+	TargetFingerprint     string
+	CredentialFingerprint string
+	EndpointFingerprint   string
+	ScopeFingerprint      string
+	RequestFingerprint    string
+}
+
+type ManagedProviderFileTargetBinding struct {
+	KeyVersion            string
+	TargetFingerprint     string
+	CredentialFingerprint string
+	EndpointFingerprint   string
+	ScopeFingerprint      string
+}
+
 // NewManagedConsensusRuntimeFromEnvironment builds the managed-state runtime
 // from an independent, base64-encoded 32-byte key. It never falls back to any
 // session, API, channel, or process-local secret.
@@ -154,6 +171,144 @@ func (runtime *ManagedConsensusRuntime) outcomeStorageKeys(owner ManagedConsensu
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+func (runtime *ManagedConsensusRuntime) ProviderFileUploadIntentKeys(owner ManagedConsensusOwner, idempotencyKey string) ([]ManagedProviderFileUploadIntentKey, error) {
+	if runtime == nil || len(runtime.readKeyDerivers) == 0 {
+		return nil, fmt.Errorf("managed consensus runtime is unavailable")
+	}
+	keys := make([]ManagedProviderFileUploadIntentKey, 0, len(runtime.readKeyDerivers))
+	for _, deriver := range runtime.readKeyDerivers {
+		key, err := deriver.DeriveProviderFileUploadIntentKey(owner, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func (runtime *ManagedConsensusRuntime) ProviderFileHandleKeys(owner ManagedConsensusOwner, handle string) ([]ManagedProviderFileHandleKey, error) {
+	if runtime == nil || len(runtime.readKeyDerivers) == 0 {
+		return nil, fmt.Errorf("managed consensus runtime is unavailable")
+	}
+	keys := make([]ManagedProviderFileHandleKey, 0, len(runtime.readKeyDerivers))
+	for _, deriver := range runtime.readKeyDerivers {
+		key, err := deriver.DeriveProviderFileHandleKey(owner, handle)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func (runtime *ManagedConsensusRuntime) ProviderFileUploadBindings(
+	owner ManagedConsensusOwner,
+	idempotencyKey string,
+	contentDigest string,
+	target ManagedProviderFileTargetIdentity,
+	credential string,
+	purpose string,
+	expirationSeconds int,
+) ([]ManagedProviderFileUploadBinding, error) {
+	if runtime == nil || len(runtime.readKeyDerivers) == 0 {
+		return nil, fmt.Errorf("managed consensus runtime is unavailable")
+	}
+	bindings := make([]ManagedProviderFileUploadBinding, 0, len(runtime.readKeyDerivers))
+	targetBindings, err := runtime.ProviderFileTargetBindings(target, credential)
+	if err != nil {
+		return nil, err
+	}
+	for index, deriver := range runtime.readKeyDerivers {
+		intentKey, err := deriver.DeriveProviderFileUploadIntentKey(owner, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		targetBinding := targetBindings[index]
+		requestFingerprint, err := deriver.DeriveProviderFileUploadFingerprint(ManagedProviderFileUploadFingerprintIdentity{
+			OwnerHMAC: intentKey.OwnerHMAC, ContentDigest: contentDigest, TargetFingerprint: targetBinding.TargetFingerprint,
+			Purpose: purpose, ExpirationSeconds: expirationSeconds,
+		})
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, ManagedProviderFileUploadBinding{
+			IntentKey: intentKey, TargetFingerprint: targetBinding.TargetFingerprint, CredentialFingerprint: targetBinding.CredentialFingerprint,
+			EndpointFingerprint: targetBinding.EndpointFingerprint, ScopeFingerprint: targetBinding.ScopeFingerprint, RequestFingerprint: requestFingerprint,
+		})
+	}
+	return bindings, nil
+}
+
+func (runtime *ManagedConsensusRuntime) ProviderFileTargetBindings(target ManagedProviderFileTargetIdentity, credential string) ([]ManagedProviderFileTargetBinding, error) {
+	if runtime == nil || len(runtime.readKeyDerivers) == 0 {
+		return nil, fmt.Errorf("managed consensus runtime is unavailable")
+	}
+	bindings := make([]ManagedProviderFileTargetBinding, 0, len(runtime.readKeyDerivers))
+	for _, deriver := range runtime.readKeyDerivers {
+		targetFingerprint, err := deriver.DeriveProviderFileTargetFingerprint(target)
+		if err != nil {
+			return nil, err
+		}
+		credentialFingerprint, err := deriver.DeriveProviderFileCredentialFingerprint(target.ChannelID, target.MultiKeyIndex, credential)
+		if err != nil {
+			return nil, err
+		}
+		endpointFingerprint, err := deriver.DeriveProviderFileEndpointFingerprint(target.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		scopeFingerprint, err := deriver.DeriveProviderFileScopeFingerprint(target.Organization, target.Project)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, ManagedProviderFileTargetBinding{
+			KeyVersion: deriver.keyVersion, TargetFingerprint: targetFingerprint, CredentialFingerprint: credentialFingerprint,
+			EndpointFingerprint: endpointFingerprint, ScopeFingerprint: scopeFingerprint,
+		})
+	}
+	return bindings, nil
+}
+
+func (runtime *ManagedConsensusRuntime) EncryptProviderFileReference(ctx context.Context, key ManagedProviderFileUploadIntentKey, payload ManagedProviderFileReferencePayload) ([]byte, string, error) {
+	if runtime == nil || runtime.Cipher == nil || runtime.KeyDeriver == nil || key.KeyVersion != runtime.KeyDeriver.keyVersion {
+		return nil, "", fmt.Errorf("managed consensus active provider file key is unavailable")
+	}
+	if err := payload.Validate(); err != nil {
+		return nil, "", err
+	}
+	envelope, err := runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: key.RepositoryKey, Purpose: ManagedEncryptionPurposeProviderFileReference, Revision: 1,
+	}, payload)
+	if err != nil {
+		return nil, "", err
+	}
+	encodedEnvelope, err := common.Marshal(envelope)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode managed provider file reference envelope: %w", err)
+	}
+	return encodedEnvelope, envelope.KeyVersion, nil
+}
+
+func (runtime *ManagedConsensusRuntime) DecryptProviderFileReference(ctx context.Context, repositoryKey string, encodedEnvelope []byte) (ManagedProviderFileReferencePayload, error) {
+	if runtime == nil || strings.TrimSpace(repositoryKey) == "" || len(encodedEnvelope) == 0 {
+		return ManagedProviderFileReferencePayload{}, fmt.Errorf("managed provider file reference is unavailable")
+	}
+	var envelope ManagedEncryptedEnvelope
+	if err := common.Unmarshal(encodedEnvelope, &envelope); err != nil {
+		return ManagedProviderFileReferencePayload{}, fmt.Errorf("decode managed provider file reference envelope: %w", err)
+	}
+	var payload ManagedProviderFileReferencePayload
+	if err := runtime.decryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: repositoryKey, Purpose: ManagedEncryptionPurposeProviderFileReference, Revision: 1,
+	}, envelope, &payload); err != nil {
+		return ManagedProviderFileReferencePayload{}, err
+	}
+	if err := payload.Validate(); err != nil {
+		return ManagedProviderFileReferencePayload{}, err
+	}
+	return payload, nil
 }
 
 func buildManagedConsensusKeyVersion(key []byte, keyVersion string) (*ManagedConsensusCipher, *ManagedConsensusKeyDeriver, error) {

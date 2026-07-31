@@ -20,6 +20,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
+	"github.com/QuantumNous/new-api/service/providerfile"
+	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -79,11 +81,20 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		providerFilesRequested, providerFileStatus, err := managedProviderFileReferencesRequested(c)
+		if err != nil {
+			abortWithOpenAiMessage(c, providerFileStatus, err.Error(), types.ErrorCodeInvalidRequest)
+			return
+		}
 		providerResolution, providerBound := common.GetContextKeyType[*contextconsensus.ManagedProviderStateResolution](c, constant.ContextKeyManagedProviderState)
+		if providerFilesRequested && providerBound {
+			abortWithOpenAiMessage(c, http.StatusConflict, "managed provider file and provider state bindings cannot be combined", types.ErrorCodeInvalidRequest)
+			return
+		}
 		if providerBound {
 			modelRequest.Model = providerResolution.Target().OriginModel
 		}
-		if !ok || providerBound {
+		if !ok || providerBound || providerFilesRequested {
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 			if modelLimitEnable {
 				value, found := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
@@ -102,13 +113,34 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		providerFileResolution, providerFileStatus, err := prepareManagedProviderFileResolution(c, modelRequest.Model)
+		if err != nil {
+			abortWithOpenAiMessage(c, providerFileStatus, err.Error(), types.ErrorCodeInvalidRequest)
+			return
+		}
+		providerFilesBound := providerFileResolution != nil
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
 				return
 			}
-			if providerBound {
+			if providerFilesBound {
+				if id != providerFileResolution.ChannelID() {
+					abortWithOpenAiMessage(c, http.StatusConflict, "managed provider file target is unavailable", types.ErrorCodeInvalidRequest)
+					return
+				}
+				var selectedGroup string
+				channel, selectedGroup, managedProviderKey, managedProviderKeyIndex, err = selectManagedProviderFileBoundChannel(c, providerFileResolution, modelRequest.Model, common.GetContextKeyString(c, constant.ContextKeyUsingGroup))
+				if err != nil {
+					abortWithOpenAiMessage(c, http.StatusConflict, "managed provider file target is unavailable", types.ErrorCodeInvalidRequest)
+					return
+				}
+				managedProviderPinned = true
+				if common.GetContextKeyString(c, constant.ContextKeyUsingGroup) == "auto" {
+					common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
+				}
+			} else if providerBound {
 				if id != providerResolution.Target().ChannelID {
 					abortWithOpenAiMessage(c, http.StatusConflict, "managed context provider state target is unavailable", types.ErrorCodeInvalidRequest)
 					return
@@ -162,7 +194,18 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if providerBound {
+				if providerFilesBound {
+					var boundErr error
+					channel, selectGroup, managedProviderKey, managedProviderKeyIndex, boundErr = selectManagedProviderFileBoundChannel(c, providerFileResolution, modelRequest.Model, usingGroup)
+					if boundErr != nil {
+						abortWithOpenAiMessage(c, http.StatusConflict, "managed provider file target is unavailable", types.ErrorCodeInvalidRequest)
+						return
+					}
+					managedProviderPinned = true
+					if usingGroup == "auto" {
+						common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
+					}
+				} else if providerBound {
 					var boundErr error
 					channel, selectGroup, managedProviderKey, managedProviderKeyIndex, boundErr = selectManagedProviderBoundChannel(c, providerResolution, usingGroup)
 					if boundErr != nil {
@@ -276,10 +319,48 @@ func Distribute() func(c *gin.Context) {
 			SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		}
 		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+		if !providerFilesBound && channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func selectManagedProviderFileBoundChannel(c *gin.Context, resolution *providerfile.Resolution, modelName, usingGroup string) (*model.Channel, string, string, int, error) {
+	if resolution == nil || strings.TrimSpace(modelName) == "" || strings.HasPrefix(modelName, "auto:") || strings.HasPrefix(modelName, "smart:") {
+		return nil, "", "", 0, fmt.Errorf("managed provider file model is unsupported")
+	}
+	channel, err := model.GetChannelById(resolution.ChannelID(), true)
+	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || channel.Type != constant.ChannelTypeOpenAI ||
+		channel.ChannelInfo.IsMultiKey || !channelSupportsRequestPath(channel, c.Request.URL.Path) {
+		return nil, "", "", 0, fmt.Errorf("managed provider file channel is unavailable")
+	}
+	selectedGroup, err := selectManagedProviderFileGroup(c, channel.Id, modelName, usingGroup)
+	if err != nil || resolution.ValidateTarget(channel.Id, channel.Type, channel.Key) != nil {
+		return nil, "", "", 0, fmt.Errorf("managed provider file target is not authorized")
+	}
+	common.SetContextKey(c, constant.ContextKeySmartRoutingFrozenCandidates, []smartrouting.SmartRouteCandidate{{
+		ModelName: modelName, ChannelID: channel.Id, Group: selectedGroup,
+	}})
+	return channel, selectedGroup, channel.Key, 0, nil
+}
+
+func selectManagedProviderFileGroup(c *gin.Context, channelID int, modelName, usingGroup string) (string, error) {
+	selectedGroup := usingGroup
+	if usingGroup == "auto" {
+		selectedGroup = ""
+		for _, group := range service.GetUserAutoGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup)) {
+			if model.IsChannelEnabledForGroupModel(group, modelName, channelID) {
+				selectedGroup = group
+				break
+			}
+		}
+	} else if !model.IsChannelEnabledForGroupModel(usingGroup, modelName, channelID) {
+		selectedGroup = ""
+	}
+	if selectedGroup == "" {
+		return "", fmt.Errorf("managed provider file target is not authorized")
+	}
+	return selectedGroup, nil
 }
 
 func selectManagedProviderBoundChannel(c *gin.Context, resolution *contextconsensus.ManagedProviderStateResolution, usingGroup string) (*model.Channel, string, string, int, error) {

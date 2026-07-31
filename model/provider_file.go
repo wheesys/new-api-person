@@ -17,14 +17,15 @@ const (
 	ManagedProviderFileProviderOpenAI  = "openai"
 	ManagedProviderFilePurposeUserData = "user_data"
 
-	ManagedProviderFileLifecycleStateIntent           = "intent"
-	ManagedProviderFileLifecycleStateUploadDispatched = "upload_dispatched"
-	ManagedProviderFileLifecycleStateUploadFailed     = "upload_failed"
-	ManagedProviderFileLifecycleStateUploadUnknown    = "upload_unknown"
-	ManagedProviderFileLifecycleStateActive           = "active"
-	ManagedProviderFileLifecycleStateDeletionPending  = "deletion_pending"
-	ManagedProviderFileLifecycleStateDeleted          = "deleted"
-	ManagedProviderFileLifecycleStateDeletionFailed   = "deletion_failed"
+	ManagedProviderFileLifecycleStateIntent             = "intent"
+	ManagedProviderFileLifecycleStateUploadDispatched   = "upload_dispatched"
+	ManagedProviderFileLifecycleStateUploadFailed       = "upload_failed"
+	ManagedProviderFileLifecycleStateUploadUnknown      = "upload_unknown"
+	ManagedProviderFileLifecycleStateVerificationFailed = "verification_failed"
+	ManagedProviderFileLifecycleStateActive             = "active"
+	ManagedProviderFileLifecycleStateDeletionPending    = "deletion_pending"
+	ManagedProviderFileLifecycleStateDeleted            = "deleted"
+	ManagedProviderFileLifecycleStateDeletionFailed     = "deletion_failed"
 
 	ManagedProviderFileDeletionOutboxStatePending        = "pending"
 	ManagedProviderFileDeletionOutboxStateInProgress     = "in_progress"
@@ -40,6 +41,7 @@ const (
 	ManagedProviderFileLifecycleEventUploadDispatched       = "upload_dispatched"
 	ManagedProviderFileLifecycleEventUploadFailed           = "upload_failed"
 	ManagedProviderFileLifecycleEventUploadUnknown          = "upload_unknown"
+	ManagedProviderFileLifecycleEventVerificationFailed     = "verification_failed"
 	ManagedProviderFileLifecycleEventActivated              = "activated"
 	ManagedProviderFileLifecycleEventDeletionStarted        = "deletion_started"
 	ManagedProviderFileLifecycleEventDeletionAttemptStarted = "deletion_attempt_started"
@@ -93,6 +95,7 @@ type ManagedProviderFileLifecycle struct {
 	UploadDispatchedAt              *time.Time `json:"upload_dispatched_at,omitempty" gorm:"comment:Timestamp committed before provider upload dispatch"`
 	UploadFailedAt                  *time.Time `json:"upload_failed_at,omitempty" gorm:"comment:Timestamp when provider upload reached a known failed terminal state"`
 	UploadUnknownAt                 *time.Time `json:"upload_unknown_at,omitempty" gorm:"comment:Timestamp when provider upload outcome became unknown"`
+	VerificationFailedAt            *time.Time `json:"verification_failed_at,omitempty" gorm:"comment:Timestamp when an acknowledged provider upload failed authoritative metadata verification"`
 	TerminalReasonCode              string     `json:"terminal_reason_code,omitempty" gorm:"type:varchar(64);not null;comment:Bounded non-sensitive terminal reason code"`
 	DeletionStartedAt               *time.Time `json:"deletion_started_at,omitempty" gorm:"comment:Timestamp when the first deletion attempt was claimed"`
 	DeletedAt                       *time.Time `json:"deleted_at,omitempty" gorm:"comment:Timestamp when provider deletion reached a successful terminal state"`
@@ -142,6 +145,12 @@ type ManagedProviderFileLifecycleLookupCandidate struct {
 	KeyVersion       string
 }
 
+type ManagedProviderFileUploadIntentLookupCandidate struct {
+	UploadIntentHMAC string
+	OwnerHMAC        string
+	KeyVersion       string
+}
+
 type ManagedProviderFileLifecycleActivation struct {
 	LifecycleId           int64
 	ExpectedVersion       int64
@@ -153,8 +162,22 @@ type ManagedProviderFileLifecycleActivation struct {
 	MetadataVerifiedAt    time.Time
 	ExpiresAt             time.Time
 	DeletionOperationHMAC string
+	DeletionNextAttemptAt time.Time
 	MaxDeletionAttempts   int
 	Event                 ManagedProviderFileLifecycleEvent
+}
+
+type ManagedProviderFileVerificationFailure struct {
+	LifecycleId        int64
+	ExpectedVersion    int64
+	RequestFingerprint string
+	ProviderLookupHMAC string
+	ProviderPayload    []byte
+	ProviderBytes      int64
+	ProviderCreatedAt  time.Time
+	ExpiresAt          time.Time
+	ReasonCode         string
+	Event              ManagedProviderFileLifecycleEvent
 }
 
 type ManagedProviderFileDeletionClaim struct {
@@ -220,24 +243,32 @@ func (lifecycle ManagedProviderFileLifecycle) Validate() error {
 	hasBinding := lifecycle.ProviderLookupHMAC != nil || len(lifecycle.ProviderPayload) != 0 || lifecycle.ProviderBytes != 0 || lifecycle.ProviderCreatedAt != nil || lifecycle.MetadataVerifiedAt != nil || lifecycle.ExpiresAt != nil || lifecycle.ActivatedAt != nil
 	switch lifecycle.State {
 	case ManagedProviderFileLifecycleStateIntent:
-		if hasBinding || lifecycle.UploadDispatchedAt != nil || lifecycle.UploadFailedAt != nil || lifecycle.UploadUnknownAt != nil ||
+		if hasBinding || lifecycle.UploadDispatchedAt != nil || lifecycle.UploadFailedAt != nil || lifecycle.UploadUnknownAt != nil || lifecycle.VerificationFailedAt != nil ||
 			lifecycle.DeletionStartedAt != nil || lifecycle.DeletedAt != nil || lifecycle.DeletionFailedAt != nil || lifecycle.TerminalReasonCode != "" {
 			return fmt.Errorf("managed provider file intent state is invalid")
 		}
 	case ManagedProviderFileLifecycleStateUploadDispatched:
-		if hasBinding || lifecycle.UploadDispatchedAt == nil || lifecycle.UploadDispatchedAt.IsZero() || lifecycle.UploadFailedAt != nil || lifecycle.UploadUnknownAt != nil || lifecycle.TerminalReasonCode != "" {
+		if hasBinding || lifecycle.UploadDispatchedAt == nil || lifecycle.UploadDispatchedAt.IsZero() || lifecycle.UploadFailedAt != nil || lifecycle.UploadUnknownAt != nil || lifecycle.VerificationFailedAt != nil || lifecycle.TerminalReasonCode != "" {
 			return fmt.Errorf("managed provider file upload-dispatched state is invalid")
 		}
 	case ManagedProviderFileLifecycleStateUploadFailed:
-		if hasBinding || lifecycle.UploadFailedAt == nil || lifecycle.UploadFailedAt.IsZero() || strings.TrimSpace(lifecycle.TerminalReasonCode) == "" {
+		if hasBinding || lifecycle.UploadFailedAt == nil || lifecycle.UploadFailedAt.IsZero() || lifecycle.VerificationFailedAt != nil || strings.TrimSpace(lifecycle.TerminalReasonCode) == "" {
 			return fmt.Errorf("managed provider file upload-failed state is invalid")
 		}
 	case ManagedProviderFileLifecycleStateUploadUnknown:
-		if hasBinding || lifecycle.UploadDispatchedAt == nil || lifecycle.UploadUnknownAt == nil || lifecycle.UploadUnknownAt.IsZero() || strings.TrimSpace(lifecycle.TerminalReasonCode) == "" {
+		if hasBinding || lifecycle.UploadDispatchedAt == nil || lifecycle.UploadUnknownAt == nil || lifecycle.UploadUnknownAt.IsZero() || lifecycle.VerificationFailedAt != nil || strings.TrimSpace(lifecycle.TerminalReasonCode) == "" {
 			return fmt.Errorf("managed provider file upload-unknown state is invalid")
 		}
+	case ManagedProviderFileLifecycleStateVerificationFailed:
+		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || len(lifecycle.ProviderPayload) == 0 ||
+			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() || lifecycle.MetadataVerifiedAt != nil ||
+			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) || lifecycle.ActivatedAt != nil ||
+			lifecycle.UploadDispatchedAt == nil || lifecycle.VerificationFailedAt == nil || lifecycle.VerificationFailedAt.IsZero() ||
+			strings.TrimSpace(lifecycle.TerminalReasonCode) == "" || lifecycle.DeletionStartedAt != nil || lifecycle.DeletedAt != nil || lifecycle.DeletionFailedAt != nil {
+			return fmt.Errorf("managed provider file verification-failed state is invalid")
+		}
 	case ManagedProviderFileLifecycleStateActive, ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeleted, ManagedProviderFileLifecycleStateDeletionFailed:
-		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) ||
+		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || lifecycle.VerificationFailedAt != nil ||
 			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() || lifecycle.MetadataVerifiedAt == nil || lifecycle.MetadataVerifiedAt.IsZero() ||
 			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) || lifecycle.ActivatedAt == nil {
 			return fmt.Errorf("managed provider file active binding is invalid")
@@ -316,6 +347,8 @@ func (event ManagedProviderFileLifecycleEvent) Validate() error {
 		validTransition = (event.FromState == ManagedProviderFileLifecycleStateIntent || event.FromState == ManagedProviderFileLifecycleStateUploadDispatched) && event.ToState == ManagedProviderFileLifecycleStateUploadFailed && event.AttemptCount == 0 && strings.TrimSpace(event.ResultCode) != ""
 	case ManagedProviderFileLifecycleEventUploadUnknown:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateUploadDispatched && event.ToState == ManagedProviderFileLifecycleStateUploadUnknown && event.AttemptCount == 0 && strings.TrimSpace(event.ResultCode) != ""
+	case ManagedProviderFileLifecycleEventVerificationFailed:
+		validTransition = event.FromState == ManagedProviderFileLifecycleStateUploadDispatched && event.ToState == ManagedProviderFileLifecycleStateVerificationFailed && event.AttemptCount == 0 && strings.TrimSpace(event.ResultCode) != ""
 	case ManagedProviderFileLifecycleEventActivated:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateUploadDispatched && event.ToState == ManagedProviderFileLifecycleStateActive && event.AttemptCount == 0 && event.ResultCode == ""
 	case ManagedProviderFileLifecycleEventDeletionStarted:
@@ -445,14 +478,51 @@ func AdvanceManagedProviderFileUploadState(ctx context.Context, transition Manag
 	})
 }
 
+func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure ManagedProviderFileVerificationFailure) error {
+	failure.ProviderCreatedAt = failure.ProviderCreatedAt.UTC().Truncate(time.Second)
+	failure.ExpiresAt = failure.ExpiresAt.UTC().Truncate(time.Second)
+	if failure.LifecycleId <= 0 || failure.ExpectedVersion <= 0 || !validManagedProviderFileDigest(failure.RequestFingerprint) ||
+		!validManagedProviderFileDigest(failure.ProviderLookupHMAC) || len(failure.ProviderPayload) == 0 || failure.ProviderBytes <= 0 ||
+		failure.ProviderCreatedAt.IsZero() || !failure.ExpiresAt.After(failure.ProviderCreatedAt) || strings.TrimSpace(failure.ReasonCode) == "" ||
+		len(failure.ReasonCode) > 64 {
+		return fmt.Errorf("managed provider file verification failure is invalid")
+	}
+	now := time.Now().UTC()
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lifecycle ManagedProviderFileLifecycle
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", failure.LifecycleId).Error; err != nil {
+			return err
+		}
+		if lifecycle.Version != failure.ExpectedVersion || lifecycle.State != ManagedProviderFileLifecycleStateUploadDispatched ||
+			lifecycle.RequestFingerprint != failure.RequestFingerprint || failure.Event.LifecycleId != lifecycle.Id ||
+			failure.Event.EventType != ManagedProviderFileLifecycleEventVerificationFailed {
+			return ErrManagedProviderFileLifecycleStateConflict
+		}
+		providerLookupHMAC := failure.ProviderLookupHMAC
+		updates := map[string]interface{}{
+			"state": ManagedProviderFileLifecycleStateVerificationFailed, "provider_lookup_hmac": providerLookupHMAC,
+			"provider_payload": append([]byte(nil), failure.ProviderPayload...), "provider_bytes": failure.ProviderBytes,
+			"provider_created_at": failure.ProviderCreatedAt, "expires_at": failure.ExpiresAt,
+			"verification_failed_at": now, "terminal_reason_code": failure.ReasonCode,
+		}
+		return appendEventAndAdvanceManagedProviderFileLifecycle(tx, &lifecycle, failure.ExpectedVersion, updates, &failure.Event)
+	})
+}
+
 func ActivateManagedProviderFileLifecycle(ctx context.Context, activation ManagedProviderFileLifecycleActivation) (*ManagedProviderFileLifecycle, *ManagedProviderFileDeletionOutbox, bool, error) {
 	activation.ProviderCreatedAt = activation.ProviderCreatedAt.UTC().Truncate(time.Second)
 	activation.MetadataVerifiedAt = activation.MetadataVerifiedAt.UTC().Truncate(time.Second)
 	activation.ExpiresAt = activation.ExpiresAt.UTC().Truncate(time.Second)
+	if activation.DeletionNextAttemptAt.IsZero() {
+		activation.DeletionNextAttemptAt = activation.ExpiresAt
+	} else {
+		activation.DeletionNextAttemptAt = activation.DeletionNextAttemptAt.UTC().Truncate(time.Second)
+	}
 	if activation.LifecycleId <= 0 || activation.ExpectedVersion <= 0 || !validManagedProviderFileDigest(activation.RequestFingerprint) || !validManagedProviderFileDigest(activation.ProviderLookupHMAC) ||
 		len(activation.ProviderPayload) == 0 || activation.ProviderBytes <= 0 || activation.ProviderCreatedAt.IsZero() || activation.MetadataVerifiedAt.IsZero() ||
 		activation.ExpiresAt.IsZero() || !activation.ExpiresAt.After(time.Now()) || !activation.ExpiresAt.After(activation.ProviderCreatedAt) ||
-		!validManagedProviderFileDigest(activation.DeletionOperationHMAC) || activation.MaxDeletionAttempts <= 0 || activation.MaxDeletionAttempts > maxManagedProviderFileDeletionAttempts {
+		!validManagedProviderFileDigest(activation.DeletionOperationHMAC) || activation.DeletionNextAttemptAt.After(activation.ExpiresAt) ||
+		activation.MaxDeletionAttempts <= 0 || activation.MaxDeletionAttempts > maxManagedProviderFileDeletionAttempts {
 		return nil, nil, false, fmt.Errorf("managed provider file activation is invalid")
 	}
 	var lifecycle ManagedProviderFileLifecycle
@@ -485,7 +555,7 @@ func ActivateManagedProviderFileLifecycle(ctx context.Context, activation Manage
 		outbox = ManagedProviderFileDeletionOutbox{
 			LifecycleId: lifecycle.Id, OperationHMAC: activation.DeletionOperationHMAC,
 			State: ManagedProviderFileDeletionOutboxStatePending, Version: 1, MaxAttempts: activation.MaxDeletionAttempts,
-			NextAttemptAt: activation.ExpiresAt,
+			NextAttemptAt: activation.DeletionNextAttemptAt,
 		}
 		if err := outbox.Validate(); err != nil {
 			return err
@@ -552,6 +622,43 @@ func FindManagedProviderFileLifecycle(ctx context.Context, candidates []ManagedP
 	for _, candidate := range candidates {
 		if lifecycle.HandleLookupHMAC == candidate.HandleLookupHMAC &&
 			lifecycle.OwnerHMAC == candidate.OwnerHMAC && lifecycle.LookupKeyVersion == candidate.KeyVersion {
+			return &lifecycle, nil
+		}
+	}
+	return nil, ErrManagedProviderFileLifecycleConflict
+}
+
+func FindManagedProviderFileLifecycleByUploadIntent(ctx context.Context, candidates []ManagedProviderFileUploadIntentLookupCandidate) (*ManagedProviderFileLifecycle, error) {
+	if len(candidates) == 0 || len(candidates) > 5 {
+		return nil, fmt.Errorf("managed provider file upload intent candidates are invalid")
+	}
+	uploadIntentHMACs := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if !validManagedProviderFileDigest(candidate.UploadIntentHMAC) || !validManagedProviderFileDigest(candidate.OwnerHMAC) ||
+			!validManagedProviderFileKeyVersion(candidate.KeyVersion) {
+			return nil, fmt.Errorf("managed provider file upload intent candidate is invalid")
+		}
+		if _, exists := seen[candidate.UploadIntentHMAC]; exists {
+			return nil, fmt.Errorf("managed provider file upload intent candidates contain duplicates")
+		}
+		seen[candidate.UploadIntentHMAC] = struct{}{}
+		uploadIntentHMACs = append(uploadIntentHMACs, candidate.UploadIntentHMAC)
+	}
+	var lifecycles []ManagedProviderFileLifecycle
+	if err := DB.WithContext(ctx).Where("upload_intent_hmac IN ?", uploadIntentHMACs).Limit(2).Find(&lifecycles).Error; err != nil {
+		return nil, err
+	}
+	if len(lifecycles) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if len(lifecycles) > 1 {
+		return nil, ErrManagedProviderFileLifecycleLookupConflict
+	}
+	lifecycle := lifecycles[0]
+	for _, candidate := range candidates {
+		if lifecycle.UploadIntentHMAC == candidate.UploadIntentHMAC && lifecycle.OwnerHMAC == candidate.OwnerHMAC &&
+			lifecycle.LookupKeyVersion == candidate.KeyVersion {
 			return &lifecycle, nil
 		}
 	}
@@ -799,7 +906,7 @@ func appendManagedProviderFileLifecycleEvent(tx *gorm.DB, event *ManagedProvider
 }
 
 func sameManagedProviderFileIntent(existing, requested ManagedProviderFileLifecycle) bool {
-	return existing.UploadIntentHMAC == requested.UploadIntentHMAC && existing.HandleLookupHMAC == requested.HandleLookupHMAC && existing.OwnerHMAC == requested.OwnerHMAC &&
+	return existing.UploadIntentHMAC == requested.UploadIntentHMAC && existing.OwnerHMAC == requested.OwnerHMAC &&
 		existing.LookupKeyVersion == requested.LookupKeyVersion && existing.RequestFingerprint == requested.RequestFingerprint &&
 		existing.Provider == requested.Provider && existing.ChannelId == requested.ChannelId && existing.ChannelType == requested.ChannelType &&
 		existing.ChannelIsMultiKey == requested.ChannelIsMultiKey && existing.ChannelMultiKeyIndex == requested.ChannelMultiKeyIndex &&

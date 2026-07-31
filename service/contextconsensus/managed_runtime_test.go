@@ -74,6 +74,25 @@ func TestNewManagedConsensusRuntimeFromEnvironmentBuildsBoundedPreviousKeyring(t
 	assert.Equal(t, "v1", runtime.readKeyDerivers[1].keyVersion)
 }
 
+func TestManagedProviderFileUploadBindingsCoverActiveAndPreviousKeys(t *testing.T) {
+	runtime, err := newManagedConsensusRuntime([]byte(strings.Repeat("a", 32)), "active-v2", []managedConsensusPreviousKey{{
+		Version: "previous-v1", Key: base64.StdEncoding.EncodeToString([]byte(strings.Repeat("p", 32))),
+	}}, nil)
+	require.NoError(t, err)
+	bindings, err := runtime.ProviderFileUploadBindings(
+		ManagedConsensusOwner{UserID: 7, TokenID: 9, EndpointFamily: "openai_provider_file"},
+		"upload-idempotency-key", strings.Repeat("d", 64),
+		ManagedProviderFileTargetIdentity{ChannelID: 41, ChannelType: 1, Endpoint: "https://api.openai.com"},
+		"credential-secret", "user_data", 3600,
+	)
+	require.NoError(t, err)
+	require.Len(t, bindings, 2)
+	assert.Equal(t, "active-v2", bindings[0].IntentKey.KeyVersion)
+	assert.Equal(t, "previous-v1", bindings[1].IntentKey.KeyVersion)
+	assert.NotEqual(t, bindings[0].RequestFingerprint, bindings[1].RequestFingerprint)
+	assert.NotEqual(t, bindings[0].CredentialFingerprint, bindings[1].CredentialFingerprint)
+}
+
 func TestNewManagedConsensusRuntimeFromEnvironmentRejectsInvalidPreviousKeyring(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })

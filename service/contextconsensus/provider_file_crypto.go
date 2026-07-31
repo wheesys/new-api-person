@@ -14,6 +14,7 @@ const managedProviderFileHandlePrefix = "file-managed-"
 type ManagedProviderFileReferencePayload struct {
 	ProviderFileID string `json:"provider_file_id"`
 	Filename       string `json:"filename"`
+	GatewayHandle  string `json:"gateway_handle"`
 }
 
 func (payload ManagedProviderFileReferencePayload) Validate() error {
@@ -29,11 +30,14 @@ func (payload ManagedProviderFileReferencePayload) Validate() error {
 		strings.IndexFunc(payload.Filename, unicode.IsControl) >= 0 {
 		return fmt.Errorf("managed provider file filename is invalid")
 	}
+	if !validManagedProviderFileHandle(payload.GatewayHandle) {
+		return fmt.Errorf("managed provider file gateway handle is invalid")
+	}
 	return nil
 }
 
 func (payload ManagedProviderFileReferencePayload) String() string {
-	return "ManagedProviderFileReferencePayload{ProviderFileID:***masked***,Filename:***masked***}"
+	return "ManagedProviderFileReferencePayload{ProviderFileID:***masked***,Filename:***masked***,GatewayHandle:***masked***}"
 }
 
 func (payload ManagedProviderFileReferencePayload) GoString() string {
@@ -42,6 +46,13 @@ func (payload ManagedProviderFileReferencePayload) GoString() string {
 
 func GenerateManagedProviderFileHandle() (string, error) {
 	return generateManagedProviderFileHandle(rand.Reader)
+}
+
+func ValidateManagedProviderFileHandle(handle string) error {
+	if !validManagedProviderFileHandle(handle) {
+		return fmt.Errorf("managed provider file handle is invalid")
+	}
+	return nil
 }
 
 func generateManagedProviderFileHandle(random io.Reader) (string, error) {
@@ -53,4 +64,13 @@ func generateManagedProviderFileHandle(random io.Reader) (string, error) {
 		return "", fmt.Errorf("generate managed provider file handle: %w", err)
 	}
 	return managedProviderFileHandlePrefix + base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
+func validManagedProviderFileHandle(handle string) bool {
+	if !strings.HasPrefix(handle, managedProviderFileHandlePrefix) {
+		return false
+	}
+	encoded := strings.TrimPrefix(handle, managedProviderFileHandlePrefix)
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	return err == nil && len(decoded) == 32 && base64.RawURLEncoding.EncodeToString(decoded) == encoded
 }

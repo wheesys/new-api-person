@@ -80,6 +80,14 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 	{
+		providerFileRouter := relayV1Router.Group("")
+		providerFileRouter.GET("/files", controller.RelayNotImplemented)
+		providerFileRouter.POST("/files", controller.UploadManagedProviderFile)
+		providerFileRouter.DELETE("/files/:id", controller.RelayNotImplemented)
+		providerFileRouter.GET("/files/:id", controller.RetrieveManagedProviderFile)
+		providerFileRouter.GET("/files/:id/content", controller.RelayNotImplemented)
+	}
+	{
 		//http router
 		httpRouter := relayV1Router.Group("")
 		httpRouter.Use(middleware.Distribute())
@@ -157,11 +165,6 @@ func SetRelayRouter(router *gin.Engine) {
 
 		// not implemented
 		httpRouter.POST("/images/variations", controller.RelayNotImplemented)
-		httpRouter.GET("/files", controller.RelayNotImplemented)
-		httpRouter.POST("/files", controller.RelayNotImplemented)
-		httpRouter.DELETE("/files/:id", controller.RelayNotImplemented)
-		httpRouter.GET("/files/:id", controller.RelayNotImplemented)
-		httpRouter.GET("/files/:id/content", controller.RelayNotImplemented)
 		httpRouter.POST("/fine-tunes", controller.RelayNotImplemented)
 		httpRouter.GET("/fine-tunes", controller.RelayNotImplemented)
 		httpRouter.GET("/fine-tunes/:id", controller.RelayNotImplemented)
