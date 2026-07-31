@@ -38,11 +38,18 @@ const (
 	ToolExchangeFailed    ToolExchangeStatus = "failed"
 )
 
+type ToolIdentityMode string
+
+const (
+	ToolIdentityModeStableID     ToolIdentityMode = "stable_id"
+	ToolIdentityModeFunctionName ToolIdentityMode = "function_name"
+)
+
 type ToolExchange struct {
 	Protocol           types.RelayFormat  `json:"protocol"`
 	Sequence           int                `json:"sequence"`
 	ResultSequence     *int               `json:"result_sequence,omitempty"`
-	ParallelGroup      int                `json:"parallel_group"`
+	GroupIndex         int                `json:"group_index"`
 	CallID             string             `json:"-"`
 	FunctionName       string             `json:"-"`
 	ArgumentsDigest    string             `json:"arguments_digest,omitempty"`
@@ -54,10 +61,23 @@ type ToolExchange struct {
 	RequiredBinding    BindingLevel       `json:"required_binding"`
 }
 
+type ToolGraphGroup struct {
+	Protocol              types.RelayFormat  `json:"protocol"`
+	CallContainerSequence int                `json:"call_container_sequence"`
+	CallSequenceStart     int                `json:"call_sequence_start"`
+	CallSequenceEnd       int                `json:"call_sequence_end"`
+	ResultSequenceStart   *int               `json:"result_sequence_start,omitempty"`
+	ResultSequenceEnd     *int               `json:"result_sequence_end,omitempty"`
+	ExchangeIndexes       []int              `json:"exchange_indexes"`
+	Status                ToolExchangeStatus `json:"status"`
+	IdentityMode          ToolIdentityMode   `json:"identity_mode"`
+}
+
 type ToolGraph struct {
-	Exchanges              []ToolExchange `json:"exchanges,omitempty"`
-	SchemaDigest           string         `json:"schema_digest,omitempty"`
-	AmbiguousFunctionNames []string       `json:"ambiguous_function_names,omitempty"`
+	Exchanges              []ToolExchange   `json:"exchanges,omitempty"`
+	Groups                 []ToolGraphGroup `json:"groups,omitempty"`
+	SchemaDigest           string           `json:"schema_digest,omitempty"`
+	AmbiguousFunctionNames []string         `json:"-"`
 }
 
 type SchemaState struct {

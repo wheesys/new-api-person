@@ -55,8 +55,8 @@ func extractClaudeMessages(extractionRequest ExtractionRequest) (*ContextEnvelop
 		hasToolResult := false
 		hasMedia := false
 		providerBoundMessage := false
-		for partIndex, part := range parts {
-			sequence := messageIndex*1000 + partIndex
+		for _, part := range parts {
+			sequence := len(toolEvents)
 			partType := strings.ToLower(strings.TrimSpace(part.Type))
 			if strings.Contains(partType, "server_tool") || strings.Contains(partType, "mcp") || strings.Contains(partType, "web_search") || strings.Contains(partType, "code_execution") || strings.Contains(partType, "computer") {
 				providerBoundMessage = true

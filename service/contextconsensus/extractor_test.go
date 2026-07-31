@@ -19,8 +19,8 @@ func TestExtractChatCompletionsPreservesToolGraphAndSchema(t *testing.T) {
       {"id":"call-a","type":"function","function":{"name":"lookup","arguments":"{\"id\":1}"}},
       {"id":"call-b","type":"function","function":{"name":"lookup","arguments":"{\"id\":2}"}}
     ]},
-    {"role":"tool","tool_call_id":"call-a","content":"first"},
     {"role":"tool","tool_call_id":"call-b","content":"second"},
+    {"role":"tool","tool_call_id":"call-a","content":"first"},
     {"role":"user","content":"Summarize the results."}
   ],
   "tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
@@ -37,6 +37,13 @@ func TestExtractChatCompletionsPreservesToolGraphAndSchema(t *testing.T) {
 	assert.Len(t, envelope.ImmutableInstructions, 1)
 	assert.Len(t, envelope.CompressibleSegments, 1)
 	assert.Len(t, envelope.ToolState.Exchanges, 2)
+	require.Len(t, envelope.ToolState.Groups, 1)
+	assert.Equal(t, ToolIdentityModeStableID, envelope.ToolState.Groups[0].IdentityMode)
+	assert.Equal(t, ToolExchangeCompleted, envelope.ToolState.Groups[0].Status)
+	assert.Equal(t, 2, envelope.ToolState.Groups[0].CallContainerSequence)
+	assert.Equal(t, []int{0, 1}, envelope.ToolState.Groups[0].ExchangeIndexes)
+	assert.Equal(t, 0, envelope.ToolState.Exchanges[0].GroupIndex)
+	assert.Equal(t, 0, envelope.ToolState.Exchanges[1].GroupIndex)
 	assert.NotEmpty(t, envelope.ToolState.SchemaDigest)
 	for _, exchange := range envelope.ToolState.Exchanges {
 		assert.Equal(t, ToolExchangeCompleted, exchange.Status)
@@ -106,6 +113,53 @@ func TestExtractResponsesDetectsStateBindingAndToolGraph(t *testing.T) {
 	assert.Zero(t, *envelope.RequestedMaxOutput)
 }
 
+func TestExtractResponsesDoesNotInferParallelGroupFromAdjacentItems(t *testing.T) {
+	body := []byte(`{
+  "model":"gpt-5",
+  "input":[
+    {"type":"function_call","call_id":"call-a","name":"first","arguments":"{}"},
+    {"type":"function_call","call_id":"call-b","name":"second","arguments":"{}"},
+    {"type":"function_call_output","call_id":"call-b","output":{"ok":true}},
+    {"type":"function_call_output","call_id":"call-a","output":{"ok":true}}
+  ]
+}`)
+
+	envelope, err := Extract(ExtractionRequest{Protocol: types.RelayFormatOpenAIResponses, Body: body})
+	require.NoError(t, err)
+	require.Len(t, envelope.ToolState.Exchanges, 2)
+	require.Len(t, envelope.ToolState.Groups, 2)
+	for groupIndex, group := range envelope.ToolState.Groups {
+		assert.Equal(t, ToolIdentityModeStableID, group.IdentityMode)
+		assert.Equal(t, ToolExchangeCompleted, group.Status)
+		assert.Equal(t, []int{groupIndex}, group.ExchangeIndexes)
+		assert.Equal(t, groupIndex, envelope.ToolState.Exchanges[groupIndex].GroupIndex)
+		assert.Equal(t, groupIndex, group.CallContainerSequence)
+	}
+}
+
+func TestExtractResponsesDoesNotSubstituteItemIDForMissingCallID(t *testing.T) {
+	body := []byte(`{
+  "model":"gpt-5",
+  "input":[
+    {"type":"function_call","id":"item-id-must-not-be-call-id","name":"lookup","arguments":"{}"},
+    {"type":"function_call_output","call_id":"item-id-must-not-be-call-id","output":{"ok":true}}
+  ]
+}`)
+
+	envelope, err := Extract(ExtractionRequest{Protocol: types.RelayFormatOpenAIResponses, Body: body})
+	require.NotNil(t, envelope)
+	require.Error(t, err)
+	var validationErr *ValidationError
+	require.True(t, errors.As(err, &validationErr))
+	issueCodes := make([]string, 0, len(validationErr.Issues))
+	for _, issue := range validationErr.Issues {
+		issueCodes = append(issueCodes, issue.Code)
+	}
+	assert.Contains(t, issueCodes, "missing_tool_call_id")
+	assert.Contains(t, issueCodes, "orphan_tool_result")
+	assert.Empty(t, envelope.ToolState.Groups)
+}
+
 func TestExtractResponsesPinsHostedToolDefinitions(t *testing.T) {
 	body := []byte(`{
   "model":"gpt-5",
@@ -164,6 +218,35 @@ func TestExtractClaudeDoesNotTreatEffortAsOutputSchema(t *testing.T) {
 	assert.Zero(t, *envelope.RequestedMaxOutput)
 }
 
+func TestExtractClaudeReverseStableIDResultsInheritCallGroup(t *testing.T) {
+	body := []byte(`{
+  "model":"claude-sonnet-4",
+  "messages":[
+    {"role":"user","content":"lookup"},
+    {"role":"assistant","content":[
+      {"type":"tool_use","id":"tool-a","name":"first","input":{}},
+      {"type":"tool_use","id":"tool-b","name":"second","input":{}}
+    ]},
+    {"role":"user","content":[
+      {"type":"tool_result","tool_use_id":"tool-b","content":{"ok":true}},
+      {"type":"tool_result","tool_use_id":"tool-a","content":{"ok":true}}
+    ]},
+    {"role":"user","content":"summarize"}
+  ]
+}`)
+
+	envelope, err := Extract(ExtractionRequest{Protocol: types.RelayFormatClaude, Body: body})
+	require.NoError(t, err)
+	require.Len(t, envelope.ToolState.Groups, 1)
+	group := envelope.ToolState.Groups[0]
+	assert.Equal(t, ToolIdentityModeStableID, group.IdentityMode)
+	assert.Equal(t, ToolExchangeCompleted, group.Status)
+	assert.Equal(t, 1, group.CallContainerSequence)
+	assert.Equal(t, []int{0, 1}, group.ExchangeIndexes)
+	assert.Equal(t, 0, envelope.ToolState.Exchanges[0].GroupIndex)
+	assert.Equal(t, 0, envelope.ToolState.Exchanges[1].GroupIndex)
+}
+
 func TestExtractGeminiPinsCachedContentAndAmbiguousParallelCalls(t *testing.T) {
 	body := []byte(`{
   "cachedContent":"cached-secret-reference",
@@ -188,7 +271,8 @@ func TestExtractGeminiPinsCachedContentAndAmbiguousParallelCalls(t *testing.T) {
 		OriginalModel: "gemini-2.5-pro",
 		Body:          body,
 	})
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.NotNil(t, envelope)
 	assert.Equal(t, "gemini-2.5-pro", envelope.OriginalModel)
 	assert.Equal(t, BindingLevelCredential, envelope.ProviderBinding.BindingLevel)
 	assert.Contains(t, envelope.ProviderBinding.ReasonCodes, "gemini_cached_content")
@@ -196,8 +280,12 @@ func TestExtractGeminiPinsCachedContentAndAmbiguousParallelCalls(t *testing.T) {
 	assert.Contains(t, envelope.ProviderBinding.ReasonCodes, "gemini_ambiguous_parallel_function_calls")
 	assert.Equal(t, []string{"lookup"}, envelope.ToolState.AmbiguousFunctionNames)
 	assert.Len(t, envelope.ToolState.Exchanges, 2)
+	require.Len(t, envelope.ToolState.Groups, 1)
+	assert.Equal(t, ToolIdentityModeFunctionName, envelope.ToolState.Groups[0].IdentityMode)
+	assert.Equal(t, ToolExchangeFailed, envelope.ToolState.Groups[0].Status)
+	assert.Equal(t, 1, envelope.ToolState.Groups[0].CallContainerSequence)
 	for _, exchange := range envelope.ToolState.Exchanges {
-		assert.Equal(t, ToolExchangeCompleted, exchange.Status)
+		assert.Equal(t, ToolExchangePending, exchange.Status)
 	}
 	assert.Equal(t, SegmentKindToolResult, envelope.PreservedSegments[1].Kind)
 	assert.Equal(t, 1, envelope.MediaState.FileCount)

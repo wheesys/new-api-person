@@ -1,6 +1,7 @@
 package contextconsensus
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -68,6 +69,72 @@ func TestToolCompactionV2PromptAndRewriteKeepRawToolContextSealed(t *testing.T) 
 	require.NoError(t, common.Unmarshal(rewrittenBody, &rewrittenRequest))
 	require.NotEmpty(t, rewrittenRequest.Messages)
 	assert.Contains(t, rewrittenRequest.Messages[0].StringContent(), consensusSummaryPreamble)
+}
+
+func TestParallelToolCompactionV2IsAtomicAndDeterministic(t *testing.T) {
+	body, plan := parallelToolCompactionV2Fixture(t, 2)
+	require.Equal(t, ConsensusSummaryVersionV2, plan.SummaryVersion)
+	require.NotNil(t, plan.ToolAtomicRange)
+	assert.Equal(t, 2, plan.ToolAtomicRange.StartSequence)
+	assert.Equal(t, 6, plan.ToolAtomicRange.EndSequence)
+	assert.Equal(t, []int{3, 4, 5, 6}, plan.ToolHiddenSequences)
+	require.Len(t, plan.ToolProjectionDigests, 2)
+
+	facts, err := toolCompactionExpectedFacts(plan)
+	require.NoError(t, err)
+	require.Len(t, facts, 6)
+	assert.Equal(t, "tool_01.is_active", facts[0].Field)
+	assert.Equal(t, "1", facts[1].Value)
+	assert.Equal(t, "tool_02.is_active", facts[3].Field)
+	assert.Equal(t, "2", facts[4].Value)
+
+	prompt, err := BuildToolCompactionPromptV2(CompactionPromptRequest{
+		Model: "summary-model", Protocol: types.RelayFormatOpenAI, Body: body, Plan: plan,
+	})
+	require.NoError(t, err)
+	promptBody, err := common.Marshal(prompt)
+	require.NoError(t, err)
+	assert.Contains(t, string(promptBody), "initial request")
+	for _, rawValue := range []string{
+		"call-first-private", "call-second-private", "lookup_first_private", "lookup_second_private",
+		"first-secret", "second-secret", "parallel final private",
+	} {
+		assert.NotContains(t, string(promptBody), rawValue)
+	}
+
+	summaryBody, err := common.Marshal(validToolCompactionSummaryV2(t, plan))
+	require.NoError(t, err)
+	rewrittenBody, err := RewriteRequestWithConsensus(RewriteCompactedRequest{
+		Protocol: types.RelayFormatOpenAI, Body: body, Plan: plan, SummaryBody: summaryBody,
+	})
+	require.NoError(t, err)
+	for _, removedValue := range []string{
+		"call-first-private", "call-second-private", "first-secret", "second-secret", "parallel final private",
+	} {
+		assert.NotContains(t, string(rewrittenBody), removedValue)
+	}
+	assert.Contains(t, string(rewrittenBody), "lookup_first_private")
+	assert.Contains(t, string(rewrittenBody), "lookup_second_private")
+
+	tamperedPlan := plan
+	tamperedPlan.toolProjections = append([]ToolResultSanitizationOutput(nil), plan.toolProjections...)
+	tamperedPlan.toolProjections[0], tamperedPlan.toolProjections[1] = tamperedPlan.toolProjections[1], tamperedPlan.toolProjections[0]
+	_, err = BuildToolCompactionPromptV2(CompactionPromptRequest{
+		Model: "summary-model", Protocol: types.RelayFormatOpenAI, Body: body, Plan: tamperedPlan,
+	})
+	require.ErrorContains(t, err, "projection integrity")
+}
+
+func TestParallelToolCompactionMissingOnePolicyStopsBeforeWholeGroup(t *testing.T) {
+	_, plan := parallelToolCompactionV2Fixture(t, 1)
+
+	assert.Equal(t, ConsensusSummaryVersion, plan.SummaryVersion)
+	assert.Nil(t, plan.ToolAtomicRange)
+	assert.Empty(t, plan.ToolHiddenSequences)
+	assert.Empty(t, plan.ToolProjectionDigests)
+	require.Len(t, plan.CoveredRanges, 1)
+	assert.Equal(t, 0, plan.CoveredRanges[0].StartSequence)
+	assert.Equal(t, 1, plan.CoveredRanges[0].EndSequence)
 }
 
 func TestToolCompactionWithoutRegisteredPolicyStopsBeforeToolTurn(t *testing.T) {
@@ -171,6 +238,60 @@ func toolCompactionV2Fixture(t *testing.T, preservedRecentTurns int, registered 
 		require.NoError(t, err)
 	}
 	policy := enabledCompactionPolicy(preservedRecentTurns)
+	policy.AllowToolResultCompaction = true
+	plan, err := BuildToolCompactionPlanV2(ToolCompactionPlanRequest{
+		CompactionPlanRequest: CompactionPlanRequest{
+			Protocol: types.RelayFormatOpenAI, Body: body, Envelope: envelope, Policy: policy,
+		},
+		PolicyProvider: provider,
+	})
+	require.NoError(t, err)
+	return body, plan
+}
+
+func parallelToolCompactionBody() []byte {
+	return []byte(`{
+  "model":"gpt-5",
+  "messages":[
+    {"role":"user","content":"initial request"},
+    {"role":"assistant","content":"initial answer"},
+    {"role":"user","content":"parallel lookup"},
+    {"role":"assistant","tool_calls":[
+      {"id":"call-first-private","type":"function","function":{"name":"lookup_first_private","arguments":"{\"query\":\"first-secret\"}"}},
+      {"id":"call-second-private","type":"function","function":{"name":"lookup_second_private","arguments":"{\"query\":\"second-secret\"}"}}
+    ]},
+    {"role":"tool","tool_call_id":"call-second-private","content":"{\"status\":\"ok\",\"count\":2,\"active\":false}"},
+    {"role":"tool","tool_call_id":"call-first-private","content":"{\"status\":\"ok\",\"count\":1,\"active\":true}"},
+    {"role":"assistant","content":"parallel final private"},
+    {"role":"user","content":"recent question"},
+    {"role":"assistant","content":"recent answer"},
+    {"role":"user","content":"continue"}
+  ],
+  "tools":[
+    {"type":"function","function":{"name":"lookup_first_private","parameters":{"type":"object"}}},
+    {"type":"function","function":{"name":"lookup_second_private","parameters":{"type":"object"}}}
+  ]
+}`)
+}
+
+func parallelToolCompactionV2Fixture(t *testing.T, registeredPolicyCount int) ([]byte, CompactionPlan) {
+	t.Helper()
+	body := parallelToolCompactionBody()
+	envelope, err := Extract(ExtractionRequest{Protocol: types.RelayFormatOpenAI, Body: body})
+	require.NoError(t, err)
+	assessment := AssessToolCompactionGroup(envelope)
+	require.True(t, assessment.ReadyForSanitization)
+	require.NotNil(t, assessment.Evidence)
+
+	policies := make([]ToolResultSanitizationPolicy, 0, registeredPolicyCount)
+	for index := 0; index < registeredPolicyCount; index++ {
+		policy := validToolSanitizationPolicyForTest(assessment.Evidence.Exchanges[index])
+		policy.Version = fmt.Sprintf("parallel-policy-v%d", index+1)
+		policies = append(policies, policy)
+	}
+	provider, err := NewStaticToolSanitizationPolicyProvider(policies)
+	require.NoError(t, err)
+	policy := enabledCompactionPolicy(1)
 	policy.AllowToolResultCompaction = true
 	plan, err := BuildToolCompactionPlanV2(ToolCompactionPlanRequest{
 		CompactionPlanRequest: CompactionPlanRequest{

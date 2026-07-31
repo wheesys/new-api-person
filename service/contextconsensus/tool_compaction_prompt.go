@@ -53,7 +53,7 @@ func BuildToolCompactionPromptV2(request CompactionPromptRequest) (*dto.GeneralO
 	sort.Ints(sequences)
 	history := make([]compactionPromptHistory, 0, len(sequences))
 	for _, sequence := range sequences {
-		if sequence == request.Plan.ToolCallSequence || sequence == request.Plan.ToolResultSequence || sequence == request.Plan.ToolFinalSequence {
+		if request.Plan.isToolHiddenSequence(sequence) {
 			continue
 		}
 		message := chatRequest.Messages[sequence]

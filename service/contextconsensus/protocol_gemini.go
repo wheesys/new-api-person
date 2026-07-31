@@ -37,8 +37,8 @@ func extractGemini(extractionRequest ExtractionRequest) (*ContextEnvelope, error
 		hasToolResult := false
 		hasMedia := false
 		providerBoundContent := false
-		for partIndex, part := range content.Parts {
-			sequence := contentIndex*1000 + partIndex
+		for _, part := range content.Parts {
+			sequence := len(toolEvents)
 			if part.FunctionCall != nil {
 				hasToolCall = true
 				toolEvents = append(toolEvents, ToolEvent{

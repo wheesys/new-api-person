@@ -1,6 +1,7 @@
 package contextconsensus
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -52,6 +53,70 @@ func TestAssessSingleSerialToolCompactionProducesSafeStructuralEvidence(t *testi
 		Policy:   enabledCompactionPolicy(1),
 	})
 	require.ErrorContains(t, err, "tool context cannot be compacted")
+}
+
+func TestAssessToolCompactionGroupAcceptsReverseResultsAndSealsEvidence(t *testing.T) {
+	body := parallelToolCompactionBody()
+	envelope, err := Extract(ExtractionRequest{Protocol: types.RelayFormatOpenAI, Body: body})
+	require.NoError(t, err)
+
+	assessment := AssessToolCompactionGroup(envelope)
+	require.True(t, assessment.ReadyForSanitization)
+	require.NotNil(t, assessment.Evidence)
+	require.NoError(t, assessment.Evidence.Validate())
+	require.Len(t, assessment.Evidence.Exchanges, 2)
+	assert.Equal(t, []int{5, 4}, assessment.Evidence.ResultSequences)
+	assert.Equal(t, digestString("call-first-private"), assessment.Evidence.Exchanges[0].CallIdentityDigest)
+	assert.Equal(t, digestString("call-second-private"), assessment.Evidence.Exchanges[1].CallIdentityDigest)
+
+	serialAssessment := AssessSingleSerialToolCompaction(envelope)
+	assert.False(t, serialAssessment.ReadyForSanitization)
+	assert.Equal(t, []string{ToolCompactionReasonExchangeCount}, serialAssessment.ReasonCodes)
+
+	diagnostic := NewToolCompactionDiagnostic(envelope, true)
+	require.NoError(t, diagnostic.Validate())
+	assert.Equal(t, ToolCompactionDiagnosticSchemaVersion, diagnostic.SchemaVersion)
+	assert.Equal(t, ToolCompactionDiagnosticReadyForSanitization, diagnostic.Status)
+	legacyDiagnostic := diagnostic
+	legacyDiagnostic.SchemaVersion = ToolCompactionDiagnosticLegacySchemaVersion
+	require.NoError(t, legacyDiagnostic.Validate())
+
+	encoded, err := common.Marshal(assessment.Evidence)
+	require.NoError(t, err)
+	for _, sensitiveValue := range []string{"call-first-private", "call-second-private", "lookup_first_private", "lookup_second_private", "first-secret", "second-secret"} {
+		assert.NotContains(t, string(encoded), sensitiveValue)
+	}
+	var serialized ToolCompactionGroupEvidence
+	require.NoError(t, common.Unmarshal(encoded, &serialized))
+	require.ErrorIs(t, serialized.Validate(), ErrToolCompactionEvidenceInvalid)
+}
+
+func TestAssessToolCompactionGroupRejectsMoreThanMaximumExchanges(t *testing.T) {
+	exchanges := make([]ToolExchange, MaximumToolCompactionGroupExchanges+1)
+	exchangeIndexes := make([]int, len(exchanges))
+	for index := range exchanges {
+		resultSequence := index + 2
+		exchangeIndexes[index] = index
+		exchanges[index] = ToolExchange{
+			Protocol: types.RelayFormatOpenAI, Sequence: 1, ResultSequence: &resultSequence, GroupIndex: 0,
+			CallID: fmt.Sprintf("call-%d", index), FunctionName: "lookup", ArgumentsDigest: digestString("arguments"), ResultDigest: digestString("result"),
+			Status: ToolExchangeCompleted, RawCallPresent: true, RawResultPresent: true,
+		}
+	}
+	envelope := &ContextEnvelope{
+		Protocol: types.RelayFormatOpenAI,
+		ToolState: ToolGraph{
+			SchemaDigest: digestString("schema"), Exchanges: exchanges,
+			Groups: []ToolGraphGroup{{
+				Protocol: types.RelayFormatOpenAI, CallContainerSequence: 1, CallSequenceStart: 1, CallSequenceEnd: 1,
+				ExchangeIndexes: exchangeIndexes, Status: ToolExchangeCompleted, IdentityMode: ToolIdentityModeStableID,
+			}},
+		},
+	}
+
+	assessment := AssessToolCompactionGroup(envelope)
+	assert.False(t, assessment.ReadyForSanitization)
+	assert.Contains(t, assessment.ReasonCodes, ToolCompactionReasonExchangeCount)
 }
 
 func encodedEvidence(t *testing.T, evidence *ToolCompactionStructuralEvidence) []byte {

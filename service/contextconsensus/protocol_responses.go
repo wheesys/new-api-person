@@ -71,23 +71,27 @@ func extractOpenAIResponses(extractionRequest ExtractionRequest) (*ContextEnvelo
 			if itemType == "custom_tool_call" {
 				arguments = item["input"]
 			}
+			callID, _ := item["call_id"].(string)
+			functionName, _ := item["name"].(string)
 			toolEvents = append(toolEvents, ToolEvent{
-				Kind:          ToolEventCall,
-				Protocol:      types.RelayFormatOpenAIResponses,
-				Sequence:      itemIndex,
+				Kind:     ToolEventCall,
+				Protocol: types.RelayFormatOpenAIResponses,
+				Sequence: itemIndex,
+				// Responses has no call container spanning adjacent input items.
 				ParallelGroup: itemIndex,
-				CallID:        responsesCallID(item),
-				FunctionName:  strings.TrimSpace(fmt.Sprint(item["name"])),
+				CallID:        callID,
+				FunctionName:  functionName,
 				PayloadDigest: digestValue(arguments),
 			})
 		case "function_call_output", "custom_tool_call_output":
 			isTool = true
+			callID, _ := item["call_id"].(string)
 			toolEvents = append(toolEvents, ToolEvent{
 				Kind:          ToolEventResult,
 				Protocol:      types.RelayFormatOpenAIResponses,
 				Sequence:      itemIndex,
 				ParallelGroup: itemIndex,
-				CallID:        strings.TrimSpace(fmt.Sprint(item["call_id"])),
+				CallID:        callID,
 				PayloadDigest: digestValue(item["output"]),
 			})
 		}
@@ -138,14 +142,4 @@ func extractOpenAIResponses(extractionRequest ExtractionRequest) (*ContextEnvelo
 		}
 	}
 	return envelope, validationError(issues)
-}
-
-func responsesCallID(item map[string]any) string {
-	if callID := strings.TrimSpace(fmt.Sprint(item["call_id"])); callID != "" && callID != "<nil>" {
-		return callID
-	}
-	if itemID := strings.TrimSpace(fmt.Sprint(item["id"])); itemID != "<nil>" {
-		return itemID
-	}
-	return ""
 }

@@ -103,7 +103,7 @@
     - [x] 完成阶段 D-1b：实现服务端构造、sanitizer/policy/tool/schema 版本精确绑定且默认拒绝的 JSON Pointer 白名单脱敏注册表；拒绝未知字段、重复键、敏感值和超限结构，仅输出带进程内完整性证明的有界标量投影，见 `doc/auto-smart-routing-context-consensus-stage-d1b-implementation-2026-07-30.md`。
     - [x] 完成阶段 D-1c：新增 Summary v2，闭合单个旧串行 Chat 工具四消息原子段的 plan、prompt、rewrite、内部执行器版本绑定和最终 OpenAI Chat 协议门禁；开关默认关闭，编译期策略表默认空且未登记工具只压缩其之前的完整普通轮次，见 `doc/auto-smart-routing-context-consensus-stage-d1c-implementation-2026-07-30.md`。
     - [x] 完成阶段 D-1d：增加有限 reason code 聚合诊断 API 和后台页面，只持久化版本、资格状态和有限原因，禁止展示原始工具状态、会话内容、digest 或摘要正文，见 `doc/auto-smart-routing-context-consensus-stage-d1d-implementation-2026-07-31.md`。
-  - [ ] 完成阶段 D-2：统一并行 group 语义后评估稳定 ID 协议的并行工具组；Gemini 同名并行继续失败关闭。
+  - [x] 完成阶段 D-2：统一 call-derived group 语义，闭合 OpenAI Chat 稳定 ID 并行工具组的整组证据、脱敏、Summary v2 与原子重写；Responses/Claude/Gemini 运行时继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d2-implementation-2026-07-31.md`。
   - [ ] 完成阶段 D-3：具备 adaptor 权威所有权、到期和删除能力后，实现 provider file 生命周期。
 - [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
 - [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。

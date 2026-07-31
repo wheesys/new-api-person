@@ -337,7 +337,7 @@ func validateConsensusFactV2(fact ConsensusFact, plan CompactionPlan) error {
 		return err
 	}
 	for _, segment := range segments {
-		if segment.Sequence == plan.ToolCallSequence || segment.Sequence == plan.ToolResultSequence || segment.Sequence == plan.ToolFinalSequence {
+		if plan.isToolHiddenSequence(segment.Sequence) {
 			return fmt.Errorf("ordinary summary fact cannot cite hidden tool segments")
 		}
 	}
@@ -361,29 +361,46 @@ func validateConsensusFactV2(fact ConsensusFact, plan CompactionPlan) error {
 }
 
 func toolCompactionExpectedFacts(plan CompactionPlan) ([]ConsensusFact, error) {
-	if plan.ToolAtomicRange == nil || plan.toolProjection == nil || plan.ToolProjectionDigest == "" {
+	projections := plan.toolProjections
+	projectionDigests := plan.ToolProjectionDigests
+	if len(projections) == 0 && plan.toolProjection != nil && plan.ToolProjectionDigest != "" {
+		projections = []ToolResultSanitizationOutput{*plan.toolProjection}
+		projectionDigests = []string{plan.ToolProjectionDigest}
+	}
+	if plan.ToolAtomicRange == nil || len(projections) == 0 || len(projections) > MaximumToolCompactionGroupExchanges ||
+		len(projectionDigests) != len(projections) {
 		return nil, fmt.Errorf("tool compaction plan has no sanitized projection")
 	}
-	if err := plan.toolProjection.Validate(); err != nil || plan.toolProjection.ProjectionDigest() != plan.ToolProjectionDigest {
-		return nil, fmt.Errorf("tool compaction projection integrity check failed")
-	}
-	fields := plan.toolProjection.Fields()
-	fieldNames := make([]string, 0, len(fields))
-	for fieldName := range fields {
-		fieldNames = append(fieldNames, fieldName)
-	}
-	sort.Strings(fieldNames)
-	facts := make([]ConsensusFact, 0, len(fieldNames))
-	for _, fieldName := range fieldNames {
-		confidence := 1.0
-		facts = append(facts, ConsensusFact{
-			Field:        fieldName,
-			Value:        common.JsonRawMessageToString(fields[fieldName]),
-			Provenance:   ConsensusProvenanceToolObserved,
-			SourceRange:  *plan.ToolAtomicRange,
-			SourceDigest: plan.ToolAtomicRange.SourceDigest,
-			Confidence:   &confidence,
-		})
+	facts := make([]ConsensusFact, 0)
+	for projectionIndex := range projections {
+		projection := projections[projectionIndex]
+		if err := projection.Validate(); err != nil || projection.ProjectionDigest() != projectionDigests[projectionIndex] {
+			return nil, fmt.Errorf("tool compaction projection integrity check failed")
+		}
+		fields := projection.Fields()
+		fieldNames := make([]string, 0, len(fields))
+		for fieldName := range fields {
+			fieldNames = append(fieldNames, fieldName)
+		}
+		sort.Strings(fieldNames)
+		for _, fieldName := range fieldNames {
+			factField := fieldName
+			if len(projections) > 1 {
+				factField = fmt.Sprintf("tool_%02d.%s", projectionIndex+1, fieldName)
+			}
+			confidence := 1.0
+			facts = append(facts, ConsensusFact{
+				Field:        factField,
+				Value:        common.JsonRawMessageToString(fields[fieldName]),
+				Provenance:   ConsensusProvenanceToolObserved,
+				SourceRange:  *plan.ToolAtomicRange,
+				SourceDigest: plan.ToolAtomicRange.SourceDigest,
+				Confidence:   &confidence,
+			})
+			if len(facts) > maximumToolCompactionFacts {
+				return nil, fmt.Errorf("tool compaction fact limit exceeded")
+			}
+		}
 	}
 	return facts, nil
 }

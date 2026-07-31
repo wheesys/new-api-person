@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -12,7 +13,9 @@ import (
 var ErrToolCompactionEvidenceInvalid = errors.New("tool compaction structural evidence is invalid")
 
 const (
-	ToolCompactionDiagnosticSchemaVersion = 1
+	ToolCompactionDiagnosticSchemaVersion       = 2
+	ToolCompactionDiagnosticLegacySchemaVersion = 1
+	MaximumToolCompactionGroupExchanges         = 8
 
 	ToolCompactionDiagnosticNotApplicable        = "not_applicable"
 	ToolCompactionDiagnosticReadyForSanitization = "ready_for_sanitization"
@@ -53,7 +56,7 @@ func NewToolCompactionDiagnostic(envelope *ContextEnvelope, applicable bool) Too
 		return diagnostic
 	}
 
-	assessment := AssessSingleSerialToolCompaction(envelope)
+	assessment := AssessToolCompactionGroup(envelope)
 	if assessment.ReadyForSanitization {
 		diagnostic.Status = ToolCompactionDiagnosticReadyForSanitization
 		return diagnostic
@@ -64,7 +67,7 @@ func NewToolCompactionDiagnostic(envelope *ContextEnvelope, applicable bool) Too
 }
 
 func (diagnostic ToolCompactionDiagnostic) Validate() error {
-	if diagnostic.SchemaVersion != ToolCompactionDiagnosticSchemaVersion {
+	if diagnostic.SchemaVersion != ToolCompactionDiagnosticLegacySchemaVersion && diagnostic.SchemaVersion != ToolCompactionDiagnosticSchemaVersion {
 		return fmt.Errorf("unsupported tool compaction diagnostic schema")
 	}
 	if len(diagnostic.ReasonCodes) > toolCompactionReasonCodeCount {
@@ -157,11 +160,50 @@ type ToolCompactionStructuralAssessment struct {
 	Evidence             *ToolCompactionStructuralEvidence `json:"evidence,omitempty"`
 }
 
-// AssessSingleSerialToolCompaction checks the structural prerequisites for the
-// separate sanitizer and tool-aware compaction authorization stages.
-func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionStructuralAssessment {
+// ToolCompactionGroupEvidence seals one complete call-derived tool group in
+// call order. Raw identities and payloads remain private to the envelope.
+type ToolCompactionGroupEvidence struct {
+	Protocol        types.RelayFormat                  `json:"protocol"`
+	GroupIndex      int                                `json:"group_index"`
+	CallSequence    int                                `json:"call_sequence"`
+	ResultSequences []int                              `json:"result_sequences"`
+	Status          ToolExchangeStatus                 `json:"status"`
+	Exchanges       []ToolCompactionStructuralEvidence `json:"exchanges"`
+	integrityDigest string
+}
+
+func (evidence ToolCompactionGroupEvidence) Validate() error {
+	if evidence.Protocol != types.RelayFormatOpenAI || evidence.GroupIndex < 0 || evidence.CallSequence < 0 ||
+		evidence.Status != ToolExchangeCompleted || len(evidence.Exchanges) == 0 ||
+		len(evidence.Exchanges) > MaximumToolCompactionGroupExchanges || len(evidence.ResultSequences) != len(evidence.Exchanges) ||
+		evidence.integrityDigest == "" || evidence.integrityDigest != digestValue(evidence) {
+		return ErrToolCompactionEvidenceInvalid
+	}
+	resultSequences := append([]int(nil), evidence.ResultSequences...)
+	sort.Ints(resultSequences)
+	for index, exchange := range evidence.Exchanges {
+		if err := exchange.Validate(); err != nil || exchange.Protocol != evidence.Protocol ||
+			exchange.CallSequence != evidence.CallSequence || exchange.ResultSequence != evidence.ResultSequences[index] {
+			return ErrToolCompactionEvidenceInvalid
+		}
+		if resultSequences[index] != evidence.CallSequence+index+1 {
+			return ErrToolCompactionEvidenceInvalid
+		}
+	}
+	return nil
+}
+
+type ToolCompactionGroupAssessment struct {
+	ReadyForSanitization bool                         `json:"ready_for_sanitization"`
+	ReasonCodes          []string                     `json:"reason_codes,omitempty"`
+	Evidence             *ToolCompactionGroupEvidence `json:"evidence,omitempty"`
+}
+
+// AssessToolCompactionGroup verifies that the request contains exactly one
+// bounded, stable-ID OpenAI Chat tool group that can be sanitized atomically.
+func AssessToolCompactionGroup(envelope *ContextEnvelope) ToolCompactionGroupAssessment {
 	if envelope == nil {
-		return ToolCompactionStructuralAssessment{ReasonCodes: []string{ToolCompactionReasonEnvelopeUnavailable}}
+		return ToolCompactionGroupAssessment{ReasonCodes: []string{ToolCompactionReasonEnvelopeUnavailable}}
 	}
 
 	reasonCodes := make([]string, 0, 8)
@@ -180,53 +222,111 @@ func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionS
 	if len(envelope.ToolState.AmbiguousFunctionNames) > 0 {
 		reasonCodes = append(reasonCodes, ToolCompactionReasonGraphAmbiguous)
 	}
-	if len(envelope.ToolState.Exchanges) != 1 {
+
+	groups := envelope.ToolState.Groups
+	if len(groups) == 0 && len(envelope.ToolState.Exchanges) == 1 {
+		exchange := envelope.ToolState.Exchanges[0]
+		groups = []ToolGraphGroup{{
+			Protocol: exchange.Protocol, CallContainerSequence: exchange.Sequence,
+			CallSequenceStart: exchange.Sequence, CallSequenceEnd: exchange.Sequence,
+			ExchangeIndexes: []int{0}, Status: exchange.Status, IdentityMode: ToolIdentityModeStableID,
+		}}
+	}
+	if len(groups) != 1 || len(groups[0].ExchangeIndexes) == 0 || len(groups[0].ExchangeIndexes) > MaximumToolCompactionGroupExchanges ||
+		len(groups[0].ExchangeIndexes) != len(envelope.ToolState.Exchanges) {
 		reasonCodes = append(reasonCodes, ToolCompactionReasonExchangeCount)
-		return ToolCompactionStructuralAssessment{ReasonCodes: reasonCodes}
+		return ToolCompactionGroupAssessment{ReasonCodes: reasonCodes}
 	}
 
-	exchange := envelope.ToolState.Exchanges[0]
-	if envelope.Protocol == types.RelayFormatOpenAI && exchange.Protocol != envelope.Protocol {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonProtocolUnsupported)
+	group := groups[0]
+	if group.Protocol != types.RelayFormatOpenAI || group.IdentityMode != ToolIdentityModeStableID {
+		reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonProtocolUnsupported)
 	}
-	if exchange.Status != ToolExchangeCompleted || !exchange.RawCallPresent || !exchange.RawResultPresent {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonExchangeIncomplete)
+	if group.Status != ToolExchangeCompleted || group.CallSequenceStart != group.CallSequenceEnd {
+		reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonExchangeIncomplete)
 	}
-	if exchange.OpaqueStatePresent {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonOpaqueState)
-	}
-	if strings.TrimSpace(exchange.CallID) == "" || strings.TrimSpace(exchange.FunctionName) == "" {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonIdentityMissing)
-	}
-	if strings.TrimSpace(exchange.ArgumentsDigest) == "" || strings.TrimSpace(exchange.ResultDigest) == "" {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonDigestMissing)
-	}
-	if (exchange.ArgumentsDigest != "" && !validToolCompactionDigest(exchange.ArgumentsDigest)) ||
-		(exchange.ResultDigest != "" && !validToolCompactionDigest(exchange.ResultDigest)) ||
-		(envelope.ToolState.SchemaDigest != "" && !validToolCompactionDigest(envelope.ToolState.SchemaDigest)) {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonDigestInvalid)
-	}
-	if exchange.ResultSequence == nil || *exchange.ResultSequence <= exchange.Sequence {
-		reasonCodes = append(reasonCodes, ToolCompactionReasonSequenceInvalid)
+
+	exchangeEvidence := make([]ToolCompactionStructuralEvidence, 0, len(group.ExchangeIndexes))
+	resultSequences := make([]int, 0, len(group.ExchangeIndexes))
+	seenExchangeIndexes := make(map[int]struct{}, len(group.ExchangeIndexes))
+	for _, exchangeIndex := range group.ExchangeIndexes {
+		if exchangeIndex < 0 || exchangeIndex >= len(envelope.ToolState.Exchanges) {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonExchangeIncomplete)
+			continue
+		}
+		if _, duplicate := seenExchangeIndexes[exchangeIndex]; duplicate {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonExchangeIncomplete)
+			continue
+		}
+		seenExchangeIndexes[exchangeIndex] = struct{}{}
+		exchange := envelope.ToolState.Exchanges[exchangeIndex]
+		if exchange.GroupIndex != 0 || exchange.Protocol != envelope.Protocol {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonProtocolUnsupported)
+		}
+		if exchange.Status != ToolExchangeCompleted || !exchange.RawCallPresent || !exchange.RawResultPresent {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonExchangeIncomplete)
+		}
+		if exchange.OpaqueStatePresent {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonOpaqueState)
+		}
+		if strings.TrimSpace(exchange.CallID) == "" || strings.TrimSpace(exchange.FunctionName) == "" {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonIdentityMissing)
+		}
+		if strings.TrimSpace(exchange.ArgumentsDigest) == "" || strings.TrimSpace(exchange.ResultDigest) == "" {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonDigestMissing)
+		}
+		if (exchange.ArgumentsDigest != "" && !validToolCompactionDigest(exchange.ArgumentsDigest)) ||
+			(exchange.ResultDigest != "" && !validToolCompactionDigest(exchange.ResultDigest)) ||
+			(envelope.ToolState.SchemaDigest != "" && !validToolCompactionDigest(envelope.ToolState.SchemaDigest)) {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonDigestInvalid)
+		}
+		if exchange.Sequence != group.CallSequenceStart || exchange.ResultSequence == nil || *exchange.ResultSequence <= exchange.Sequence {
+			reasonCodes = appendToolCompactionReasonCode(reasonCodes, ToolCompactionReasonSequenceInvalid)
+			continue
+		}
+		evidence := ToolCompactionStructuralEvidence{
+			Protocol: envelope.Protocol, CallSequence: exchange.Sequence, ResultSequence: *exchange.ResultSequence,
+			Status: exchange.Status, CallIdentityDigest: digestString(exchange.CallID), ToolIdentityDigest: digestString(exchange.FunctionName),
+			ArgumentsDigest: exchange.ArgumentsDigest, ResultDigest: exchange.ResultDigest, SchemaDigest: envelope.ToolState.SchemaDigest,
+		}
+		evidence.integrityDigest = digestValue(evidence)
+		exchangeEvidence = append(exchangeEvidence, evidence)
+		resultSequences = append(resultSequences, *exchange.ResultSequence)
 	}
 	if len(reasonCodes) > 0 {
-		return ToolCompactionStructuralAssessment{ReasonCodes: reasonCodes}
+		return ToolCompactionGroupAssessment{ReasonCodes: reasonCodes}
 	}
 
-	evidence := ToolCompactionStructuralEvidence{
-		Protocol:           envelope.Protocol,
-		CallSequence:       exchange.Sequence,
-		ResultSequence:     *exchange.ResultSequence,
-		Status:             exchange.Status,
-		CallIdentityDigest: digestString(exchange.CallID),
-		ToolIdentityDigest: digestString(exchange.FunctionName),
-		ArgumentsDigest:    exchange.ArgumentsDigest,
-		ResultDigest:       exchange.ResultDigest,
-		SchemaDigest:       envelope.ToolState.SchemaDigest,
+	evidence := ToolCompactionGroupEvidence{
+		Protocol: envelope.Protocol, GroupIndex: 0, CallSequence: group.CallSequenceStart,
+		ResultSequences: resultSequences, Status: group.Status, Exchanges: exchangeEvidence,
 	}
 	evidence.integrityDigest = digestValue(evidence)
-	return ToolCompactionStructuralAssessment{
-		ReadyForSanitization: true,
-		Evidence:             &evidence,
+	if err := evidence.Validate(); err != nil {
+		return ToolCompactionGroupAssessment{ReasonCodes: []string{ToolCompactionReasonSequenceInvalid}}
 	}
+	return ToolCompactionGroupAssessment{ReadyForSanitization: true, Evidence: &evidence}
+}
+
+// AssessSingleSerialToolCompaction checks the structural prerequisites for the
+// separate sanitizer and tool-aware compaction authorization stages.
+func AssessSingleSerialToolCompaction(envelope *ContextEnvelope) ToolCompactionStructuralAssessment {
+	assessment := AssessToolCompactionGroup(envelope)
+	if !assessment.ReadyForSanitization || assessment.Evidence == nil {
+		return ToolCompactionStructuralAssessment{ReasonCodes: assessment.ReasonCodes}
+	}
+	if len(assessment.Evidence.Exchanges) != 1 {
+		return ToolCompactionStructuralAssessment{ReasonCodes: []string{ToolCompactionReasonExchangeCount}}
+	}
+	evidence := assessment.Evidence.Exchanges[0]
+	return ToolCompactionStructuralAssessment{ReadyForSanitization: true, Evidence: &evidence}
+}
+
+func appendToolCompactionReasonCode(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }

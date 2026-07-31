@@ -16,30 +16,45 @@ type SummarySourceRange struct {
 }
 
 type CompactionPlan struct {
-	SummaryVersion       int                  `json:"summary_version"`
-	Protocol             types.RelayFormat    `json:"protocol"`
-	SourceDigest         string               `json:"source_digest"`
-	CoveredSegments      []ContextSegment     `json:"covered_segments"`
-	CoveredRanges        []SummarySourceRange `json:"covered_ranges"`
-	PreservedSegments    []ContextSegment     `json:"preserved_segments"`
-	ImmutableSegments    []ContextSegment     `json:"immutable_segments"`
-	OpenToolSegments     []ContextSegment     `json:"open_tool_segments,omitempty"`
-	MediaSegments        []ContextSegment     `json:"media_segments,omitempty"`
-	TargetInputTokens    int                  `json:"target_input_tokens"`
-	MaxSummaryTokens     int                  `json:"max_summary_tokens"`
-	PolicyVersion        string               `json:"policy_version"`
-	SummaryInsertBefore  int                  `json:"summary_insert_before"`
-	ToolContextPresent   bool                 `json:"tool_context_present,omitempty"`
-	ToolAtomicRange      *SummarySourceRange  `json:"tool_atomic_range,omitempty"`
-	ToolCallSequence     int                  `json:"tool_call_sequence,omitempty"`
-	ToolResultSequence   int                  `json:"tool_result_sequence,omitempty"`
-	ToolFinalSequence    int                  `json:"tool_final_sequence,omitempty"`
-	ToolProjectionDigest string               `json:"tool_projection_digest,omitempty"`
+	SummaryVersion        int                  `json:"summary_version"`
+	Protocol              types.RelayFormat    `json:"protocol"`
+	SourceDigest          string               `json:"source_digest"`
+	CoveredSegments       []ContextSegment     `json:"covered_segments"`
+	CoveredRanges         []SummarySourceRange `json:"covered_ranges"`
+	PreservedSegments     []ContextSegment     `json:"preserved_segments"`
+	ImmutableSegments     []ContextSegment     `json:"immutable_segments"`
+	OpenToolSegments      []ContextSegment     `json:"open_tool_segments,omitempty"`
+	MediaSegments         []ContextSegment     `json:"media_segments,omitempty"`
+	TargetInputTokens     int                  `json:"target_input_tokens"`
+	MaxSummaryTokens      int                  `json:"max_summary_tokens"`
+	PolicyVersion         string               `json:"policy_version"`
+	SummaryInsertBefore   int                  `json:"summary_insert_before"`
+	ToolContextPresent    bool                 `json:"tool_context_present,omitempty"`
+	ToolAtomicRange       *SummarySourceRange  `json:"tool_atomic_range,omitempty"`
+	ToolCallSequence      int                  `json:"tool_call_sequence,omitempty"`
+	ToolResultSequence    int                  `json:"tool_result_sequence,omitempty"`
+	ToolFinalSequence     int                  `json:"tool_final_sequence,omitempty"`
+	ToolProjectionDigest  string               `json:"tool_projection_digest,omitempty"`
+	ToolHiddenSequences   []int                `json:"tool_hidden_sequences,omitempty"`
+	ToolProjectionDigests []string             `json:"tool_projection_digests,omitempty"`
 	// These fields make plans in-process capabilities rather than forgeable JSON payloads.
 	preservedRecentTurns int
 	integrityDigest      string
 	toolProjection       *ToolResultSanitizationOutput
+	toolProjections      []ToolResultSanitizationOutput
 	toolPolicyProvider   ToolSanitizationPolicyProvider
+}
+
+func (plan CompactionPlan) isToolHiddenSequence(sequence int) bool {
+	if len(plan.ToolHiddenSequences) > 0 {
+		for _, hiddenSequence := range plan.ToolHiddenSequences {
+			if sequence == hiddenSequence {
+				return true
+			}
+		}
+		return false
+	}
+	return sequence == plan.ToolCallSequence || sequence == plan.ToolResultSequence || sequence == plan.ToolFinalSequence
 }
 
 type CompactionPlanRequest struct {
