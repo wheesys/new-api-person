@@ -356,6 +356,9 @@ func prepareContextConsensusCandidate(
 	if prepared == nil {
 		return nil, fmt.Errorf("authoritative prepared request is unavailable")
 	}
+	if _, err := attempt.ValidateProviderFileLifecycleRequest(); err != nil {
+		return nil, fmt.Errorf("validate provider file lifecycle: %w", err)
+	}
 	requestedMaxOutput := prepared.RequestedMaxOutput()
 	if requestedMaxOutput == nil {
 		return nil, fmt.Errorf("authoritative default max output is unavailable")

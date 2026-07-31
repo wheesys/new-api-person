@@ -141,6 +141,7 @@ type ContextEnvelope struct {
 	ToolState             ToolGraph         `json:"tool_state"`
 	SchemaState           SchemaState       `json:"schema_state"`
 	MediaState            MediaState        `json:"media_state"`
+	ProviderFileState     ProviderFileState `json:"provider_file_state"`
 	ProviderBinding       ProtocolBinding   `json:"provider_binding"`
 	TokenBreakdown        TokenBreakdown    `json:"token_breakdown"`
 	RequestedMaxOutput    *uint             `json:"requested_max_output_tokens,omitempty"`

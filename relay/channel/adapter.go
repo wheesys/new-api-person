@@ -71,6 +71,12 @@ type ManagedProviderStateReportingAdaptor interface {
 	ExtractManagedProviderStateReport(info *relaycommon.RelayInfo, httpStatus int, responseBody []byte) (contextconsensus.ManagedProviderStateReport, error)
 }
 
+// ProviderFileLifecycleAdaptor is an explicit opt-in for adaptors that can
+// authoritatively verify ownership and expiration and perform deletion.
+type ProviderFileLifecycleAdaptor interface {
+	ProviderFileLifecycleCapabilities(info *relaycommon.RelayInfo, state contextconsensus.ProviderFileState) contextconsensus.ProviderFileLifecycleCapabilities
+}
+
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 

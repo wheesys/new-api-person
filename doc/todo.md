@@ -105,6 +105,9 @@
     - [x] 完成阶段 D-1d：增加有限 reason code 聚合诊断 API 和后台页面，只持久化版本、资格状态和有限原因，禁止展示原始工具状态、会话内容、digest 或摘要正文，见 `doc/auto-smart-routing-context-consensus-stage-d1d-implementation-2026-07-31.md`。
   - [x] 完成阶段 D-2：统一 call-derived group 语义，闭合 OpenAI Chat 稳定 ID 并行工具组的整组证据、脱敏、Summary v2 与原子重写；Responses/Claude/Gemini 运行时继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d2-implementation-2026-07-31.md`。
   - [ ] 完成阶段 D-3：具备 adaptor 权威所有权、到期和删除能力后，实现 provider file 生命周期。
-- [ ] 如需继续推进，补充“渠道、上游适配器、模型、能力”业务关系图。
-- [ ] 如需继续推进，补充 API Key 额度预扣、补扣和退款的计费链路时序图。
-- [ ] 如需继续推进，检查后台页面是否需要增加渠道能力预览说明。
+    - [x] 完成阶段 D-3a：建立四协议精确文件分类、无原文证据、adaptor 显式能力契约和最终冻结请求门禁；现有 adaptor 未声明完整能力，provider-owned 文件继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3a-implementation-2026-07-31.md`。
+    - [ ] 完成阶段 D-3b：接入首个具备网关托管上传和持久化精确凭据绑定的 provider，只读核验权威所有权与实际到期时间。
+    - [ ] 完成阶段 D-3c：实现持久化删除 outbox、幂等到期删除、有限重试、失败告警和不可篡改终态审计后，开放首个 provider file 生命周期。
+- [x] 补充“渠道、上游适配器、模型、能力”业务关系图，明确配置、路由与运行时边界，见 `doc/project-module-business-relationships.md`。
+- [x] 补充 API Key 额度预扣、补扣和退款的计费链路时序图，覆盖预扣失败、实际额度差额结算和幂等退款，见 `doc/project-module-business-relationships.md`。
+- [x] 在后台渠道行操作中增加能力预览，按去重后的模型、分组和模型映射展示将生成的能力数量与路由组合，并完成六语言、桌面端和移动端验证，见 `doc/admin-channel-ability-preview-implementation-2026-07-31.md`。

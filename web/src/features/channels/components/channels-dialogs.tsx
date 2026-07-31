@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useChannels } from './channels-provider'
+import { AbilityPreviewDialog } from './dialogs/ability-preview-dialog'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
 import { ChannelTestDialog } from './dialogs/channel-test-dialog'
 import { CopyChannelDialog } from './dialogs/copy-channel-dialog'
@@ -38,6 +39,11 @@ export function ChannelsDialogs() {
         open={open === 'create-channel' || open === 'update-channel'}
         onOpenChange={(v) => !v && setOpen(null)}
         currentRow={open === 'update-channel' ? currentRow : null}
+      />
+
+      <AbilityPreviewDialog
+        open={open === 'ability-preview'}
+        onOpenChange={(v) => !v && setOpen(null)}
       />
 
       {/* Test Channel Dialog */}

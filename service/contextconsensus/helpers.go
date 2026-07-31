@@ -57,13 +57,12 @@ func rawJSONString(value json.RawMessage) string {
 	return strings.TrimSpace(string(value))
 }
 
-func inspectGenericMedia(value any, mediaState *MediaState) (hasMedia bool, providerBound bool) {
+func inspectGenericMedia(value any, mediaState *MediaState) (hasMedia bool) {
 	switch typed := value.(type) {
 	case []any:
 		for _, item := range typed {
-			itemHasMedia, itemProviderBound := inspectGenericMedia(item, mediaState)
+			itemHasMedia := inspectGenericMedia(item, mediaState)
 			hasMedia = hasMedia || itemHasMedia
-			providerBound = providerBound || itemProviderBound
 		}
 	case map[string]any:
 		partType := strings.ToLower(strings.TrimSpace(fmt.Sprint(typed["type"])))
@@ -81,28 +80,18 @@ func inspectGenericMedia(value any, mediaState *MediaState) (hasMedia bool, prov
 			mediaState.FileCount++
 			hasMedia = true
 		}
-		if _, ok := typed["file_id"]; ok {
-			providerBound = true
-			mediaState.ProviderBoundCount++
-		}
-		if _, ok := typed["fileId"]; ok {
-			providerBound = true
-			mediaState.ProviderBoundCount++
-		}
 		for _, child := range typed {
 			if _, nestedMap := child.(map[string]any); nestedMap {
-				childHasMedia, childProviderBound := inspectGenericMedia(child, mediaState)
+				childHasMedia := inspectGenericMedia(child, mediaState)
 				hasMedia = hasMedia || childHasMedia
-				providerBound = providerBound || childProviderBound
 			}
 			if _, nestedArray := child.([]any); nestedArray {
-				childHasMedia, childProviderBound := inspectGenericMedia(child, mediaState)
+				childHasMedia := inspectGenericMedia(child, mediaState)
 				hasMedia = hasMedia || childHasMedia
-				providerBound = providerBound || childProviderBound
 			}
 		}
 	}
-	return hasMedia, providerBound
+	return hasMedia
 }
 
 func containsJSONSchema(value any) (present, strict bool) {

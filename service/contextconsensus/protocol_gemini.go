@@ -23,6 +23,12 @@ func extractGemini(extractionRequest ExtractionRequest) (*ContextEnvelope, error
 			RelayFormat:  types.RelayFormatGemini,
 		},
 	}
+	providerFileState, err := ExtractProviderFileState(extractionRequest)
+	if err != nil {
+		return envelope, fmt.Errorf("extract Gemini provider files: %w", err)
+	}
+	envelope.ProviderFileState = providerFileState
+	applyProviderFileState(envelope)
 	if request.SystemInstructions != nil {
 		envelope.ImmutableInstructions = append(envelope.ImmutableInstructions, contextSegment(0, "systemInstruction", "system", SegmentKindInstruction, request.SystemInstructions, false, false))
 	}
@@ -71,17 +77,15 @@ func extractGemini(extractionRequest ExtractionRequest) (*ContextEnvelope, error
 			}
 			if part.InlineData != nil {
 				hasMedia = true
-				envelope.MediaState.InlineCount++
 				incrementGeminiMedia(part.InlineData.MimeType, &envelope.MediaState)
 			}
 			if part.FileData != nil {
 				hasMedia = true
 				providerBoundContent = true
 				envelope.MediaState.FileCount++
-				envelope.MediaState.ProviderBoundCount++
-				requireBinding(&envelope.ProviderBinding, BindingLevelCredential, "gemini_file_uri", part.FileData.FileUri)
 			}
 		}
+		providerBoundContent = providerBoundContent || envelope.ProviderFileState.BindingLevelAtSequence(contentIndex) != BindingLevelNone
 		preserved := contentIndex == len(request.Contents)-1 || hasToolCall || hasToolResult || hasMedia || providerBoundContent
 		kind := SegmentKindMessage
 		if hasToolCall {

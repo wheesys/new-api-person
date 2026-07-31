@@ -23,6 +23,12 @@ func extractChatCompletions(extractionRequest ExtractionRequest) (*ContextEnvelo
 			RelayFormat:  types.RelayFormatOpenAI,
 		},
 	}
+	providerFileState, err := ExtractProviderFileState(extractionRequest)
+	if err != nil {
+		return envelope, fmt.Errorf("extract Chat provider files: %w", err)
+	}
+	envelope.ProviderFileState = providerFileState
+	applyProviderFileState(envelope)
 	if request.MaxCompletionTokens != nil {
 		envelope.RequestedMaxOutput = request.MaxCompletionTokens
 	}
@@ -63,10 +69,8 @@ func extractChatCompletions(extractionRequest ExtractionRequest) (*ContextEnvelo
 			})
 		}
 
-		hasMedia, providerBoundMedia := inspectGenericMedia(message.Content, &envelope.MediaState)
-		if providerBoundMedia {
-			requireBinding(&envelope.ProviderBinding, BindingLevelCredential, "provider_file_reference", "")
-		}
+		hasMedia := inspectGenericMedia(message.Content, &envelope.MediaState)
+		providerBoundMedia := envelope.ProviderFileState.BindingLevelAtSequence(messageIndex) != BindingLevelNone
 		immutable := role == "system" || role == "developer"
 		preserved := messageIndex == len(request.Messages)-1 || len(toolCalls) > 0 || role == "tool" || hasMedia
 		kind := SegmentKindMessage

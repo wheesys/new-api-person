@@ -23,6 +23,12 @@ func extractClaudeMessages(extractionRequest ExtractionRequest) (*ContextEnvelop
 			RelayFormat:  types.RelayFormatClaude,
 		},
 	}
+	providerFileState, err := ExtractProviderFileState(extractionRequest)
+	if err != nil {
+		return envelope, fmt.Errorf("extract Claude provider files: %w", err)
+	}
+	envelope.ProviderFileState = providerFileState
+	applyProviderFileState(envelope)
 	if request.MaxTokensToSample != nil {
 		envelope.RequestedMaxOutput = request.MaxTokensToSample
 	}
@@ -93,7 +99,7 @@ func extractClaudeMessages(extractionRequest ExtractionRequest) (*ContextEnvelop
 				} else {
 					envelope.MediaState.FileCount++
 				}
-				if part.Source != nil && part.Source.Type != "base64" && part.Source.Type != "url" {
+				if part.Source != nil && part.Source.Type != "base64" && part.Source.Type != "url" && part.Source.Type != "file" {
 					providerBoundMessage = true
 					envelope.MediaState.ProviderBoundCount++
 				}
@@ -103,6 +109,7 @@ func extractClaudeMessages(extractionRequest ExtractionRequest) (*ContextEnvelop
 				requireBinding(&envelope.ProviderBinding, BindingLevelCredential, "claude_thinking_signature", part.Signature)
 			}
 		}
+		providerBoundMessage = providerBoundMessage || envelope.ProviderFileState.BindingLevelAtSequence(messageIndex) != BindingLevelNone
 		if providerBoundMessage {
 			requireBinding(&envelope.ProviderBinding, BindingLevelProvider, "claude_provider_bound_message", "")
 		}

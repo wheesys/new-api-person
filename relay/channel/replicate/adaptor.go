@@ -307,7 +307,7 @@ func downloadImagesToBase64(urls []string) ([]string, error) {
 		}
 		_, data, err := service.GetImageFromUrl(url)
 		if err != nil {
-			return nil, fmt.Errorf("replicate adaptor: failed to download image from %s: %w", url, err)
+			return nil, fmt.Errorf("replicate adaptor: failed to download remote image: %w", err)
 		}
 		results = append(results, data)
 	}

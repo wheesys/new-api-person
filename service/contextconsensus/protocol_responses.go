@@ -23,6 +23,12 @@ func extractOpenAIResponses(extractionRequest ExtractionRequest) (*ContextEnvelo
 			RelayFormat:  types.RelayFormatOpenAIResponses,
 		},
 	}
+	providerFileState, err := ExtractProviderFileState(extractionRequest)
+	if err != nil {
+		return envelope, fmt.Errorf("extract Responses provider files: %w", err)
+	}
+	envelope.ProviderFileState = providerFileState
+	applyProviderFileState(envelope)
 	if rawJSONPresent(request.Instructions) {
 		envelope.ImmutableInstructions = append(envelope.ImmutableInstructions, rawContextSegment(0, "instructions", "developer", SegmentKindInstruction, request.Instructions, false, false))
 	}
@@ -98,10 +104,8 @@ func extractOpenAIResponses(extractionRequest ExtractionRequest) (*ContextEnvelo
 		if strings.HasPrefix(itemType, "mcp_") || strings.HasPrefix(itemType, "computer_") || strings.HasPrefix(itemType, "web_search_") || strings.HasPrefix(itemType, "file_search_") {
 			requireBinding(&envelope.ProviderBinding, BindingLevelCredential, "responses_hosted_tool_state", "")
 		}
-		hasMedia, providerBoundMedia := inspectGenericMedia(item, &envelope.MediaState)
-		if providerBoundMedia {
-			requireBinding(&envelope.ProviderBinding, BindingLevelCredential, "provider_file_reference", "")
-		}
+		hasMedia := inspectGenericMedia(item, &envelope.MediaState)
+		providerBoundMedia := envelope.ProviderFileState.BindingLevelAtSequence(itemIndex) != BindingLevelNone
 		immutable := role == "system" || role == "developer"
 		preserved := itemIndex == lastUserIndex || isTool || hasMedia || itemType == "reasoning"
 		kind := SegmentKindMessage

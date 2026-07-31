@@ -44,6 +44,7 @@ type PreparedTextRelayAttempt struct {
 	detectEventStream   bool
 	requestErrorPrefix  string
 	authoritativeTarget *channel.TextRelayTarget
+	passThrough         bool
 	restoreProtocolMode bool
 	savedRelayMode      int
 	savedRequestURLPath string
@@ -207,6 +208,55 @@ func (attempt *PreparedTextRelayAttempt) ValidateManagedProviderStateRequest(res
 		return nil
 	}
 	return resolution.ValidateStateReference(request.PreviousResponseID)
+}
+
+// ValidateProviderFileLifecycleRequest verifies provider-owned file references
+// from the immutable body that will be sent upstream. It performs no network IO.
+func (attempt *PreparedTextRelayAttempt) ValidateProviderFileLifecycleRequest() (contextconsensus.ProviderFileState, error) {
+	emptyState := contextconsensus.ProviderFileState{}
+	if attempt == nil || attempt.adaptor == nil || attempt.info == nil || attempt.preparedRequest == nil {
+		return emptyState, fmt.Errorf("provider file lifecycle request is unavailable")
+	}
+	body, err := attempt.preparedRequest.Body()
+	if err != nil {
+		return emptyState, err
+	}
+	protocol := attempt.preparedRequest.Protocol()
+	state, err := contextconsensus.ExtractProviderFileState(contextconsensus.ExtractionRequest{
+		Protocol: protocol,
+		Body:     body,
+	})
+	if err != nil {
+		return emptyState, err
+	}
+	if !state.RequiresLifecycleValidation() {
+		return state, nil
+	}
+	if state.Count(contextconsensus.ProviderFileReferenceSignedURL) > 0 {
+		return emptyState, fmt.Errorf("signed provider file URLs do not have authoritative lifecycle evidence")
+	}
+	if attempt.passThrough || attempt.info.RelayFormat != protocol || attempt.info.GetFinalRequestRelayFormat() != protocol ||
+		len(attempt.info.RequestConversionChain) != 1 || attempt.info.RequestConversionChain[0] != protocol {
+		return emptyState, fmt.Errorf("provider file lifecycle requires a native request without pass-through or protocol conversion")
+	}
+	for headerName := range relaycommon.GetEffectiveHeaderOverride(attempt.info) {
+		switch strings.ToLower(strings.TrimSpace(headerName)) {
+		case "authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key", "anthropic-api-key":
+			return emptyState, fmt.Errorf("provider file lifecycle does not allow credential header overrides")
+		}
+	}
+	lifecycleAdaptor, ok := attempt.adaptor.(channel.ProviderFileLifecycleAdaptor)
+	if !ok {
+		return emptyState, fmt.Errorf("text relay adaptor does not declare provider file lifecycle capabilities")
+	}
+	capabilityState := state
+	capabilityState.References = append([]contextconsensus.ProviderFileReferenceEvidence(nil), state.References...)
+	capabilityState.ReasonCodes = append([]string(nil), state.ReasonCodes...)
+	capabilities := lifecycleAdaptor.ProviderFileLifecycleCapabilities(attempt.info, capabilityState)
+	if !capabilities.Complete() {
+		return emptyState, fmt.Errorf("text relay adaptor does not provide complete authoritative provider file lifecycle capabilities")
+	}
+	return state, nil
 }
 
 func (attempt *PreparedTextRelayAttempt) ExtractManagedProviderStateReport(httpStatus int, responseBody []byte) (contextconsensus.ManagedProviderStateReport, error) {
@@ -411,6 +461,7 @@ func prepareOpenAITextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon
 		preparedRequest:   preparedRequest,
 		responseMode:      preparedTextResponseModeAdaptor,
 		detectEventStream: true,
+		passThrough:       true,
 	}, nil
 }
 
@@ -544,6 +595,7 @@ func prepareResponsesTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycom
 			adaptor:         adaptor,
 			preparedRequest: preparedRequest,
 			responseMode:    preparedTextResponseModeAdaptor,
+			passThrough:     true,
 		}, nil
 	}
 
@@ -680,6 +732,7 @@ func prepareClaudeTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon
 			preparedRequest:   preparedRequest,
 			responseMode:      preparedTextResponseModeAdaptor,
 			detectEventStream: true,
+			passThrough:       true,
 		}, nil
 	}
 
@@ -789,6 +842,7 @@ func prepareGeminiTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon
 			responseMode:       preparedTextResponseModeAdaptor,
 			detectEventStream:  true,
 			requestErrorPrefix: "Do gemini request failed: ",
+			passThrough:        true,
 		}, nil
 	}
 

@@ -79,10 +79,7 @@ type URLSource struct {
 func (u *URLSource) IsURL() bool { return true }
 
 func (u *URLSource) GetIdentifier() string {
-	if len(u.URL) > 100 {
-		return u.URL[:100] + "..."
-	}
-	return u.URL
+	return "remote-url"
 }
 
 func (u *URLSource) GetRawData() string { return u.URL }
@@ -102,10 +99,7 @@ type Base64Source struct {
 func (b *Base64Source) IsURL() bool { return false }
 
 func (b *Base64Source) GetIdentifier() string {
-	if len(b.Base64Data) > 50 {
-		return "base64:" + b.Base64Data[:50] + "..."
-	}
-	return "base64:" + b.Base64Data
+	return "inline-base64"
 }
 
 func (b *Base64Source) GetRawData() string { return b.Base64Data }

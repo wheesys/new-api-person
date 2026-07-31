@@ -1,7 +1,7 @@
 # 项目模块与业务关系分析报告
 
 生成日期：2026-07-02
-更新日期：2026-07-03
+更新日期：2026-07-31
 
 ## 结论摘要
 
@@ -418,6 +418,34 @@
 - 模型名既用于能力匹配，也用于计费倍率匹配。
 - 上游失败时可能触发重试、自动禁用渠道和错误日志。
 
+### 渠道、上游适配器、模型与能力关系图
+
+```mermaid
+flowchart LR
+    Admin[管理员渠道配置] --> Channel[Channel 渠道实例]
+    Channel -->|Models x Groups 展开| Ability[Ability 路由能力]
+    Channel -->|Type| ChannelType[ChannelType 渠道类型]
+    Channel -->|Key、BaseURL、多 Key 槽位| UpstreamAccount[上游账号与连接]
+    ChannelType -->|映射 APIType| Adaptor[Adaptor 或 TaskAdaptor]
+    Adaptor --> Upstream[上游供应商 API]
+
+    Model[Model 展示与定价元数据] -.同名关联，不是外键.-> Ability
+    Ability -->|Group + Model 筛选| Distributor[Distributor 渠道选择]
+    Distributor -->|Priority 分层、Weight 选择| Channel
+    Request[客户端请求模型名与分组] --> Distributor
+    Distributor --> RelayInfo[RelayInfo 最终调用上下文]
+    RelayInfo --> Adaptor
+```
+
+关系边界：
+
+- `Channel` 是可调用的具体上游连接；`ChannelType` 只决定协议和适配器族，同一类型可以有多个渠道实例。
+- `Ability` 由渠道的模型集合与分组集合展开，保存实际调度所需的渠道、优先级、权重和启用状态；它不等于模型元数据。
+- `Model` 描述名称、图标、标签、端点和价格等展示信息。模型元数据存在不代表可调用，实际可调用性由启用的 `Ability` 和渠道状态决定。
+- `Adaptor` 负责请求转换、上游调用和响应转换。多个渠道类型可以复用同一适配器；Advanced Custom 还会按请求路径过滤路由。
+- 调度先以 `Group + Model` 查找 `Ability`，再按优先级和权重确定 `Channel`，最终把渠道连接信息写入 `RelayInfo` 交给适配器执行。
+- 默认后台渠道列表提供“能力预览”：按去重后的 `Models x Groups` 计算将生成的能力数量，并展示 `ModelMapping` 解析后的请求模型到上游模型映射。该预览用于配置检查，不读取实时 `Ability` 表或探测上游，因此不代表渠道当前健康状态或上游模型实时可用性。
+
 ### 流程三：计费生命周期
 
 ```text
@@ -435,6 +463,61 @@
 - API Key 自身额度是请求前额度检查的来源。
 - 用户钱包余额和订阅余额不再作为请求前置条件。
 - 用量统计继续记录用户、令牌、模型、分组、渠道等维度的消耗。
+
+#### API Key 额度预扣、补扣与退款时序图
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Relay as 中继控制器
+    participant Pricing as 价格与 Token 估算
+    participant Billing as BillingSession
+    participant Token as API Key 额度
+    participant Upstream as 上游适配器
+    participant Audit as 用量统计与消费日志
+
+    Client->>Relay: 提交模型请求
+    Relay->>Pricing: 估算输入与冻结预扣额度
+    Pricing-->>Relay: QuotaToPreConsume
+    Relay->>Billing: PreConsumeBilling
+    Billing->>Token: 检查并扣减预扣额度
+    alt 额度不足或预扣失败
+        Token-->>Billing: 失败
+        Billing-->>Relay: 403，禁止发送上游
+        Relay-->>Client: 额度错误
+    else 预扣成功或命中信任旁路
+        Token-->>Billing: 预扣完成，旁路时为 0
+        Relay->>Upstream: 发送最终请求
+        alt 上游成功并返回 usage
+            Upstream-->>Relay: 响应与实际 usage
+            Relay->>Pricing: 计算实际额度
+            Pricing-->>Relay: ActualQuota
+            Relay->>Billing: Settle(ActualQuota)
+            alt ActualQuota 大于预扣
+                Billing->>Token: 补扣差额
+            else ActualQuota 小于预扣
+                Billing->>Token: 退还差额
+            else ActualQuota 等于预扣
+                Billing-->>Relay: 无额度调整
+            end
+            Relay->>Audit: 更新用户、API Key、渠道用量并写消费日志
+            Relay-->>Client: 返回成功响应
+        else 上游失败且预扣仍可退
+            Upstream-->>Relay: 执行失败
+            Relay->>Billing: Refund
+            Billing->>Token: 幂等退还尚未结算的预扣额度
+            Relay->>Audit: 记录错误；违规费用按独立策略处理
+            Relay-->>Client: 返回错误
+        end
+    end
+```
+
+边界说明：
+
+- 普通请求由 `BillingSession` 跟踪预扣、结算和退款状态；结算完成后不会再把同一笔预扣作为失败退款。
+- `ActualQuota - QuotaToPreConsume` 为正时补扣，为负时退还差额。API Key 额度调整失败会返回或记录结算错误，不把已完成的资金步骤重复执行。
+- 请求在预扣前失败不会产生额度变更；请求在上游执行前已预扣但最终失败时，仅对仍处于可退款状态的额度执行幂等退款。
+- 托管 `ContextConsensus` 请求使用持久化 billing operation，在主数据库事务中原子冻结预占、结算或退款结果，并通过 outbox 去重消费日志；状态语义与上图一致，但能跨进程重试恢复。
 
 ### 流程四：模型展示
 
@@ -472,7 +555,5 @@ Pricing 聚合 Model + Ability + 倍率配置
 
 ## 后续建议
 
-- 为“渠道、上游适配器、模型、能力”的概念关系补一张正式架构图，减少配置误解。
 - 在后台渠道编辑页增加“该渠道将生成的 Ability 预览”，方便管理员理解分组和模型展开结果。
 - 在模型资产页面标明“模型元数据不代表可调用，实际可调用取决于渠道能力”。
-- 为计费链路补充 API Key 额度预扣、补扣和退款时序图，便于排查扣费问题。
