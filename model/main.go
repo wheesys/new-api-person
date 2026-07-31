@@ -327,6 +327,9 @@ func migrateDB() error {
 		&BillingOperation{},
 		&BillingOperationLogOutbox{},
 		&ManagedContextOutcome{},
+		&ManagedProviderFileLifecycle{},
+		&ManagedProviderFileDeletionOutbox{},
+		&ManagedProviderFileLifecycleEvent{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -399,6 +402,9 @@ func migrateDBFast() error {
 		{&BillingOperation{}, "BillingOperation"},
 		{&BillingOperationLogOutbox{}, "BillingOperationLogOutbox"},
 		{&ManagedContextOutcome{}, "ManagedContextOutcome"},
+		{&ManagedProviderFileLifecycle{}, "ManagedProviderFileLifecycle"},
+		{&ManagedProviderFileDeletionOutbox{}, "ManagedProviderFileDeletionOutbox"},
+		{&ManagedProviderFileLifecycleEvent{}, "ManagedProviderFileLifecycleEvent"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

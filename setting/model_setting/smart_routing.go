@@ -10,22 +10,32 @@ import (
 )
 
 type SmartRoutingSettings struct {
-	VirtualModelPools            map[string][]string                        `json:"virtual_model_pools"`
-	ContextConsensusEnabled      bool                                       `json:"context_consensus_enabled"`
-	AutoCompactionEnabled        bool                                       `json:"auto_compaction_enabled"`
-	AllowToolResultCompaction    bool                                       `json:"allow_tool_result_compaction"`
-	ManagedContextEnabled        bool                                       `json:"managed_context_enabled"`
-	CompactionModelPool          []string                                   `json:"compaction_model_pool"`
-	CompactionChannelIDs         []int                                      `json:"compaction_channel_ids"`
-	AuthoritativeContextLimits   map[string]AuthoritativeContextLimitConfig `json:"authoritative_context_limits"`
-	ContextSafetyMarginTokens    int                                        `json:"context_safety_margin_tokens"`
-	PreservedRecentTurns         int                                        `json:"preserved_recent_turns"`
-	MaxSummaryTokens             int                                        `json:"max_summary_tokens"`
-	MaxCompactionInputTokens     int                                        `json:"max_compaction_input_tokens"`
-	MaxCompactionCallsPerRequest int                                        `json:"max_compaction_calls_per_request"`
-	MaxCompactionQuota           int                                        `json:"max_compaction_quota"`
-	CompactionTimeoutSeconds     int                                        `json:"compaction_timeout_seconds"`
-	ContextStateTTLSeconds       int                                        `json:"context_state_ttl_seconds"`
+	VirtualModelPools                    map[string][]string                        `json:"virtual_model_pools"`
+	ContextConsensusEnabled              bool                                       `json:"context_consensus_enabled"`
+	AutoCompactionEnabled                bool                                       `json:"auto_compaction_enabled"`
+	AllowToolResultCompaction            bool                                       `json:"allow_tool_result_compaction"`
+	ManagedContextEnabled                bool                                       `json:"managed_context_enabled"`
+	CompactionModelPool                  []string                                   `json:"compaction_model_pool"`
+	CompactionChannelIDs                 []int                                      `json:"compaction_channel_ids"`
+	AuthoritativeContextLimits           map[string]AuthoritativeContextLimitConfig `json:"authoritative_context_limits"`
+	ContextSafetyMarginTokens            int                                        `json:"context_safety_margin_tokens"`
+	PreservedRecentTurns                 int                                        `json:"preserved_recent_turns"`
+	MaxSummaryTokens                     int                                        `json:"max_summary_tokens"`
+	MaxCompactionInputTokens             int                                        `json:"max_compaction_input_tokens"`
+	MaxCompactionCallsPerRequest         int                                        `json:"max_compaction_calls_per_request"`
+	MaxCompactionQuota                   int                                        `json:"max_compaction_quota"`
+	CompactionTimeoutSeconds             int                                        `json:"compaction_timeout_seconds"`
+	ContextStateTTLSeconds               int                                        `json:"context_state_ttl_seconds"`
+	ProviderFileLifecycleEnabled         bool                                       `json:"provider_file_lifecycle_enabled"`
+	ProviderFileOpenAIChannelID          int                                        `json:"provider_file_openai_channel_id"`
+	ProviderFileExpirationSeconds        int                                        `json:"provider_file_expiration_seconds"`
+	ProviderFileMetadataVerifyTTLSeconds int                                        `json:"provider_file_metadata_verify_ttl_seconds"`
+	ProviderFileDeletionLeadSeconds      int                                        `json:"provider_file_deletion_lead_seconds"`
+	ProviderFileDeletionBatchSize        int                                        `json:"provider_file_deletion_batch_size"`
+	ProviderFileDeletionMaxAttempts      int                                        `json:"provider_file_deletion_max_attempts"`
+	ProviderFileDeletionTimeoutSeconds   int                                        `json:"provider_file_deletion_timeout_seconds"`
+	ProviderFileExclusiveProjectAttested bool                                       `json:"provider_file_exclusive_project_attested"`
+	ProviderFileReconciliationEnabled    bool                                       `json:"provider_file_reconciliation_enabled"`
 }
 
 type AuthoritativeContextLimitConfig struct {
@@ -36,17 +46,20 @@ type AuthoritativeContextLimitConfig struct {
 }
 
 var smartRoutingSettings = SmartRoutingSettings{
-	VirtualModelPools:            map[string][]string{},
-	CompactionModelPool:          []string{},
-	CompactionChannelIDs:         []int{},
-	AuthoritativeContextLimits:   map[string]AuthoritativeContextLimitConfig{},
-	ContextSafetyMarginTokens:    1024,
-	PreservedRecentTurns:         3,
-	MaxSummaryTokens:             2048,
-	MaxCompactionInputTokens:     128000,
-	MaxCompactionCallsPerRequest: 1,
-	CompactionTimeoutSeconds:     30,
-	ContextStateTTLSeconds:       3600,
+	VirtualModelPools:                  map[string][]string{},
+	CompactionModelPool:                []string{},
+	CompactionChannelIDs:               []int{},
+	AuthoritativeContextLimits:         map[string]AuthoritativeContextLimitConfig{},
+	ContextSafetyMarginTokens:          1024,
+	PreservedRecentTurns:               3,
+	MaxSummaryTokens:                   2048,
+	MaxCompactionInputTokens:           128000,
+	MaxCompactionCallsPerRequest:       1,
+	CompactionTimeoutSeconds:           30,
+	ContextStateTTLSeconds:             3600,
+	ProviderFileDeletionBatchSize:      10,
+	ProviderFileDeletionMaxAttempts:    5,
+	ProviderFileDeletionTimeoutSeconds: 30,
 }
 
 var smartRoutingSettingsSnapshot atomic.Pointer[SmartRoutingSettings]
@@ -218,19 +231,53 @@ func ValidateSmartRoutingAuthoritativeContextLimits(value string) error {
 	return nil
 }
 
+func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) error {
+	if settings == nil || !settings.ProviderFileLifecycleEnabled {
+		return fmt.Errorf("provider file lifecycle is disabled")
+	}
+	if settings.ProviderFileOpenAIChannelID <= 0 {
+		return fmt.Errorf("provider file lifecycle requires a dedicated OpenAI channel")
+	}
+	if settings.ProviderFileExpirationSeconds < 60 || settings.ProviderFileExpirationSeconds > 30*24*60*60 {
+		return fmt.Errorf("provider file lifecycle expiration must be between 60 seconds and 30 days")
+	}
+	if settings.ProviderFileMetadataVerifyTTLSeconds < 0 || settings.ProviderFileMetadataVerifyTTLSeconds >= settings.ProviderFileExpirationSeconds {
+		return fmt.Errorf("provider file lifecycle metadata verification TTL is invalid")
+	}
+	if settings.ProviderFileDeletionLeadSeconds < 0 || settings.ProviderFileDeletionLeadSeconds >= settings.ProviderFileExpirationSeconds {
+		return fmt.Errorf("provider file lifecycle deletion lead is invalid")
+	}
+	if settings.ProviderFileDeletionBatchSize <= 0 || settings.ProviderFileDeletionBatchSize > 100 {
+		return fmt.Errorf("provider file lifecycle deletion batch size is invalid")
+	}
+	if settings.ProviderFileDeletionMaxAttempts <= 0 || settings.ProviderFileDeletionMaxAttempts > 100 {
+		return fmt.Errorf("provider file lifecycle deletion attempts are invalid")
+	}
+	if settings.ProviderFileDeletionTimeoutSeconds <= 0 || settings.ProviderFileDeletionTimeoutSeconds > 120 {
+		return fmt.Errorf("provider file lifecycle deletion timeout is invalid")
+	}
+	if !settings.ProviderFileExclusiveProjectAttested {
+		return fmt.Errorf("provider file lifecycle requires an exclusive OpenAI project attestation")
+	}
+	return nil
+}
+
 func cloneSmartRoutingSettings(settings *SmartRoutingSettings) *SmartRoutingSettings {
 	cloned := &SmartRoutingSettings{
-		VirtualModelPools:            map[string][]string{},
-		CompactionModelPool:          []string{},
-		CompactionChannelIDs:         []int{},
-		AuthoritativeContextLimits:   map[string]AuthoritativeContextLimitConfig{},
-		ContextSafetyMarginTokens:    1024,
-		PreservedRecentTurns:         3,
-		MaxSummaryTokens:             2048,
-		MaxCompactionInputTokens:     128000,
-		MaxCompactionCallsPerRequest: 1,
-		CompactionTimeoutSeconds:     30,
-		ContextStateTTLSeconds:       3600,
+		VirtualModelPools:                  map[string][]string{},
+		CompactionModelPool:                []string{},
+		CompactionChannelIDs:               []int{},
+		AuthoritativeContextLimits:         map[string]AuthoritativeContextLimitConfig{},
+		ContextSafetyMarginTokens:          1024,
+		PreservedRecentTurns:               3,
+		MaxSummaryTokens:                   2048,
+		MaxCompactionInputTokens:           128000,
+		MaxCompactionCallsPerRequest:       1,
+		CompactionTimeoutSeconds:           30,
+		ContextStateTTLSeconds:             3600,
+		ProviderFileDeletionBatchSize:      10,
+		ProviderFileDeletionMaxAttempts:    5,
+		ProviderFileDeletionTimeoutSeconds: 30,
 	}
 	if settings == nil {
 		return cloned

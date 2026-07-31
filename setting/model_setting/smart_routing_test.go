@@ -220,20 +220,30 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	})
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"smart_routing.context_consensus_enabled":        "true",
-		"smart_routing.auto_compaction_enabled":          "true",
-		"smart_routing.managed_context_enabled":          "true",
-		"smart_routing.compaction_model_pool":            `["gpt-5-mini"]`,
-		"smart_routing.compaction_channel_ids":           `[3,7]`,
-		"smart_routing.authoritative_context_limits":     `{"gpt-5-mini":{"max_context_tokens":128000,"version":"2026-07","channel_ids":[3],"relay_formats":["openai"]}}`,
-		"smart_routing.context_safety_margin_tokens":     "2048",
-		"smart_routing.preserved_recent_turns":           "4",
-		"smart_routing.max_summary_tokens":               "1024",
-		"smart_routing.max_compaction_input_tokens":      "64000",
-		"smart_routing.max_compaction_calls_per_request": "1",
-		"smart_routing.max_compaction_quota":             "5000",
-		"smart_routing.compaction_timeout_seconds":       "15",
-		"smart_routing.context_state_ttl_seconds":        "7200",
+		"smart_routing.context_consensus_enabled":                 "true",
+		"smart_routing.auto_compaction_enabled":                   "true",
+		"smart_routing.managed_context_enabled":                   "true",
+		"smart_routing.compaction_model_pool":                     `["gpt-5-mini"]`,
+		"smart_routing.compaction_channel_ids":                    `[3,7]`,
+		"smart_routing.authoritative_context_limits":              `{"gpt-5-mini":{"max_context_tokens":128000,"version":"2026-07","channel_ids":[3],"relay_formats":["openai"]}}`,
+		"smart_routing.context_safety_margin_tokens":              "2048",
+		"smart_routing.preserved_recent_turns":                    "4",
+		"smart_routing.max_summary_tokens":                        "1024",
+		"smart_routing.max_compaction_input_tokens":               "64000",
+		"smart_routing.max_compaction_calls_per_request":          "1",
+		"smart_routing.max_compaction_quota":                      "5000",
+		"smart_routing.compaction_timeout_seconds":                "15",
+		"smart_routing.context_state_ttl_seconds":                 "7200",
+		"smart_routing.provider_file_lifecycle_enabled":           "true",
+		"smart_routing.provider_file_openai_channel_id":           "41",
+		"smart_routing.provider_file_expiration_seconds":          "3600",
+		"smart_routing.provider_file_metadata_verify_ttl_seconds": "60",
+		"smart_routing.provider_file_deletion_lead_seconds":       "300",
+		"smart_routing.provider_file_deletion_batch_size":         "20",
+		"smart_routing.provider_file_deletion_max_attempts":       "7",
+		"smart_routing.provider_file_deletion_timeout_seconds":    "45",
+		"smart_routing.provider_file_exclusive_project_attested":  "true",
+		"smart_routing.provider_file_reconciliation_enabled":      "false",
 	}))
 
 	snapshot := GetSmartRoutingSettings()
@@ -251,6 +261,16 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, 5000, snapshot.MaxCompactionQuota)
 	assert.Equal(t, 15, snapshot.CompactionTimeoutSeconds)
 	assert.Equal(t, 7200, snapshot.ContextStateTTLSeconds)
+	assert.True(t, snapshot.ProviderFileLifecycleEnabled)
+	assert.Equal(t, 41, snapshot.ProviderFileOpenAIChannelID)
+	assert.Equal(t, 3600, snapshot.ProviderFileExpirationSeconds)
+	assert.Equal(t, 60, snapshot.ProviderFileMetadataVerifyTTLSeconds)
+	assert.Equal(t, 300, snapshot.ProviderFileDeletionLeadSeconds)
+	assert.Equal(t, 20, snapshot.ProviderFileDeletionBatchSize)
+	assert.Equal(t, 7, snapshot.ProviderFileDeletionMaxAttempts)
+	assert.Equal(t, 45, snapshot.ProviderFileDeletionTimeoutSeconds)
+	assert.True(t, snapshot.ProviderFileExclusiveProjectAttested)
+	assert.False(t, snapshot.ProviderFileReconciliationEnabled)
 
 	snapshot.CompactionModelPool[0] = "mutated"
 	snapshot.CompactionChannelIDs[0] = 99
@@ -260,4 +280,25 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, []string{"gpt-5-mini"}, GetSmartRoutingSettings().CompactionModelPool)
 	assert.Equal(t, []int{3, 7}, GetSmartRoutingSettings().CompactionChannelIDs)
 	assert.Equal(t, []int{3}, GetSmartRoutingSettings().AuthoritativeContextLimits["gpt-5-mini"].ChannelIDs)
+}
+
+func TestProviderFileLifecycleSettingsRemainDisabledUntilAllSafetyInputsExist(t *testing.T) {
+	settings := GetSmartRoutingSettings()
+	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "disabled")
+
+	settings.ProviderFileLifecycleEnabled = true
+	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "dedicated OpenAI channel")
+	settings.ProviderFileOpenAIChannelID = 41
+	settings.ProviderFileExpirationSeconds = 3600
+	settings.ProviderFileMetadataVerifyTTLSeconds = 0
+	settings.ProviderFileDeletionLeadSeconds = 300
+	settings.ProviderFileDeletionBatchSize = 10
+	settings.ProviderFileDeletionMaxAttempts = 5
+	settings.ProviderFileDeletionTimeoutSeconds = 30
+	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "exclusive OpenAI project")
+
+	settings.ProviderFileExclusiveProjectAttested = true
+	require.NoError(t, ValidateProviderFileLifecycleReadiness(settings))
+	settings.ProviderFileDeletionLeadSeconds = settings.ProviderFileExpirationSeconds
+	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "deletion lead")
 }
