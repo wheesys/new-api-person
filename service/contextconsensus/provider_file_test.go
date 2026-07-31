@@ -204,8 +204,11 @@ func TestProviderFileLifecycleEvidenceValidation(t *testing.T) {
 
 	metadata.OwnershipVerified = false
 	require.Error(t, metadata.Validate())
+	report.Status = ProviderFileDeletionNotFound
+	report.DeletedAtUnix = 0
+	require.NoError(t, report.Validate())
 	report.Status = ProviderFileDeletionFailed
-	require.Error(t, report.Validate())
+	require.ErrorContains(t, report.Validate(), "not terminal")
 
 	state.ReasonCodes = nil
 	require.ErrorContains(t, state.Validate(), "do not match")

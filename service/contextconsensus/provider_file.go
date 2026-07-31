@@ -234,10 +234,12 @@ func (report ProviderFileDeletionReport) Validate() error {
 		if report.DeletedAtUnix <= 0 {
 			return fmt.Errorf("provider file deletion timestamp is required")
 		}
-	case ProviderFileDeletionNotFound, ProviderFileDeletionFailed:
+	case ProviderFileDeletionNotFound:
 		if report.DeletedAtUnix != 0 {
 			return fmt.Errorf("provider file deletion timestamp is invalid")
 		}
+	case ProviderFileDeletionFailed:
+		return fmt.Errorf("provider file deletion status is not terminal")
 	default:
 		return fmt.Errorf("provider file deletion status is invalid")
 	}
