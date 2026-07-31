@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	openai "github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
@@ -35,8 +36,13 @@ func prepareProviderFileLifecycleTest(t *testing.T) *contextconsensus.ManagedCon
 	model.DB = database
 	t.Cleanup(func() { model.DB = originalDatabase })
 	require.NoError(t, database.AutoMigrate(
+		&model.Channel{},
 		&model.ManagedProviderFileLifecycle{}, &model.ManagedProviderFileDeletionOutbox{}, &model.ManagedProviderFileLifecycleEvent{},
 	))
+	require.NoError(t, database.Create(&model.Channel{
+		Id: 41, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Key: "sk-provider-secret", Name: "provider-file-test", OpenAIOrganization: common.GetPointer("org-exclusive"),
+	}).Error)
 	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY_VERSION", "provider-file-v1")
 	t.Setenv("CONTEXT_CONSENSUS_PREVIOUS_ENCRYPTION_KEYS", "")
@@ -82,6 +88,7 @@ func TestUploadActivatesVerifiedLifecycleAndReplaysOpaqueHandle(t *testing.T) {
 		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
 		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
 		ProviderFileDeletionMaxAttempts: 5, ProviderFileDeletionTimeoutSeconds: 30, ProviderFileExclusiveProjectAttested: true,
+		ProviderFileSandboxContractVerified: true,
 	}
 	request := UploadRequest{
 		Owner:          contextconsensus.ManagedConsensusOwner{UserID: 7, TokenID: 9, EndpointFamily: managedProviderFileEndpointFamily},

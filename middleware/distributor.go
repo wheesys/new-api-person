@@ -331,7 +331,7 @@ func selectManagedProviderFileBoundChannel(c *gin.Context, resolution *providerf
 	}
 	channel, err := model.GetChannelById(resolution.ChannelID(), true)
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || channel.Type != constant.ChannelTypeOpenAI ||
-		channel.ChannelInfo.IsMultiKey || !channelSupportsRequestPath(channel, c.Request.URL.Path) {
+		channel.ChannelInfo.IsMultiKey || !channelSupportsRequestPath(channel, c.Request.URL.Path, modelName) {
 		return nil, "", "", 0, fmt.Errorf("managed provider file channel is unavailable")
 	}
 	selectedGroup, err := selectManagedProviderFileGroup(c, channel.Id, modelName, usingGroup)

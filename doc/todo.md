@@ -110,7 +110,7 @@
       - [x] 完成阶段 D-3b.1：实现领域契约、版本化 HMAC/AEAD、跨数据库持久化模型和默认关闭配置，见 `doc/auto-smart-routing-context-consensus-stage-d3b1-implementation-2026-07-31.md`。
       - [x] 完成阶段 D-3b.2：实现专用 OpenAI 单 Key 上传/查询、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
     - [ ] 完成阶段 D-3c：实现持久化删除 outbox、幂等到期删除、有限重试、失败告警和不可篡改终态审计后，开放首个 provider file 生命周期。
-      - [ ] 完成阶段 D-3c.1：实现删除 outbox、CAS lease worker、有限重试、审计链、告警和渠道变更保护，并保持生产关闭。
+      - [x] 完成阶段 D-3c.1：实现严格 DELETE client、持久化派发边界、CAS lease worker、有限重试、未知终态、审计链、告警和渠道变更保护，并保持生产关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3c1-implementation-2026-07-31.md`。
       - [ ] 完成阶段 D-3c.2：完成真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。
     - 阶段 D-3 的首期范围和外部门禁见 `doc/auto-smart-routing-context-consensus-stage-d3-readiness-2026-07-31.md`。
 - [x] 补充“渠道、上游适配器、模型、能力”业务关系图，明确配置、路由与运行时边界，见 `doc/project-module-business-relationships.md`。

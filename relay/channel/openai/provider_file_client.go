@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,6 +33,21 @@ var (
 	ErrOpenAIProviderFileUpstreamStatus      = errors.New("OpenAI provider file upstream status is unsuccessful")
 	ErrOpenAIProviderFileResponseTooLarge    = errors.New("OpenAI provider file response exceeds the limit")
 	ErrOpenAIProviderFileResponse            = errors.New("OpenAI provider file response is invalid")
+	ErrOpenAIProviderFileDelete              = errors.New("OpenAI provider file delete failed")
+)
+
+type ProviderFileDeleteFailureCode string
+
+const (
+	ProviderFileDeleteFailureNotFound         ProviderFileDeleteFailureCode = "not_found"
+	ProviderFileDeleteFailureRateLimited      ProviderFileDeleteFailureCode = "rate_limited"
+	ProviderFileDeleteFailureUpstreamServer   ProviderFileDeleteFailureCode = "upstream_server_error"
+	ProviderFileDeleteFailureAuthentication   ProviderFileDeleteFailureCode = "authentication_failed"
+	ProviderFileDeleteFailureUnexpectedStatus ProviderFileDeleteFailureCode = "unexpected_status"
+	ProviderFileDeleteFailureTimeout          ProviderFileDeleteFailureCode = "timeout"
+	ProviderFileDeleteFailureTransport        ProviderFileDeleteFailureCode = "transport_error"
+	ProviderFileDeleteFailureResponseTooLarge ProviderFileDeleteFailureCode = "response_too_large"
+	ProviderFileDeleteFailureInvalidResponse  ProviderFileDeleteFailureCode = "invalid_response"
 )
 
 type ProviderFileClient struct {
@@ -69,8 +85,27 @@ type providerFileWireMetadata struct {
 	Purpose   string `json:"purpose"`
 }
 
+type providerFileWireDeleteResult struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
+}
+
 type ProviderFileUpstreamStatusError struct {
 	StatusCode int
+}
+
+type ProviderFileDeleteError struct {
+	Code       ProviderFileDeleteFailureCode
+	StatusCode int
+}
+
+func (err ProviderFileDeleteError) Error() string {
+	return "OpenAI provider file delete failed: " + string(err.Code)
+}
+
+func (err ProviderFileDeleteError) Unwrap() error {
+	return ErrOpenAIProviderFileDelete
 }
 
 func (err ProviderFileUpstreamStatusError) Error() string {
@@ -171,6 +206,62 @@ func (client *ProviderFileClient) Retrieve(ctx context.Context, providerFileID s
 	}
 	defer response.Body.Close()
 	return client.decodeMetadataResponse(response, providerFileID, "", 0)
+}
+
+func (client *ProviderFileClient) Delete(ctx context.Context, providerFileID string) error {
+	if client == nil || ctx == nil || !validProviderFileID(providerFileID) {
+		return ErrOpenAIProviderFileRequest
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, client.requestURL("/v1/files/"+url.PathEscape(providerFileID)), nil)
+	if err != nil {
+		return ErrOpenAIProviderFileRequest
+	}
+	client.setHeaders(request)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		var networkError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) ||
+			(errors.As(err, &networkError) && networkError.Timeout()) {
+			return ProviderFileDeleteError{Code: ProviderFileDeleteFailureTimeout}
+		}
+		return ProviderFileDeleteError{Code: ProviderFileDeleteFailureTransport}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return providerFileDeleteStatusError(response.StatusCode)
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return ProviderFileDeleteError{Code: ProviderFileDeleteFailureInvalidResponse, StatusCode: response.StatusCode}
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, openAIProviderFileMaximumResponseBytes+1))
+	if err != nil {
+		return ProviderFileDeleteError{Code: ProviderFileDeleteFailureInvalidResponse, StatusCode: response.StatusCode}
+	}
+	if len(responseBody) > openAIProviderFileMaximumResponseBytes {
+		return ProviderFileDeleteError{Code: ProviderFileDeleteFailureResponseTooLarge, StatusCode: response.StatusCode}
+	}
+	var deleteResult providerFileWireDeleteResult
+	if err := common.Unmarshal(responseBody, &deleteResult); err != nil || deleteResult.Object != "file" ||
+		deleteResult.ID != providerFileID || !deleteResult.Deleted {
+		return ProviderFileDeleteError{Code: ProviderFileDeleteFailureInvalidResponse, StatusCode: response.StatusCode}
+	}
+	return nil
+}
+
+func providerFileDeleteStatusError(statusCode int) error {
+	failureCode := ProviderFileDeleteFailureUnexpectedStatus
+	switch {
+	case statusCode == http.StatusNotFound:
+		failureCode = ProviderFileDeleteFailureNotFound
+	case statusCode == http.StatusTooManyRequests:
+		failureCode = ProviderFileDeleteFailureRateLimited
+	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		failureCode = ProviderFileDeleteFailureAuthentication
+	case statusCode >= http.StatusInternalServerError && statusCode <= 599:
+		failureCode = ProviderFileDeleteFailureUpstreamServer
+	}
+	return ProviderFileDeleteError{Code: failureCode, StatusCode: statusCode}
 }
 
 func writeProviderFileMultipart(writer *multipart.Writer, upload ProviderFileUploadRequest) error {

@@ -42,11 +42,22 @@ func LoadTarget(settings *model_setting.SmartRoutingSettings, runtime *contextco
 	if err != nil {
 		return nil, ErrTargetUnavailable
 	}
-	return targetFromChannel(channel, httpClient)
+	return targetFromChannel(channel, httpClient, true)
 }
 
-func targetFromChannel(channel *model.Channel, httpClient *http.Client) (*Target, error) {
-	if channel == nil || channel.Id <= 0 || channel.Status != common.ChannelStatusEnabled || channel.Type != constant.ChannelTypeOpenAI ||
+func loadDeletionTarget(channelID int, httpClient *http.Client) (*Target, error) {
+	if channelID <= 0 {
+		return nil, ErrTargetUnavailable
+	}
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, ErrTargetUnavailable
+	}
+	return targetFromChannel(channel, httpClient, false)
+}
+
+func targetFromChannel(channel *model.Channel, httpClient *http.Client, requireEnabled bool) (*Target, error) {
+	if channel == nil || channel.Id <= 0 || (requireEnabled && channel.Status != common.ChannelStatusEnabled) || channel.Type != constant.ChannelTypeOpenAI ||
 		channel.ChannelInfo.IsMultiKey || strings.TrimSpace(channel.Key) == "" || strings.TrimSpace(channel.Key) != channel.Key {
 		return nil, ErrTargetUnavailable
 	}
@@ -67,6 +78,9 @@ func targetFromChannel(channel *model.Channel, httpClient *http.Client) (*Target
 	}
 	if httpClient == nil {
 		httpClient = service.GetHttpClient()
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
 	}
 	client, err := openai.NewProviderFileClient(httpClient, openai.OpenAIProviderFileOrigin, channel.Key, organization)
 	if err != nil {

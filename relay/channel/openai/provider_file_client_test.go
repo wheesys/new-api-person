@@ -146,6 +146,140 @@ func TestProviderFileClientRetrieveUsesExactIdentity(t *testing.T) {
 	assert.Equal(t, OpenAIProviderFilePurposeUserData, metadata.Purpose)
 }
 
+func TestProviderFileClientDeleteRequiresExactSuccessReceipt(t *testing.T) {
+	providerFileID := "file-delete_1"
+	apiKey := "sk-delete-secret"
+	organization := "org-delete"
+	requestCount := 0
+	responseBody := providerFileResponseBody(t, map[string]any{
+		"id": providerFileID, "object": "file", "deleted": true,
+	})
+	client := newProviderFileTestClient(t, http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		requestCount++
+		assert.Equal(t, http.MethodDelete, request.Method)
+		assert.Equal(t, "/v1/files/"+providerFileID, request.URL.Path)
+		assert.Equal(t, "Bearer "+apiKey, request.Header.Get("Authorization"))
+		assert.Equal(t, organization, request.Header.Get("OpenAI-Organization"))
+		responseWriter.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = responseWriter.Write(responseBody)
+	}), apiKey, organization, time.Now().UTC())
+
+	require.NoError(t, client.Delete(context.Background(), providerFileID))
+	assert.Equal(t, 1, requestCount)
+}
+
+func TestProviderFileClientDeleteClassifiesStatusWithoutRetryOrLeak(t *testing.T) {
+	providerFileID := "file-delete-secret"
+	apiKey := "sk-delete-never-leak"
+	tests := []struct {
+		name         string
+		statusCode   int
+		location     string
+		expectedCode ProviderFileDeleteFailureCode
+	}{
+		{name: "not found remains failure", statusCode: http.StatusNotFound, expectedCode: ProviderFileDeleteFailureNotFound},
+		{name: "rate limited", statusCode: http.StatusTooManyRequests, expectedCode: ProviderFileDeleteFailureRateLimited},
+		{name: "server error", statusCode: http.StatusServiceUnavailable, expectedCode: ProviderFileDeleteFailureUpstreamServer},
+		{name: "authentication", statusCode: http.StatusForbidden, expectedCode: ProviderFileDeleteFailureAuthentication},
+		{name: "unexpected", statusCode: http.StatusConflict, expectedCode: ProviderFileDeleteFailureUnexpectedStatus},
+		{name: "redirect is not followed", statusCode: http.StatusTemporaryRedirect, location: "https://example.invalid/credential-capture", expectedCode: ProviderFileDeleteFailureUnexpectedStatus},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestCount := 0
+			sensitiveBody := "sensitive-delete-body:" + providerFileID + ":" + apiKey
+			client := newProviderFileTestClient(t, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				responseWriter.Header().Set("Content-Type", "application/json")
+				if test.location != "" {
+					responseWriter.Header().Set("Location", test.location)
+				}
+				responseWriter.WriteHeader(test.statusCode)
+				_, _ = responseWriter.Write([]byte(sensitiveBody))
+			}), apiKey, "", time.Now().UTC())
+
+			err := client.Delete(context.Background(), providerFileID)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrOpenAIProviderFileDelete)
+			var deleteError ProviderFileDeleteError
+			require.ErrorAs(t, err, &deleteError)
+			assert.Equal(t, test.expectedCode, deleteError.Code)
+			assert.Equal(t, test.statusCode, deleteError.StatusCode)
+			assert.Equal(t, 1, requestCount)
+			assert.NotContains(t, err.Error(), providerFileID)
+			assert.NotContains(t, err.Error(), apiKey)
+			assert.NotContains(t, err.Error(), sensitiveBody)
+			assert.NotContains(t, err.Error(), "/v1/files")
+		})
+	}
+}
+
+func TestProviderFileClientDeleteClassifiesTimeoutAndTransportErrors(t *testing.T) {
+	providerFileID := "file-delete-safe"
+	apiKey := "sk-delete-transport-secret"
+	tests := []struct {
+		name         string
+		transportErr error
+		expectedCode ProviderFileDeleteFailureCode
+	}{
+		{name: "timeout", transportErr: fmt.Errorf("sensitive timeout detail: %w", context.DeadlineExceeded), expectedCode: ProviderFileDeleteFailureTimeout},
+		{name: "transport", transportErr: errors.New("https://api.openai.com/v1/files/file-delete-safe?key=secret"), expectedCode: ProviderFileDeleteFailureTransport},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestCount := 0
+			client, err := NewProviderFileClient(&http.Client{Transport: providerFileRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				requestCount++
+				return nil, test.transportErr
+			})}, OpenAIProviderFileOrigin, apiKey, "")
+			require.NoError(t, err)
+
+			err = client.Delete(context.Background(), providerFileID)
+			require.Error(t, err)
+			var deleteError ProviderFileDeleteError
+			require.ErrorAs(t, err, &deleteError)
+			assert.Equal(t, test.expectedCode, deleteError.Code)
+			assert.Equal(t, 1, requestCount)
+			assert.NotContains(t, err.Error(), providerFileID)
+			assert.NotContains(t, err.Error(), apiKey)
+			assert.NotContains(t, err.Error(), test.transportErr.Error())
+		})
+	}
+}
+
+func TestProviderFileClientDeleteFailsClosedOnMalformedReceipt(t *testing.T) {
+	providerFileID := "file-delete-safe"
+	tests := []struct {
+		name         string
+		contentType  string
+		responseBody []byte
+		expectedCode ProviderFileDeleteFailureCode
+	}{
+		{name: "invalid json", contentType: "application/json", responseBody: []byte(`{"id":`), expectedCode: ProviderFileDeleteFailureInvalidResponse},
+		{name: "wrong content type", contentType: "text/plain", responseBody: []byte(`{"id":"file-delete-safe","object":"file","deleted":true}`), expectedCode: ProviderFileDeleteFailureInvalidResponse},
+		{name: "mismatched id", contentType: "application/json", responseBody: []byte(`{"id":"file-other-secret","object":"file","deleted":true}`), expectedCode: ProviderFileDeleteFailureInvalidResponse},
+		{name: "wrong object", contentType: "application/json", responseBody: []byte(`{"id":"file-delete-safe","object":"other","deleted":true}`), expectedCode: ProviderFileDeleteFailureInvalidResponse},
+		{name: "deleted false", contentType: "application/json", responseBody: []byte(`{"id":"file-delete-safe","object":"file","deleted":false}`), expectedCode: ProviderFileDeleteFailureInvalidResponse},
+		{name: "response too large", contentType: "application/json", responseBody: []byte(strings.Repeat("x", openAIProviderFileMaximumResponseBytes+1)), expectedCode: ProviderFileDeleteFailureResponseTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newProviderFileTestClient(t, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+				responseWriter.Header().Set("Content-Type", test.contentType)
+				_, _ = responseWriter.Write(test.responseBody)
+			}), "sk-delete-safe", "", time.Now().UTC())
+
+			err := client.Delete(context.Background(), providerFileID)
+			require.Error(t, err)
+			var deleteError ProviderFileDeleteError
+			require.ErrorAs(t, err, &deleteError)
+			assert.Equal(t, test.expectedCode, deleteError.Code)
+			assert.NotContains(t, err.Error(), providerFileID)
+			assert.NotContains(t, err.Error(), "file-other-secret")
+		})
+	}
+}
+
 func TestProviderFileClientRejectsNonOfficialOriginAndUnsafeInputs(t *testing.T) {
 	httpClient := &http.Client{}
 	for _, endpoint := range []string{
@@ -171,6 +305,8 @@ func TestProviderFileClientRejectsNonOfficialOriginAndUnsafeInputs(t *testing.T)
 	})
 	assert.ErrorIs(t, err, ErrOpenAIProviderFileRequest)
 	_, err = client.Retrieve(context.Background(), "file-secret?query")
+	assert.ErrorIs(t, err, ErrOpenAIProviderFileRequest)
+	err = client.Delete(context.Background(), "file-secret?query")
 	assert.ErrorIs(t, err, ErrOpenAIProviderFileRequest)
 }
 

@@ -5,8 +5,9 @@ import (
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	apitypes "github.com/QuantumNous/new-api/types"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,9 +29,9 @@ func TestBuildManagedBillingOperationIdentityIsStableAndBindsAccountingInputs(t 
 		FinalRequestModel:   "gpt-final",
 		ChannelMeta:         &relaycommon.ChannelMeta{ChannelId: 11, ChannelType: 1},
 		BillingRequestInput: &billingexpr.RequestInput{Body: []byte(`{"messages":[{"role":"user","content":"hello"}]}`)},
-		PriceData: types.PriceData{
+		PriceData: apitypes.PriceData{
 			ModelRatio: 1, CompletionRatio: 2, ChannelRatio: 1, ChannelRatioSet: true,
-			QuotaToPreConsume: 50, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+			QuotaToPreConsume: 50, GroupRatioInfo: apitypes.GroupRatioInfo{GroupRatio: 1},
 		},
 	}
 

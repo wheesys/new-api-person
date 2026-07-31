@@ -14,7 +14,7 @@ import (
 func TestTargetFromChannelRequiresDedicatedOfficialSingleKeyChannel(t *testing.T) {
 	client := &http.Client{Transport: http.DefaultTransport}
 	channel := &model.Channel{Id: 41, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Key: "sk-safe"}
-	target, err := targetFromChannel(channel, client)
+	target, err := targetFromChannel(channel, client, true)
 	require.NoError(t, err)
 	assert.Equal(t, 41, target.ChannelID)
 	assert.Equal(t, "https://api.openai.com", target.Endpoint)
@@ -22,15 +22,15 @@ func TestTargetFromChannelRequiresDedicatedOfficialSingleKeyChannel(t *testing.T
 
 	customEndpoint := "https://compatible.example"
 	channel.BaseURL = &customEndpoint
-	_, err = targetFromChannel(channel, client)
+	_, err = targetFromChannel(channel, client, true)
 	assert.ErrorIs(t, err, ErrTargetUnavailable)
 	channel.BaseURL = nil
 	channel.ChannelInfo.IsMultiKey = true
-	_, err = targetFromChannel(channel, client)
+	_, err = targetFromChannel(channel, client, true)
 	assert.ErrorIs(t, err, ErrTargetUnavailable)
 	channel.ChannelInfo.IsMultiKey = false
 	override := `{"Authorization":"forbidden"}`
 	channel.HeaderOverride = &override
-	_, err = targetFromChannel(channel, client)
+	_, err = targetFromChannel(channel, client, true)
 	assert.ErrorIs(t, err, ErrTargetUnavailable)
 }

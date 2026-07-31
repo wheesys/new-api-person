@@ -37,17 +37,19 @@ const (
 	ManagedProviderFileDeletionResultNotFound = "not_found"
 	ManagedProviderFileDeletionResultFailed   = "failed"
 
-	ManagedProviderFileLifecycleEventIntentCreated          = "intent_created"
-	ManagedProviderFileLifecycleEventUploadDispatched       = "upload_dispatched"
-	ManagedProviderFileLifecycleEventUploadFailed           = "upload_failed"
-	ManagedProviderFileLifecycleEventUploadUnknown          = "upload_unknown"
-	ManagedProviderFileLifecycleEventVerificationFailed     = "verification_failed"
-	ManagedProviderFileLifecycleEventActivated              = "activated"
-	ManagedProviderFileLifecycleEventDeletionStarted        = "deletion_started"
-	ManagedProviderFileLifecycleEventDeletionAttemptStarted = "deletion_attempt_started"
-	ManagedProviderFileLifecycleEventDeletionRetryScheduled = "deletion_retry_scheduled"
-	ManagedProviderFileLifecycleEventDeletionCompleted      = "deletion_completed"
-	ManagedProviderFileLifecycleEventDeletionTerminalFailed = "deletion_terminal_failed"
+	ManagedProviderFileLifecycleEventIntentCreated           = "intent_created"
+	ManagedProviderFileLifecycleEventUploadDispatched        = "upload_dispatched"
+	ManagedProviderFileLifecycleEventUploadFailed            = "upload_failed"
+	ManagedProviderFileLifecycleEventUploadUnknown           = "upload_unknown"
+	ManagedProviderFileLifecycleEventVerificationFailed      = "verification_failed"
+	ManagedProviderFileLifecycleEventActivated               = "activated"
+	ManagedProviderFileLifecycleEventDeletionStarted         = "deletion_started"
+	ManagedProviderFileLifecycleEventDeletionAttemptStarted  = "deletion_attempt_started"
+	ManagedProviderFileLifecycleEventDeletionRecoveryStarted = "deletion_recovery_started"
+	ManagedProviderFileLifecycleEventDeletionDispatched      = "deletion_dispatched"
+	ManagedProviderFileLifecycleEventDeletionRetryScheduled  = "deletion_retry_scheduled"
+	ManagedProviderFileLifecycleEventDeletionCompleted       = "deletion_completed"
+	ManagedProviderFileLifecycleEventDeletionTerminalFailed  = "deletion_terminal_failed"
 
 	maxManagedProviderFileDeletionAttempts = 100
 )
@@ -58,6 +60,7 @@ var (
 	ErrManagedProviderFileLifecycleLookupConflict = errors.New("managed provider file lifecycle lookup conflict")
 	ErrManagedProviderFileDeletionLeaseLost       = errors.New("managed provider file deletion lease lost")
 	ErrManagedProviderFileEventAppendOnly         = errors.New("managed provider file lifecycle events are append-only")
+	ErrManagedProviderFileChannelBound            = errors.New("channel is bound to unfinished managed provider files")
 )
 
 // ManagedProviderFileLifecycle is the durable ownership and exact-credential authority for one gateway-uploaded file.
@@ -119,6 +122,7 @@ type ManagedProviderFileDeletionOutbox struct {
 	CreatedAt      time.Time  `json:"created_at" gorm:"not null;comment:Timestamp when expiry deletion was scheduled"`
 	UpdatedAt      time.Time  `json:"updated_at" gorm:"not null;comment:Timestamp when deletion delivery last changed"`
 	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty" gorm:"comment:Timestamp when the latest deletion attempt was claimed"`
+	DispatchedAt   *time.Time `json:"dispatched_at,omitempty" gorm:"comment:Timestamp committed immediately before the provider deletion request could be dispatched"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty" gorm:"comment:Timestamp when deletion delivery reached a terminal state"`
 }
 
@@ -168,16 +172,19 @@ type ManagedProviderFileLifecycleActivation struct {
 }
 
 type ManagedProviderFileVerificationFailure struct {
-	LifecycleId        int64
-	ExpectedVersion    int64
-	RequestFingerprint string
-	ProviderLookupHMAC string
-	ProviderPayload    []byte
-	ProviderBytes      int64
-	ProviderCreatedAt  time.Time
-	ExpiresAt          time.Time
-	ReasonCode         string
-	Event              ManagedProviderFileLifecycleEvent
+	LifecycleId           int64
+	ExpectedVersion       int64
+	RequestFingerprint    string
+	ProviderLookupHMAC    string
+	ProviderPayload       []byte
+	ProviderBytes         int64
+	ProviderCreatedAt     time.Time
+	ExpiresAt             time.Time
+	ReasonCode            string
+	DeletionOperationHMAC string
+	DeletionNextAttemptAt time.Time
+	MaxDeletionAttempts   int
+	Event                 ManagedProviderFileLifecycleEvent
 }
 
 type ManagedProviderFileDeletionClaim struct {
@@ -268,15 +275,17 @@ func (lifecycle ManagedProviderFileLifecycle) Validate() error {
 			return fmt.Errorf("managed provider file verification-failed state is invalid")
 		}
 	case ManagedProviderFileLifecycleStateActive, ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeleted, ManagedProviderFileLifecycleStateDeletionFailed:
-		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || lifecycle.VerificationFailedAt != nil ||
-			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() || lifecycle.MetadataVerifiedAt == nil || lifecycle.MetadataVerifiedAt.IsZero() ||
-			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) || lifecycle.ActivatedAt == nil {
+		verifiedBinding := lifecycle.VerificationFailedAt == nil && lifecycle.MetadataVerifiedAt != nil && !lifecycle.MetadataVerifiedAt.IsZero() && lifecycle.ActivatedAt != nil
+		recoveryBinding := lifecycle.VerificationFailedAt != nil && !lifecycle.VerificationFailedAt.IsZero() && lifecycle.MetadataVerifiedAt == nil && lifecycle.ActivatedAt == nil
+		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || (!verifiedBinding && !recoveryBinding) ||
+			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() ||
+			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) {
 			return fmt.Errorf("managed provider file active binding is invalid")
 		}
 		if lifecycle.State != ManagedProviderFileLifecycleStateDeleted && len(lifecycle.ProviderPayload) == 0 {
 			return fmt.Errorf("managed provider file active payload is invalid")
 		}
-		if lifecycle.State == ManagedProviderFileLifecycleStateActive && (lifecycle.DeletionStartedAt != nil || lifecycle.DeletedAt != nil || lifecycle.DeletionFailedAt != nil || lifecycle.TerminalReasonCode != "") {
+		if lifecycle.State == ManagedProviderFileLifecycleStateActive && (!verifiedBinding || lifecycle.DeletionStartedAt != nil || lifecycle.DeletedAt != nil || lifecycle.DeletionFailedAt != nil || lifecycle.TerminalReasonCode != "") {
 			return fmt.Errorf("managed provider file active state is invalid")
 		}
 		if lifecycle.State == ManagedProviderFileLifecycleStateDeletionPending && (lifecycle.DeletionStartedAt == nil || lifecycle.DeletedAt != nil || lifecycle.DeletionFailedAt != nil) {
@@ -302,7 +311,7 @@ func (outbox ManagedProviderFileDeletionOutbox) Validate() error {
 	}
 	switch outbox.State {
 	case ManagedProviderFileDeletionOutboxStatePending:
-		if outbox.AttemptCount != 0 || outbox.LeaseTokenHMAC != "" || outbox.LeaseExpiresAt != nil || outbox.LastAttemptAt != nil || outbox.CompletedAt != nil || outbox.TerminalResult != "" {
+		if outbox.AttemptCount != 0 || outbox.LeaseTokenHMAC != "" || outbox.LeaseExpiresAt != nil || outbox.LastAttemptAt != nil || outbox.DispatchedAt != nil || outbox.CompletedAt != nil || outbox.TerminalResult != "" {
 			return fmt.Errorf("managed provider file deletion pending state is invalid")
 		}
 	case ManagedProviderFileDeletionOutboxStateInProgress:
@@ -311,12 +320,12 @@ func (outbox ManagedProviderFileDeletionOutbox) Validate() error {
 		}
 	case ManagedProviderFileDeletionOutboxStateRetryWait:
 		if outbox.AttemptCount <= 0 || outbox.AttemptCount >= outbox.MaxAttempts || outbox.LeaseTokenHMAC != "" || outbox.LeaseExpiresAt != nil || outbox.LastAttemptAt == nil ||
-			strings.TrimSpace(outbox.LastErrorCode) == "" || outbox.CompletedAt != nil || outbox.TerminalResult != "" {
+			outbox.DispatchedAt != nil || strings.TrimSpace(outbox.LastErrorCode) == "" || outbox.CompletedAt != nil || outbox.TerminalResult != "" {
 			return fmt.Errorf("managed provider file deletion retry state is invalid")
 		}
 	case ManagedProviderFileDeletionOutboxStateCompleted:
 		if outbox.AttemptCount <= 0 || outbox.LeaseTokenHMAC != "" || outbox.LeaseExpiresAt != nil || outbox.CompletedAt == nil ||
-			(outbox.TerminalResult != ManagedProviderFileDeletionResultDeleted && outbox.TerminalResult != ManagedProviderFileDeletionResultNotFound) {
+			outbox.TerminalResult != ManagedProviderFileDeletionResultDeleted {
 			return fmt.Errorf("managed provider file deletion completed state is invalid")
 		}
 	case ManagedProviderFileDeletionOutboxStateTerminalFailed:
@@ -352,14 +361,19 @@ func (event ManagedProviderFileLifecycleEvent) Validate() error {
 	case ManagedProviderFileLifecycleEventActivated:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateUploadDispatched && event.ToState == ManagedProviderFileLifecycleStateActive && event.AttemptCount == 0 && event.ResultCode == ""
 	case ManagedProviderFileLifecycleEventDeletionStarted:
-		validTransition = event.FromState == ManagedProviderFileLifecycleStateActive && event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount == 1 && event.ResultCode == ""
+		validTransition = (event.FromState == ManagedProviderFileLifecycleStateActive || event.FromState == ManagedProviderFileLifecycleStateVerificationFailed) &&
+			event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount == 1 && event.ResultCode == ""
 	case ManagedProviderFileLifecycleEventDeletionAttemptStarted:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount > 1 && event.ResultCode == ""
+	case ManagedProviderFileLifecycleEventDeletionRecoveryStarted:
+		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount > 0 && event.ResultCode == ""
+	case ManagedProviderFileLifecycleEventDeletionDispatched:
+		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount > 0 && event.ResultCode == ""
 	case ManagedProviderFileLifecycleEventDeletionRetryScheduled:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeletionPending && event.AttemptCount > 0 && strings.TrimSpace(event.ResultCode) != ""
 	case ManagedProviderFileLifecycleEventDeletionCompleted:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeleted && event.AttemptCount > 0 &&
-			(event.ResultCode == ManagedProviderFileDeletionResultDeleted || event.ResultCode == ManagedProviderFileDeletionResultNotFound)
+			event.ResultCode == ManagedProviderFileDeletionResultDeleted
 	case ManagedProviderFileLifecycleEventDeletionTerminalFailed:
 		validTransition = event.FromState == ManagedProviderFileLifecycleStateDeletionPending && event.ToState == ManagedProviderFileLifecycleStateDeletionFailed && event.AttemptCount > 0 && strings.TrimSpace(event.ResultCode) != ""
 	}
@@ -395,6 +409,10 @@ func CreateManagedProviderFileLifecycleIntent(ctx context.Context, lifecycle Man
 	var createdLifecycle *ManagedProviderFileLifecycle
 	created := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var boundChannel Channel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&boundChannel, "id = ?", lifecycle.ChannelId).Error; err != nil {
+			return err
+		}
 		var existing ManagedProviderFileLifecycle
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing,
 			"upload_intent_hmac = ? OR handle_lookup_hmac = ?", lifecycle.UploadIntentHMAC, lifecycle.HandleLookupHMAC).Error
@@ -481,10 +499,16 @@ func AdvanceManagedProviderFileUploadState(ctx context.Context, transition Manag
 func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure ManagedProviderFileVerificationFailure) error {
 	failure.ProviderCreatedAt = failure.ProviderCreatedAt.UTC().Truncate(time.Second)
 	failure.ExpiresAt = failure.ExpiresAt.UTC().Truncate(time.Second)
+	if failure.DeletionNextAttemptAt.IsZero() {
+		failure.DeletionNextAttemptAt = time.Now().UTC().Truncate(time.Second)
+	} else {
+		failure.DeletionNextAttemptAt = failure.DeletionNextAttemptAt.UTC().Truncate(time.Second)
+	}
 	if failure.LifecycleId <= 0 || failure.ExpectedVersion <= 0 || !validManagedProviderFileDigest(failure.RequestFingerprint) ||
 		!validManagedProviderFileDigest(failure.ProviderLookupHMAC) || len(failure.ProviderPayload) == 0 || failure.ProviderBytes <= 0 ||
 		failure.ProviderCreatedAt.IsZero() || !failure.ExpiresAt.After(failure.ProviderCreatedAt) || strings.TrimSpace(failure.ReasonCode) == "" ||
-		len(failure.ReasonCode) > 64 {
+		len(failure.ReasonCode) > 64 || !validManagedProviderFileDigest(failure.DeletionOperationHMAC) ||
+		failure.DeletionNextAttemptAt.After(failure.ExpiresAt) || failure.MaxDeletionAttempts <= 0 || failure.MaxDeletionAttempts > maxManagedProviderFileDeletionAttempts {
 		return fmt.Errorf("managed provider file verification failure is invalid")
 	}
 	now := time.Now().UTC()
@@ -499,6 +523,17 @@ func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure M
 			return ErrManagedProviderFileLifecycleStateConflict
 		}
 		providerLookupHMAC := failure.ProviderLookupHMAC
+		outbox := ManagedProviderFileDeletionOutbox{
+			LifecycleId: lifecycle.Id, OperationHMAC: failure.DeletionOperationHMAC,
+			State: ManagedProviderFileDeletionOutboxStatePending, Version: 1, MaxAttempts: failure.MaxDeletionAttempts,
+			NextAttemptAt: failure.DeletionNextAttemptAt,
+		}
+		if err := outbox.Validate(); err != nil {
+			return err
+		}
+		if err := tx.Create(&outbox).Error; err != nil {
+			return err
+		}
 		updates := map[string]interface{}{
 			"state": ManagedProviderFileLifecycleStateVerificationFailed, "provider_lookup_hmac": providerLookupHMAC,
 			"provider_payload": append([]byte(nil), failure.ProviderPayload...), "provider_bytes": failure.ProviderBytes,
@@ -677,8 +712,7 @@ func ListDueManagedProviderFileDeletions(ctx context.Context, now time.Time, lim
 	}
 	var outboxes []ManagedProviderFileDeletionOutbox
 	err := DB.WithContext(ctx).
-		Where("attempt_count < max_attempts").
-		Where("((state IN ? AND next_attempt_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)) OR (state = ? AND lease_expires_at < ?))",
+		Where("((state IN ? AND attempt_count < max_attempts AND next_attempt_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)) OR (state = ? AND lease_expires_at < ?))",
 			[]string{ManagedProviderFileDeletionOutboxStatePending, ManagedProviderFileDeletionOutboxStateRetryWait}, now, now,
 			ManagedProviderFileDeletionOutboxStateInProgress, now).
 		Order("next_attempt_at asc").Order("id asc").Limit(limit).Find(&outboxes).Error
@@ -693,22 +727,30 @@ func ClaimManagedProviderFileDeletion(ctx context.Context, claim ManagedProvider
 		return nil, false, fmt.Errorf("managed provider file deletion claim is invalid")
 	}
 	var outbox ManagedProviderFileDeletionOutbox
+	if err := DB.WithContext(ctx).Select("lifecycle_id").First(&outbox, "id = ?", claim.OutboxId).Error; err != nil {
+		return nil, false, err
+	}
+	var lifecycle ManagedProviderFileLifecycle
 	claimed := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&outbox, "id = ?", claim.OutboxId).Error; err != nil {
-			return err
-		}
-		if outbox.State != claim.ExpectedState || outbox.Version != claim.ExpectedVersion || outbox.AttemptCount != claim.ExpectedAttemptCount || outbox.AttemptCount >= outbox.MaxAttempts || outbox.NextAttemptAt.After(now) ||
-			(outbox.LeaseExpiresAt != nil && !outbox.LeaseExpiresAt.Before(now)) {
-			return nil
-		}
-		var lifecycle ManagedProviderFileLifecycle
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", outbox.LifecycleId).Error; err != nil {
 			return err
 		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&outbox, "id = ?", claim.OutboxId).Error; err != nil {
+			return err
+		}
+		recoveringLease := outbox.State == ManagedProviderFileDeletionOutboxStateInProgress
+		if outbox.State != claim.ExpectedState || outbox.Version != claim.ExpectedVersion || outbox.AttemptCount != claim.ExpectedAttemptCount || (!recoveringLease && outbox.AttemptCount >= outbox.MaxAttempts) ||
+			(!recoveringLease && outbox.NextAttemptAt.After(now)) ||
+			(outbox.LeaseExpiresAt != nil && !outbox.LeaseExpiresAt.Before(now)) {
+			return nil
+		}
 		nextAttemptCount := outbox.AttemptCount + 1
 		expectedEventType := ManagedProviderFileLifecycleEventDeletionAttemptStarted
-		if lifecycle.State == ManagedProviderFileLifecycleStateActive {
+		if recoveringLease {
+			nextAttemptCount = outbox.AttemptCount
+			expectedEventType = ManagedProviderFileLifecycleEventDeletionRecoveryStarted
+		} else if lifecycle.State == ManagedProviderFileLifecycleStateActive || lifecycle.State == ManagedProviderFileLifecycleStateVerificationFailed {
 			expectedEventType = ManagedProviderFileLifecycleEventDeletionStarted
 		} else if lifecycle.State != ManagedProviderFileLifecycleStateDeletionPending {
 			return ErrManagedProviderFileLifecycleStateConflict
@@ -718,11 +760,15 @@ func ClaimManagedProviderFileDeletion(ctx context.Context, claim ManagedProvider
 		}
 		result := tx.Model(&ManagedProviderFileDeletionOutbox{}).
 			Where("id = ? AND version = ? AND state = ? AND attempt_count = ?", outbox.Id, claim.ExpectedVersion, claim.ExpectedState, claim.ExpectedAttemptCount).
-			Where("lease_expires_at IS NULL OR lease_expires_at < ?", now).
-			Updates(map[string]interface{}{
-				"state": ManagedProviderFileDeletionOutboxStateInProgress, "version": outbox.Version + 1, "attempt_count": nextAttemptCount,
-				"lease_token_hmac": claim.LeaseTokenHMAC, "lease_expires_at": claim.LeaseExpiresAt.UTC(), "last_attempt_at": now.UTC(),
-			})
+			Where("lease_expires_at IS NULL OR lease_expires_at < ?", now)
+		outboxUpdates := map[string]interface{}{
+			"state": ManagedProviderFileDeletionOutboxStateInProgress, "version": outbox.Version + 1, "attempt_count": nextAttemptCount,
+			"lease_token_hmac": claim.LeaseTokenHMAC, "lease_expires_at": claim.LeaseExpiresAt.UTC(), "last_attempt_at": now.UTC(),
+		}
+		if !recoveringLease {
+			outboxUpdates["dispatched_at"] = nil
+		}
+		result = result.Updates(outboxUpdates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -730,7 +776,7 @@ func ClaimManagedProviderFileDeletion(ctx context.Context, claim ManagedProvider
 			return nil
 		}
 		lifecycleUpdates := map[string]interface{}{}
-		if lifecycle.State == ManagedProviderFileLifecycleStateActive {
+		if lifecycle.State == ManagedProviderFileLifecycleStateActive || lifecycle.State == ManagedProviderFileLifecycleStateVerificationFailed {
 			lifecycleUpdates["state"] = ManagedProviderFileLifecycleStateDeletionPending
 			lifecycleUpdates["deletion_started_at"] = now.UTC()
 		}
@@ -754,8 +800,15 @@ func RetryManagedProviderFileDeletion(ctx context.Context, retry ManagedProvider
 		strings.TrimSpace(retry.ErrorCode) == "" || len(retry.ErrorCode) > 64 {
 		return fmt.Errorf("managed provider file deletion retry is invalid")
 	}
+	var outbox ManagedProviderFileDeletionOutbox
+	if err := DB.WithContext(ctx).Select("lifecycle_id").First(&outbox, "id = ?", retry.OutboxId).Error; err != nil {
+		return err
+	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var outbox ManagedProviderFileDeletionOutbox
+		var lifecycle ManagedProviderFileLifecycle
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", outbox.LifecycleId).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&outbox, "id = ?", retry.OutboxId).Error; err != nil {
 			return err
 		}
@@ -770,15 +823,11 @@ func RetryManagedProviderFileDeletion(ctx context.Context, retry ManagedProvider
 			retry.Event.AttemptCount != outbox.AttemptCount || retry.Event.ResultCode != retry.ErrorCode {
 			return fmt.Errorf("managed provider file deletion retry event is invalid")
 		}
-		var lifecycle ManagedProviderFileLifecycle
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", outbox.LifecycleId).Error; err != nil {
-			return err
-		}
 		result := tx.Model(&ManagedProviderFileDeletionOutbox{}).
 			Where("id = ? AND version = ? AND state = ? AND lease_token_hmac = ? AND attempt_count = ?", outbox.Id, retry.ExpectedVersion, ManagedProviderFileDeletionOutboxStateInProgress, retry.LeaseTokenHMAC, retry.AttemptCount).
 			Updates(map[string]interface{}{
 				"state": ManagedProviderFileDeletionOutboxStateRetryWait, "version": outbox.Version + 1, "next_attempt_at": retry.NextAttemptAt.UTC(),
-				"lease_token_hmac": "", "lease_expires_at": nil, "last_error_code": retry.ErrorCode,
+				"lease_token_hmac": "", "lease_expires_at": nil, "last_error_code": retry.ErrorCode, "dispatched_at": nil,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -791,7 +840,7 @@ func RetryManagedProviderFileDeletion(ctx context.Context, retry ManagedProvider
 }
 
 func CompleteManagedProviderFileDeletion(ctx context.Context, terminal ManagedProviderFileDeletionTerminal) error {
-	if terminal.Result != ManagedProviderFileDeletionResultDeleted && terminal.Result != ManagedProviderFileDeletionResultNotFound {
+	if terminal.Result != ManagedProviderFileDeletionResultDeleted {
 		return fmt.Errorf("managed provider file deletion completion result is invalid")
 	}
 	return finishManagedProviderFileDeletion(ctx, terminal, ManagedProviderFileDeletionOutboxStateCompleted, ManagedProviderFileLifecycleStateDeleted, ManagedProviderFileLifecycleEventDeletionCompleted)
@@ -809,14 +858,24 @@ func finishManagedProviderFileDeletion(ctx context.Context, terminal ManagedProv
 		return fmt.Errorf("managed provider file deletion terminal transition is invalid")
 	}
 	now := time.Now()
+	var outbox ManagedProviderFileDeletionOutbox
+	if err := DB.WithContext(ctx).Select("lifecycle_id").First(&outbox, "id = ?", terminal.OutboxId).Error; err != nil {
+		return err
+	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var outbox ManagedProviderFileDeletionOutbox
+		var lifecycle ManagedProviderFileLifecycle
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", outbox.LifecycleId).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&outbox, "id = ?", terminal.OutboxId).Error; err != nil {
 			return err
 		}
 		if outbox.State != ManagedProviderFileDeletionOutboxStateInProgress || outbox.Version != terminal.ExpectedVersion || outbox.LeaseTokenHMAC != terminal.LeaseTokenHMAC || outbox.AttemptCount != terminal.AttemptCount ||
 			outbox.LeaseExpiresAt == nil || outbox.LeaseExpiresAt.Before(now) {
 			return ErrManagedProviderFileDeletionLeaseLost
+		}
+		if lifecycleState == ManagedProviderFileLifecycleStateDeleted && outbox.DispatchedAt == nil {
+			return ErrManagedProviderFileLifecycleStateConflict
 		}
 		if terminal.Event.LifecycleId != outbox.LifecycleId || terminal.Event.EventType != eventType || terminal.Event.AttemptCount != outbox.AttemptCount ||
 			terminal.Event.EvidenceDigest != terminal.EvidenceDigest {
@@ -827,10 +886,6 @@ func finishManagedProviderFileDeletion(ctx context.Context, terminal ManagedProv
 		}
 		if lifecycleState == ManagedProviderFileLifecycleStateDeletionFailed && terminal.Event.ResultCode != terminal.ErrorCode {
 			return fmt.Errorf("managed provider file deletion failure event is invalid")
-		}
-		var lifecycle ManagedProviderFileLifecycle
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lifecycle, "id = ?", outbox.LifecycleId).Error; err != nil {
-			return err
 		}
 		outboxResult := tx.Model(&ManagedProviderFileDeletionOutbox{}).
 			Where("id = ? AND version = ? AND state = ? AND lease_token_hmac = ? AND attempt_count = ?", outbox.Id, terminal.ExpectedVersion, ManagedProviderFileDeletionOutboxStateInProgress, terminal.LeaseTokenHMAC, terminal.AttemptCount).

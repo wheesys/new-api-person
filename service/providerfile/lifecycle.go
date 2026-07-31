@@ -162,6 +162,28 @@ func Upload(ctx context.Context, request UploadRequest) (File, error) {
 	if !created {
 		return replayUpload(ctx, request, lifecycle, bindings)
 	}
+	currentTarget, targetErr := LoadTarget(request.Settings, request.Runtime, nil)
+	targetChanged := targetErr == nil && (currentTarget.ChannelID != request.Target.ChannelID || currentTarget.ChannelType != request.Target.ChannelType ||
+		currentTarget.Endpoint != request.Target.Endpoint || currentTarget.Organization != request.Target.Organization ||
+		currentTarget.Project != request.Target.Project || currentTarget.credential != request.Target.credential)
+	if targetErr != nil || targetChanged {
+		failedAt := time.Now().UTC().Truncate(time.Second)
+		failedEvent, eventErr := providerFileEvent(request.Runtime, lifecycle.UploadIntentHMAC, lifecycle.Id, 2, lifecycle.LastEventHMAC,
+			model.ManagedProviderFileLifecycleStateIntent, model.ManagedProviderFileLifecycleEventUploadFailed,
+			model.ManagedProviderFileLifecycleStateIntent, model.ManagedProviderFileLifecycleStateUploadFailed,
+			"target_changed_before_dispatch", activeBinding.RequestFingerprint, failedAt)
+		if eventErr == nil {
+			_ = model.AdvanceManagedProviderFileUploadState(ctx, model.ManagedProviderFileUploadTransition{
+				LifecycleId: lifecycle.Id, ExpectedVersion: lifecycle.Version, RequestFingerprint: activeBinding.RequestFingerprint,
+				ExpectedState: model.ManagedProviderFileLifecycleStateIntent, NextState: model.ManagedProviderFileLifecycleStateUploadFailed,
+				ReasonCode: "target_changed_before_dispatch", Event: failedEvent,
+			})
+		}
+		if targetErr != nil {
+			return File{}, fmt.Errorf("%w: target snapshot unavailable before dispatch", ErrLifecycleUnavailable)
+		}
+		return File{}, fmt.Errorf("%w: target snapshot changed before dispatch", ErrLifecycleUnavailable)
+	}
 
 	dispatchedAt := time.Now().UTC().Truncate(time.Second)
 	dispatchedEvent, err := providerFileEvent(request.Runtime, lifecycle.UploadIntentHMAC, lifecycle.Id, 2, lifecycle.LastEventHMAC,
@@ -205,7 +227,7 @@ func Upload(ctx context.Context, request UploadRequest) (File, error) {
 	}
 	retrievedMetadata, retrieveErr := request.Target.client.Retrieve(ctx, uploadMetadata.ProviderFileID)
 	if retrieveErr != nil || !sameProviderFileMetadata(uploadMetadata, retrievedMetadata) {
-		return recordEncryptedVerificationFailure(ctx, request, lifecycle, activeBinding, uploadMetadata, providerLookupHMAC, encryptedPayload, "metadata_unverified")
+		return recordEncryptedVerificationFailure(ctx, request, lifecycle, activeBinding, handle, uploadMetadata, providerLookupHMAC, encryptedPayload, "metadata_unverified")
 	}
 	deletionOperationHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileDeletionOperationHMAC(request.Owner, handle)
 	if err != nil {
@@ -300,10 +322,14 @@ func recordVerificationFailure(ctx context.Context, request UploadRequest, lifec
 	if err != nil {
 		return File{}, ErrLifecycleUnavailable
 	}
-	return recordEncryptedVerificationFailure(ctx, request, lifecycle, binding, metadata, providerLookupHMAC, encryptedPayload, reason)
+	return recordEncryptedVerificationFailure(ctx, request, lifecycle, binding, handle, metadata, providerLookupHMAC, encryptedPayload, reason)
 }
 
-func recordEncryptedVerificationFailure(ctx context.Context, request UploadRequest, lifecycle *model.ManagedProviderFileLifecycle, binding contextconsensus.ManagedProviderFileUploadBinding, metadata openai.ProviderFileMetadata, providerLookupHMAC string, encryptedPayload []byte, reason string) (File, error) {
+func recordEncryptedVerificationFailure(ctx context.Context, request UploadRequest, lifecycle *model.ManagedProviderFileLifecycle, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata, providerLookupHMAC string, encryptedPayload []byte, reason string) (File, error) {
+	deletionOperationHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileDeletionOperationHMAC(request.Owner, handle)
+	if err != nil {
+		return File{}, ErrLifecycleUnavailable
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	event, err := providerFileEvent(request.Runtime, lifecycle.UploadIntentHMAC, lifecycle.Id, 3, lifecycle.LastEventHMAC,
 		model.ManagedProviderFileLifecycleStateUploadDispatched, model.ManagedProviderFileLifecycleEventVerificationFailed,
@@ -314,7 +340,9 @@ func recordEncryptedVerificationFailure(ctx context.Context, request UploadReque
 	err = model.RecordManagedProviderFileVerificationFailure(ctx, model.ManagedProviderFileVerificationFailure{
 		LifecycleId: lifecycle.Id, ExpectedVersion: lifecycle.Version, RequestFingerprint: binding.RequestFingerprint,
 		ProviderLookupHMAC: providerLookupHMAC, ProviderPayload: encryptedPayload, ProviderBytes: metadata.Bytes,
-		ProviderCreatedAt: time.Unix(metadata.CreatedAtUnix, 0), ExpiresAt: time.Unix(metadata.ExpiresAtUnix, 0), ReasonCode: reason, Event: event,
+		ProviderCreatedAt: time.Unix(metadata.CreatedAtUnix, 0), ExpiresAt: time.Unix(metadata.ExpiresAtUnix, 0), ReasonCode: reason,
+		DeletionOperationHMAC: deletionOperationHMAC, DeletionNextAttemptAt: now,
+		MaxDeletionAttempts: request.Settings.ProviderFileDeletionMaxAttempts, Event: event,
 	})
 	if err != nil {
 		return File{}, ErrLifecycleUnavailable
@@ -340,19 +368,23 @@ func markUploadUnknown(ctx context.Context, runtime *contextconsensus.ManagedCon
 }
 
 func providerFileEvent(runtime *contextconsensus.ManagedConsensusRuntime, lifecycleHMAC string, lifecycleID, sequence int64, previousHMAC, fromState, eventType, eventFromState, toState, resultCode, evidenceDigest string, createdAt time.Time) (model.ManagedProviderFileLifecycleEvent, error) {
+	return providerFileEventWithAttempt(runtime, lifecycleHMAC, lifecycleID, sequence, previousHMAC, fromState, eventType, eventFromState, toState, 0, resultCode, evidenceDigest, createdAt)
+}
+
+func providerFileEventWithAttempt(runtime *contextconsensus.ManagedConsensusRuntime, lifecycleHMAC string, lifecycleID, sequence int64, previousHMAC, fromState, eventType, eventFromState, toState string, attemptCount int, resultCode, evidenceDigest string, createdAt time.Time) (model.ManagedProviderFileLifecycleEvent, error) {
 	if fromState != eventFromState {
 		return model.ManagedProviderFileLifecycleEvent{}, fmt.Errorf("provider file event state is invalid")
 	}
 	eventHMAC, err := runtime.KeyDeriver.DeriveProviderFileEventHMAC(contextconsensus.ManagedProviderFileEventIdentity{
 		LifecycleHMAC: lifecycleHMAC, Sequence: sequence, PreviousEventHMAC: previousHMAC, EventType: eventType,
-		FromState: fromState, ToState: toState, ResultCode: resultCode, EvidenceDigest: evidenceDigest, CreatedAtUnix: createdAt.Unix(),
+		FromState: fromState, ToState: toState, AttemptCount: attemptCount, ResultCode: resultCode, EvidenceDigest: evidenceDigest, CreatedAtUnix: createdAt.Unix(),
 	})
 	if err != nil {
 		return model.ManagedProviderFileLifecycleEvent{}, err
 	}
 	return model.ManagedProviderFileLifecycleEvent{
 		LifecycleId: lifecycleID, Sequence: sequence, PreviousEventHMAC: previousHMAC, EventHMAC: eventHMAC,
-		EventType: eventType, FromState: fromState, ToState: toState, ResultCode: resultCode,
+		EventType: eventType, FromState: fromState, ToState: toState, AttemptCount: attemptCount, ResultCode: resultCode,
 		EvidenceDigest: evidenceDigest, KeyVersion: runtime.KeyDeriver.KeyVersion(), CreatedAt: createdAt,
 	}, nil
 }

@@ -243,6 +243,7 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 		"smart_routing.provider_file_deletion_max_attempts":       "7",
 		"smart_routing.provider_file_deletion_timeout_seconds":    "45",
 		"smart_routing.provider_file_exclusive_project_attested":  "true",
+		"smart_routing.provider_file_sandbox_contract_verified":   "true",
 		"smart_routing.provider_file_reconciliation_enabled":      "false",
 	}))
 
@@ -270,6 +271,7 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, 7, snapshot.ProviderFileDeletionMaxAttempts)
 	assert.Equal(t, 45, snapshot.ProviderFileDeletionTimeoutSeconds)
 	assert.True(t, snapshot.ProviderFileExclusiveProjectAttested)
+	assert.True(t, snapshot.ProviderFileSandboxContractVerified)
 	assert.False(t, snapshot.ProviderFileReconciliationEnabled)
 
 	snapshot.CompactionModelPool[0] = "mutated"
@@ -298,6 +300,8 @@ func TestProviderFileLifecycleSettingsRemainDisabledUntilAllSafetyInputsExist(t 
 	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "exclusive OpenAI project")
 
 	settings.ProviderFileExclusiveProjectAttested = true
+	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "sandbox deletion contracts")
+	settings.ProviderFileSandboxContractVerified = true
 	require.NoError(t, ValidateProviderFileLifecycleReadiness(settings))
 	settings.ProviderFileDeletionLeadSeconds = settings.ProviderFileExpirationSeconds
 	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "deletion lead")

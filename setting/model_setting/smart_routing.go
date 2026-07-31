@@ -35,6 +35,7 @@ type SmartRoutingSettings struct {
 	ProviderFileDeletionMaxAttempts      int                                        `json:"provider_file_deletion_max_attempts"`
 	ProviderFileDeletionTimeoutSeconds   int                                        `json:"provider_file_deletion_timeout_seconds"`
 	ProviderFileExclusiveProjectAttested bool                                       `json:"provider_file_exclusive_project_attested"`
+	ProviderFileSandboxContractVerified  bool                                       `json:"provider_file_sandbox_contract_verified"`
 	ProviderFileReconciliationEnabled    bool                                       `json:"provider_file_reconciliation_enabled"`
 }
 
@@ -258,6 +259,9 @@ func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) erro
 	}
 	if !settings.ProviderFileExclusiveProjectAttested {
 		return fmt.Errorf("provider file lifecycle requires an exclusive OpenAI project attestation")
+	}
+	if !settings.ProviderFileSandboxContractVerified {
+		return fmt.Errorf("provider file lifecycle requires verified sandbox deletion contracts")
 	}
 	return nil
 }

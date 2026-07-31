@@ -328,6 +328,28 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionOperationHM
 	}{OwnerHMAC: ownerHMAC, Handle: handle})
 }
 
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionLeaseHMAC(outboxID int64, nonce string) (string, error) {
+	if outboxID <= 0 || strings.TrimSpace(nonce) == "" || strings.TrimSpace(nonce) != nonce || len(nonce) > 128 {
+		return "", fmt.Errorf("managed provider file deletion lease identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_deletion_lease", struct {
+		OutboxID int64  `json:"outbox_id"`
+		Nonce    string `json:"nonce"`
+	}{OutboxID: outboxID, Nonce: nonce})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionEvidenceHMAC(operationHMAC string, attemptCount int, resultCode string) (string, error) {
+	if !validProviderFileHexHMAC(operationHMAC) || attemptCount <= 0 || strings.TrimSpace(resultCode) == "" ||
+		strings.TrimSpace(resultCode) != resultCode || len(resultCode) > 64 {
+		return "", fmt.Errorf("managed provider file deletion evidence identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_deletion_evidence", struct {
+		OperationHMAC string `json:"operation_hmac"`
+		AttemptCount  int    `json:"attempt_count"`
+		ResultCode    string `json:"result_code"`
+	}{OperationHMAC: operationHMAC, AttemptCount: attemptCount, ResultCode: resultCode})
+}
+
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileTargetFingerprint(identity ManagedProviderFileTargetIdentity) (string, error) {
 	if identity.ChannelID <= 0 || identity.ChannelType <= 0 || identity.MultiKeyIndex < 0 ||
 		(!identity.ChannelIsMultiKey && identity.MultiKeyIndex != 0) || strings.TrimSpace(identity.Endpoint) == "" ||

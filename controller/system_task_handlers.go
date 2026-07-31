@@ -9,6 +9,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contextconsensus"
+	"github.com/QuantumNous/new-api/service/providerfile"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
@@ -22,6 +25,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(providerFileDeletionHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -149,6 +153,48 @@ func (asyncTaskPollHandler) NewPayload() any { return nil }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+type providerFileDeletionHandler struct{}
+
+func (providerFileDeletionHandler) Type() string { return model.SystemTaskTypeProviderFileDeletion }
+
+func (providerFileDeletionHandler) Enabled() bool {
+	if !model_setting.GetSmartRoutingSettings().ProviderFileSandboxContractVerified {
+		return false
+	}
+	due, err := model.HasDueManagedProviderFileDeletions(context.Background(), time.Now().UTC())
+	if err != nil {
+		common.SysLog(fmt.Sprintf("托管 provider file 删除任务就绪检查失败: %v", err))
+		return false
+	}
+	return due
+}
+
+func (providerFileDeletionHandler) Interval() time.Duration { return 15 * time.Second }
+
+func (providerFileDeletionHandler) NewPayload() any { return nil }
+
+func (providerFileDeletionHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	settings := model_setting.GetSmartRoutingSettings()
+	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, fmt.Errorf("托管 provider file 删除密钥不可用"))
+		return
+	}
+	summary, err := providerfile.RunDeletionBatch(ctx, providerfile.DeletionWorkerOptions{
+		Runtime: runtime, ContractVerified: settings.ProviderFileSandboxContractVerified, BatchSize: settings.ProviderFileDeletionBatchSize,
+		Timeout: time.Duration(settings.ProviderFileDeletionTimeoutSeconds) * time.Second,
+		Alert: func(resultCode string, outboxID, lifecycleID int64) {
+			service.NotifyRootUser("provider_file_deletion_failed", "托管文件删除失败",
+				fmt.Sprintf("托管 provider file 删除已停止，outbox=%d lifecycle=%d result=%s", outboxID, lifecycleID, resultCode))
+		},
+	})
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 

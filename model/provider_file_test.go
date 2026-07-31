@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,10 +14,12 @@ import (
 func prepareManagedProviderFileModelTest(t *testing.T) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(
+		&Channel{},
 		&ManagedProviderFileLifecycle{},
 		&ManagedProviderFileDeletionOutbox{},
 		&ManagedProviderFileLifecycleEvent{},
 	))
+	require.NoError(t, DB.Where("id = ?", 41).FirstOrCreate(&Channel{Id: 41, Type: 1, Key: "provider-file-test-key", Name: "provider-file-test"}).Error)
 	require.NoError(t, DB.Exec("DELETE FROM managed_provider_file_lifecycle_events").Error)
 	require.NoError(t, DB.Exec("DELETE FROM managed_provider_file_deletion_outboxes").Error)
 	require.NoError(t, DB.Exec("DELETE FROM managed_provider_file_lifecycles").Error)
@@ -113,6 +116,29 @@ func TestManagedProviderFileLifecycleIntentIsIdempotentAndOwnerBound(t *testing.
 	assert.False(t, createdNow)
 	assert.Equal(t, created.Id, replayed.Id)
 	assert.Equal(t, intent.HandleLookupHMAC, replayed.HandleLookupHMAC)
+	boundChannel, err := GetChannelById(intent.ChannelId, true)
+	require.NoError(t, err)
+	boundChannel.Key = "rotated-provider-file-test-key"
+	assert.ErrorIs(t, boundChannel.Update(), ErrManagedProviderFileChannelBound)
+	boundChannel, err = GetChannelById(intent.ChannelId, true)
+	require.NoError(t, err)
+	boundChannel.BaseURL = common.GetPointer("https://example.com")
+	assert.ErrorIs(t, boundChannel.Update(), ErrManagedProviderFileChannelBound)
+	boundChannel, err = GetChannelById(intent.ChannelId, true)
+	require.NoError(t, err)
+	boundChannel.OpenAIOrganization = common.GetPointer("org-rotated")
+	assert.ErrorIs(t, boundChannel.Update(), ErrManagedProviderFileChannelBound)
+	boundChannel, err = GetChannelById(intent.ChannelId, true)
+	require.NoError(t, err)
+	boundChannel.ParamOverride = common.GetPointer(`{"temperature":0}`)
+	assert.ErrorIs(t, boundChannel.Update(), ErrManagedProviderFileChannelBound)
+	assert.ErrorIs(t, (&Channel{Id: intent.ChannelId}).Delete(), ErrManagedProviderFileChannelBound)
+	_, batchDeleteErr := BatchDeleteChannels([]int{intent.ChannelId})
+	assert.ErrorIs(t, batchDeleteErr, ErrManagedProviderFileChannelBound)
+	statusChannel, err := GetChannelById(intent.ChannelId, true)
+	require.NoError(t, err)
+	_, err = DeleteChannelByStatus(int64(statusChannel.Status))
+	assert.ErrorIs(t, err, ErrManagedProviderFileChannelBound)
 
 	var eventCount int64
 	require.NoError(t, DB.Model(&ManagedProviderFileLifecycleEvent{}).Where("lifecycle_id = ?", created.Id).Count(&eventCount).Error)
@@ -203,14 +229,48 @@ func TestManagedProviderFileActivationLookupAndDeletionScrubSensitivePayload(t *
 	require.NoError(t, err)
 	assert.True(t, claimedNow)
 	assert.Equal(t, 1, claimed.AttemptCount)
-
-	completionEvent := managedProviderFileEvent(5, ManagedProviderFileLifecycleEventDeletionCompleted,
+	prematureCompletionEvent := managedProviderFileEvent(5, ManagedProviderFileLifecycleEventDeletionCompleted,
 		ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeleted, 1,
 		ManagedProviderFileDeletionResultDeleted, "f")
+	prematureCompletionEvent.LifecycleId = created.Id
+	prematureCompletionEvent.PreviousEventHMAC = claimEvent.EventHMAC
+	err = CompleteManagedProviderFileDeletion(context.Background(), ManagedProviderFileDeletionTerminal{
+		OutboxId: outbox.Id, ExpectedVersion: claimed.Version, LeaseTokenHMAC: claimed.LeaseTokenHMAC, AttemptCount: 1,
+		Result: ManagedProviderFileDeletionResultDeleted, EvidenceDigest: prematureCompletionEvent.EvidenceDigest,
+		Event: prematureCompletionEvent,
+	})
+	assert.ErrorIs(t, err, ErrManagedProviderFileLifecycleStateConflict)
+
+	dispatchEvent := managedProviderFileEvent(5, ManagedProviderFileLifecycleEventDeletionDispatched,
+		ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeletionPending, 1, "", "f")
+	dispatchEvent.LifecycleId = created.Id
+	dispatchEvent.PreviousEventHMAC = claimEvent.EventHMAC
+	_, err = MarkManagedProviderFileDeletionDispatched(context.Background(), ManagedProviderFileDeletionDispatch{
+		OutboxID: claimed.Id, LifecycleID: created.Id, ExpectedVersion: claimed.Version + 1,
+		LeaseTokenHMAC: claimed.LeaseTokenHMAC, AttemptCount: claimed.AttemptCount,
+		DispatchedAt: time.Now().UTC(), Event: dispatchEvent,
+	})
+	assert.ErrorIs(t, err, ErrManagedProviderFileDeletionLeaseLost)
+	dispatched, err := MarkManagedProviderFileDeletionDispatched(context.Background(), ManagedProviderFileDeletionDispatch{
+		OutboxID: claimed.Id, LifecycleID: created.Id, ExpectedVersion: claimed.Version,
+		LeaseTokenHMAC: claimed.LeaseTokenHMAC, AttemptCount: claimed.AttemptCount,
+		DispatchedAt: time.Now().UTC(), Event: dispatchEvent,
+	})
+	require.NoError(t, err)
+
+	completionEvent := managedProviderFileEvent(6, ManagedProviderFileLifecycleEventDeletionCompleted,
+		ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeleted, 1,
+		ManagedProviderFileDeletionResultDeleted, "9")
 	completionEvent.LifecycleId = created.Id
-	completionEvent.PreviousEventHMAC = claimEvent.EventHMAC
+	completionEvent.PreviousEventHMAC = dispatchEvent.EventHMAC
+	err = CompleteManagedProviderFileDeletion(context.Background(), ManagedProviderFileDeletionTerminal{
+		OutboxId: outbox.Id, ExpectedVersion: dispatched.Version + 1, LeaseTokenHMAC: claimed.LeaseTokenHMAC, AttemptCount: 1,
+		Result: ManagedProviderFileDeletionResultDeleted, EvidenceDigest: completionEvent.EvidenceDigest,
+		Event: completionEvent,
+	})
+	assert.ErrorIs(t, err, ErrManagedProviderFileDeletionLeaseLost)
 	require.NoError(t, CompleteManagedProviderFileDeletion(context.Background(), ManagedProviderFileDeletionTerminal{
-		OutboxId: outbox.Id, ExpectedVersion: claimed.Version, LeaseTokenHMAC: managedProviderFileDigest("9"), AttemptCount: 1,
+		OutboxId: outbox.Id, ExpectedVersion: dispatched.Version, LeaseTokenHMAC: managedProviderFileDigest("9"), AttemptCount: 1,
 		Result: ManagedProviderFileDeletionResultDeleted, EvidenceDigest: completionEvent.EvidenceDigest,
 		Event: completionEvent,
 	}))
@@ -230,8 +290,8 @@ func TestManagedProviderFileActivationLookupAndDeletionScrubSensitivePayload(t *
 
 	var events []ManagedProviderFileLifecycleEvent
 	require.NoError(t, DB.Where("lifecycle_id = ?", created.Id).Order("sequence asc").Find(&events).Error)
-	require.Len(t, events, 5)
-	assert.Equal(t, []int64{1, 2, 3, 4, 5}, []int64{events[0].Sequence, events[1].Sequence, events[2].Sequence, events[3].Sequence, events[4].Sequence})
+	require.Len(t, events, 6)
+	assert.Equal(t, []int64{1, 2, 3, 4, 5, 6}, []int64{events[0].Sequence, events[1].Sequence, events[2].Sequence, events[3].Sequence, events[4].Sequence, events[5].Sequence})
 	for index := 1; index < len(events); index++ {
 		assert.Equal(t, events[index-1].EventHMAC, events[index].PreviousEventHMAC)
 	}
@@ -263,7 +323,9 @@ func TestManagedProviderFileVerificationFailurePreservesEncryptedRecoveryReferen
 	require.NoError(t, RecordManagedProviderFileVerificationFailure(context.Background(), ManagedProviderFileVerificationFailure{
 		LifecycleId: created.Id, ExpectedVersion: created.Version, RequestFingerprint: intent.RequestFingerprint,
 		ProviderLookupHMAC: managedProviderFileDigest("e"), ProviderPayload: []byte("encrypted-reference"), ProviderBytes: 17,
-		ProviderCreatedAt: providerCreatedAt, ExpiresAt: providerCreatedAt.Add(time.Hour), ReasonCode: "metadata_unverified", Event: verificationEvent,
+		ProviderCreatedAt: providerCreatedAt, ExpiresAt: providerCreatedAt.Add(time.Hour), ReasonCode: "metadata_unverified",
+		DeletionOperationHMAC: managedProviderFileDigest("f"), DeletionNextAttemptAt: time.Now().UTC(), MaxDeletionAttempts: 3,
+		Event: verificationEvent,
 	}))
 	var stored ManagedProviderFileLifecycle
 	require.NoError(t, DB.First(&stored, "id = ?", created.Id).Error)
@@ -272,6 +334,9 @@ func TestManagedProviderFileVerificationFailurePreservesEncryptedRecoveryReferen
 	assert.NotEmpty(t, stored.ProviderPayload)
 	assert.Nil(t, stored.MetadataVerifiedAt)
 	assert.Nil(t, stored.ActivatedAt)
+	var recoveryOutbox ManagedProviderFileDeletionOutbox
+	require.NoError(t, DB.First(&recoveryOutbox, "lifecycle_id = ?", stored.Id).Error)
+	assert.Equal(t, ManagedProviderFileDeletionOutboxStatePending, recoveryOutbox.State)
 }
 
 func TestManagedProviderFileDeletionRejectsStaleLeaseAndBoundsRetries(t *testing.T) {
