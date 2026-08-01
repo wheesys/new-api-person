@@ -535,7 +535,7 @@ func clearContextConsensusChannelKeys(c *gin.Context) {
 		string(constant.ContextKeyChannelId), string(constant.ContextKeyChannelName), string(constant.ContextKeyChannelType),
 		string(constant.ContextKeyChannelCreateTime), string(constant.ContextKeyChannelSetting), string(constant.ContextKeyChannelOtherSetting),
 		string(constant.ContextKeyChannelPriceRatio), string(constant.ContextKeyChannelParamOverride), string(constant.ContextKeyChannelHeaderOverride),
-		string(constant.ContextKeyChannelOrganization), string(constant.ContextKeyChannelAutoBan), string(constant.ContextKeyChannelModelMapping),
+		string(constant.ContextKeyChannelOrganization), string(constant.ContextKeyChannelProject), string(constant.ContextKeyChannelAutoBan), string(constant.ContextKeyChannelModelMapping),
 		string(constant.ContextKeyChannelStatusCodeMapping), string(constant.ContextKeyChannelIsMultiKey), string(constant.ContextKeyChannelMultiKeyIndex),
 		string(constant.ContextKeyChannelKey), string(constant.ContextKeyChannelBaseUrl), "api_version", "region", "plugin",
 	}

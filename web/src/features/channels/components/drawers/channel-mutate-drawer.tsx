@@ -270,6 +270,7 @@ const SENSITIVE_FORM_FIELDS = [
   'base_url',
   'key',
   'openai_organization',
+  'openai_project',
   'other',
   'key_mode',
   'param_override',
@@ -949,7 +950,8 @@ export function ChannelMutateDrawer({
     formErrors.name ||
     formErrors.type ||
     formErrors.status ||
-    formErrors.openai_organization
+    formErrors.openai_organization ||
+    formErrors.openai_project
   )
   const credentialsHaveErrors = Boolean(
     formErrors.key ||
@@ -2094,6 +2096,29 @@ export function ChannelMutateDrawer({
                                           'No permission to perform this action'
                                         )
                                       : t(FIELD_DESCRIPTIONS.OPENAI_ORG)}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name='openai_project'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('OpenAI Project')}</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      placeholder={t('proj-...')}
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {sensitiveLocked
+                                      ? t(
+                                          'No permission to perform this action'
+                                        )
+                                      : t(FIELD_DESCRIPTIONS.OPENAI_PROJECT)}
                                   </FormDescription>
                                   <FormMessage />
                                 </FormItem>

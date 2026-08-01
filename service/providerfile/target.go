@@ -1,9 +1,11 @@
 package providerfile
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -42,7 +44,14 @@ func LoadTarget(settings *model_setting.SmartRoutingSettings, runtime *contextco
 	if err != nil {
 		return nil, ErrTargetUnavailable
 	}
-	return targetFromChannel(channel, httpClient, true)
+	target, err := targetFromChannel(channel, httpClient, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := VerifyReadinessEvidence(context.Background(), settings, runtime, target, time.Now().UTC()); err != nil {
+		return nil, ErrTargetUnavailable
+	}
+	return target, nil
 }
 
 func loadDeletionTarget(channelID int, httpClient *http.Client) (*Target, error) {
@@ -54,6 +63,21 @@ func loadDeletionTarget(channelID int, httpClient *http.Client) (*Target, error)
 		return nil, ErrTargetUnavailable
 	}
 	return targetFromChannel(channel, httpClient, false)
+}
+
+func loadMaintenanceTarget(ctx context.Context, settings *model_setting.SmartRoutingSettings, runtime *contextconsensus.ManagedConsensusRuntime, httpClient *http.Client, now time.Time) (*Target, error) {
+	if ctx == nil || model_setting.ValidateProviderFileDeletionReadiness(settings) != nil || runtime == nil || runtime.KeyDeriver == nil {
+		return nil, ErrTargetUnavailable
+	}
+	channel, err := model.GetChannelById(settings.ProviderFileOpenAIChannelID, true)
+	if err != nil {
+		return nil, ErrTargetUnavailable
+	}
+	target, err := targetFromChannel(channel, httpClient, false)
+	if err != nil || VerifyReadinessEvidence(ctx, settings, runtime, target, now) != nil {
+		return nil, ErrTargetUnavailable
+	}
+	return target, nil
 }
 
 func targetFromChannel(channel *model.Channel, httpClient *http.Client, requireEnabled bool) (*Target, error) {
@@ -76,19 +100,26 @@ func targetFromChannel(channel *model.Channel, httpClient *http.Client, requireE
 	if channel.OpenAIOrganization != nil {
 		organization = *channel.OpenAIOrganization
 	}
+	project := ""
+	if channel.OpenAIProject != nil {
+		project = *channel.OpenAIProject
+	}
+	if strings.TrimSpace(project) == "" || strings.TrimSpace(project) != project {
+		return nil, ErrTargetUnavailable
+	}
 	if httpClient == nil {
 		httpClient = service.GetHttpClient()
 	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	client, err := openai.NewProviderFileClient(httpClient, openai.OpenAIProviderFileOrigin, channel.Key, organization)
+	client, err := openai.NewProviderFileClient(httpClient, openai.OpenAIProviderFileOrigin, channel.Key, organization, project)
 	if err != nil {
 		return nil, ErrTargetUnavailable
 	}
 	return &Target{
 		ChannelID: channel.Id, ChannelType: channel.Type, Endpoint: openai.OpenAIProviderFileOrigin,
-		Organization: organization, credential: channel.Key, client: client,
+		Organization: organization, Project: project, credential: channel.Key, client: client,
 	}, nil
 }
 

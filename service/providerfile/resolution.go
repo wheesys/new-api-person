@@ -34,6 +34,7 @@ type Resolution struct {
 	credential    string
 	endpoint      string
 	organization  string
+	project       string
 	expectedState contextconsensus.ProviderFileState
 }
 
@@ -107,7 +108,7 @@ func PrepareResolution(ctx context.Context, body []byte, owner contextconsensus.
 	}
 	return &Resolution{
 		channelID: target.ChannelID, channelType: target.ChannelType, credential: target.credential,
-		endpoint: target.Endpoint, organization: target.Organization, expectedState: expectedState,
+		endpoint: target.Endpoint, organization: target.Organization, project: target.Project, expectedState: expectedState,
 	}, rewrittenBody, nil
 }
 
@@ -289,9 +290,9 @@ func (resolution *Resolution) ValidateTarget(channelID, channelType int, credent
 	return nil
 }
 
-func (resolution *Resolution) ValidateFinalTarget(channelID, channelType, multiKeyIndex int, channelIsMultiKey bool, endpoint, organization, credential string) error {
+func (resolution *Resolution) ValidateFinalTarget(channelID, channelType, multiKeyIndex int, channelIsMultiKey bool, endpoint, organization, project, credential string) error {
 	if resolution == nil || resolution.channelID != channelID || resolution.channelType != channelType || multiKeyIndex != 0 || channelIsMultiKey ||
-		resolution.endpoint != strings.TrimSuffix(endpoint, "/") || resolution.organization != organization || resolution.credential != credential {
+		resolution.endpoint != strings.TrimSuffix(endpoint, "/") || resolution.organization != organization || resolution.project != project || resolution.credential != credential {
 		return fmt.Errorf("managed provider file final target is unavailable")
 	}
 	return nil

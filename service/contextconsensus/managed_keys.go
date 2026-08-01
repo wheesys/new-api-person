@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -99,6 +100,22 @@ type ManagedProviderFileEventIdentity struct {
 	ResultCode        string
 	EvidenceDigest    string
 	CreatedAtUnix     int64
+}
+
+type ManagedProviderFileReadinessEvidenceIdentity struct {
+	TargetFingerprint          string
+	ScopeFingerprint           string
+	CredentialFingerprint      string
+	ProjectEvidenceHMAC        string
+	SandboxEvidenceHMAC        string
+	ImmutableAuditEvidenceHMAC string
+	DatabaseMatrixEvidenceHMAC string
+	ProjectAttestationVersion  string
+	SandboxContractVersion     string
+	ImmutableAuditVersion      string
+	DatabaseMatrixVersion      string
+	AttestedAtUnix             int64
+	ExpiresAtUnix              int64
 }
 
 type ManagedConsensusKeyDeriver struct {
@@ -314,6 +331,40 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileReferenceHMAC(owner
 	}{OwnerHMAC: ownerHMAC, ProviderReference: providerReference})
 }
 
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileTargetReferenceHMAC(targetFingerprint, providerReference string) (string, error) {
+	if !validProviderFileHexHMAC(targetFingerprint) || strings.TrimSpace(providerReference) == "" || strings.TrimSpace(providerReference) != providerReference || len(providerReference) > 512 {
+		return "", fmt.Errorf("managed provider file target reference identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_target_reference", struct {
+		TargetFingerprint string `json:"target_fingerprint"`
+		ProviderReference string `json:"provider_reference"`
+	}{TargetFingerprint: targetFingerprint, ProviderReference: providerReference})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileReconciliationMetadataHMAC(targetLookupHMAC, filename string, bytes, createdAtUnix, expiresAtUnix int64) (string, error) {
+	if !validProviderFileHexHMAC(targetLookupHMAC) || strings.TrimSpace(filename) == "" || strings.TrimSpace(filename) != filename || len(filename) > 255 ||
+		bytes < 0 || createdAtUnix <= 0 || (expiresAtUnix != 0 && expiresAtUnix <= createdAtUnix) {
+		return "", fmt.Errorf("managed provider file reconciliation metadata is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_reconciliation_metadata", struct {
+		TargetLookupHMAC string `json:"target_lookup_hmac"`
+		Filename         string `json:"filename"`
+		Bytes            int64  `json:"bytes"`
+		CreatedAtUnix    int64  `json:"created_at_unix"`
+		ExpiresAtUnix    int64  `json:"expires_at_unix"`
+	}{TargetLookupHMAC: targetLookupHMAC, Filename: filename, Bytes: bytes, CreatedAtUnix: createdAtUnix, ExpiresAtUnix: expiresAtUnix})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileReconciliationCursorHMAC(targetFingerprint, cursor string) (string, error) {
+	if !validProviderFileHexHMAC(targetFingerprint) || strings.TrimSpace(cursor) == "" || strings.TrimSpace(cursor) != cursor || len(cursor) > 512 {
+		return "", fmt.Errorf("managed provider file reconciliation cursor is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_reconciliation_cursor", struct {
+		TargetFingerprint string `json:"target_fingerprint"`
+		Cursor            string `json:"cursor"`
+	}{TargetFingerprint: targetFingerprint, Cursor: cursor})
+}
+
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionOperationHMAC(owner ManagedConsensusOwner, handle string) (string, error) {
 	ownerHMAC, err := deriver.deriveProviderFileOwnerHMAC(owner)
 	if err != nil {
@@ -348,6 +399,21 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionEvidenceHMA
 		AttemptCount  int    `json:"attempt_count"`
 		ResultCode    string `json:"result_code"`
 	}{OperationHMAC: operationHMAC, AttemptCount: attemptCount, ResultCode: resultCode})
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileReadinessEvidenceHMAC(identity ManagedProviderFileReadinessEvidenceIdentity) (string, error) {
+	if !validProviderFileHexHMAC(identity.TargetFingerprint) || !validProviderFileHexHMAC(identity.ScopeFingerprint) || !validProviderFileHexHMAC(identity.CredentialFingerprint) ||
+		!validProviderFileHexHMAC(identity.ProjectEvidenceHMAC) || !validProviderFileHexHMAC(identity.SandboxEvidenceHMAC) ||
+		!validProviderFileHexHMAC(identity.ImmutableAuditEvidenceHMAC) || !validProviderFileHexHMAC(identity.DatabaseMatrixEvidenceHMAC) ||
+		strings.TrimSpace(identity.ProjectAttestationVersion) == "" || strings.TrimSpace(identity.ProjectAttestationVersion) != identity.ProjectAttestationVersion ||
+		strings.TrimSpace(identity.SandboxContractVersion) == "" || strings.TrimSpace(identity.SandboxContractVersion) != identity.SandboxContractVersion ||
+		strings.TrimSpace(identity.ImmutableAuditVersion) == "" || strings.TrimSpace(identity.ImmutableAuditVersion) != identity.ImmutableAuditVersion ||
+		strings.TrimSpace(identity.DatabaseMatrixVersion) == "" || strings.TrimSpace(identity.DatabaseMatrixVersion) != identity.DatabaseMatrixVersion ||
+		len(identity.ProjectAttestationVersion) > 64 || len(identity.SandboxContractVersion) > 64 || len(identity.ImmutableAuditVersion) > 64 || len(identity.DatabaseMatrixVersion) > 64 ||
+		identity.AttestedAtUnix <= 0 || identity.ExpiresAtUnix <= identity.AttestedAtUnix || identity.ExpiresAtUnix-identity.AttestedAtUnix > int64((24*time.Hour).Seconds()) {
+		return "", fmt.Errorf("managed provider file readiness evidence identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_readiness_evidence", identity)
 }
 
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileTargetFingerprint(identity ManagedProviderFileTargetIdentity) (string, error) {

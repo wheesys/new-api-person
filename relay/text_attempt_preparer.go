@@ -212,7 +212,7 @@ func (attempt *PreparedTextRelayAttempt) ValidateManagedProviderStateRequest(res
 
 type providerFileLifecycleResolution interface {
 	ValidateFinalBody(body []byte) error
-	ValidateFinalTarget(channelID, channelType, multiKeyIndex int, channelIsMultiKey bool, endpoint, organization, credential string) error
+	ValidateFinalTarget(channelID, channelType, multiKeyIndex int, channelIsMultiKey bool, endpoint, organization, project, credential string) error
 }
 
 // ValidateProviderFileLifecycleRequest verifies provider-owned file references
@@ -257,7 +257,7 @@ func (attempt *PreparedTextRelayAttempt) ValidateProviderFileLifecycleRequest(re
 		resolution := resolutions[0]
 		if resolution == nil || resolution.ValidateFinalBody(body) != nil || resolution.ValidateFinalTarget(
 			attempt.info.ChannelId, attempt.info.ChannelType, attempt.info.ChannelMultiKeyIndex, attempt.info.ChannelIsMultiKey,
-			attempt.info.ChannelBaseUrl, attempt.info.Organization, attempt.info.ApiKey,
+			attempt.info.ChannelBaseUrl, attempt.info.Organization, attempt.info.Project, attempt.info.ApiKey,
 		) != nil {
 			return emptyState, fmt.Errorf("provider file lifecycle binding does not match the final request")
 		}

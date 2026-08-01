@@ -384,6 +384,8 @@ export const FIELD_DESCRIPTIONS = {
   MULTI_KEY_MODE: 'How to select keys: random or sequential polling',
   BATCH_ADD: 'Create multiple channels from multiple keys',
   OPENAI_ORG: 'OpenAI Organization ID (optional)',
+  OPENAI_PROJECT:
+    'OpenAI Project ID (optional; required for managed provider files)',
 } as const
 
 // ============================================================================

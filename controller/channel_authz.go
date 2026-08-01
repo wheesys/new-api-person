@@ -15,6 +15,9 @@ func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, re
 	if _, ok := requestData["openai_organization"]; ok && !equalStringPtr(channel.OpenAIOrganization, origin.OpenAIOrganization) {
 		return true
 	}
+	if _, ok := requestData["openai_project"]; ok && !equalStringPtr(channel.OpenAIProject, origin.OpenAIProject) {
+		return true
+	}
 	if _, ok := requestData["header_override"]; ok && !equalStringPtr(channel.HeaderOverride, origin.HeaderOverride) {
 		return true
 	}
@@ -65,6 +68,7 @@ var channelSensitiveFields = map[string]struct{}{
 	"key":                 {},
 	"base_url":            {},
 	"openai_organization": {},
+	"openai_project":      {},
 	"header_override":     {},
 	"param_override":      {},
 	"setting":             {},

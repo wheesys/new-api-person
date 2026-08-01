@@ -177,6 +177,9 @@ func ManagedProviderFileProtectedChannelFieldsChanged(existing, requested *Chann
 	if requested.OpenAIOrganization != nil && !sameManagedProviderFileStringPointer(requested.OpenAIOrganization, existing.OpenAIOrganization) {
 		return true
 	}
+	if requested.OpenAIProject != nil && !sameManagedProviderFileStringPointer(requested.OpenAIProject, existing.OpenAIProject) {
+		return true
+	}
 	if requested.Setting != nil && !sameManagedProviderFileStringPointer(requested.Setting, existing.Setting) {
 		return true
 	}

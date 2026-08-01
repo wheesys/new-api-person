@@ -24,6 +24,8 @@ const (
 	OpenAIProviderFileMinimumExpirySeconds = 60
 	OpenAIProviderFileMaximumExpirySeconds = 30 * 24 * 60 * 60
 	openAIProviderFileMaximumResponseBytes = 64 * 1024
+	openAIProviderFileMaximumListBytes     = 512 * 1024
+	openAIProviderFileListPageSize         = 100
 )
 
 var (
@@ -55,6 +57,7 @@ type ProviderFileClient struct {
 	endpoint     *url.URL
 	apiKey       string
 	organization string
+	project      string
 	now          func() time.Time
 }
 
@@ -75,6 +78,14 @@ type ProviderFileMetadata struct {
 	ExpiresAtUnix  int64  `json:"expires_at"`
 }
 
+type ProviderFileListPage struct {
+	Files         []ProviderFileMetadata `json:"-"`
+	FirstID       string                 `json:"-"`
+	LastID        string                 `json:"-"`
+	ResponseBytes int                    `json:"-"`
+	HasMore       bool                   `json:"has_more"`
+}
+
 type providerFileWireMetadata struct {
 	ID        string `json:"id"`
 	Object    string `json:"object"`
@@ -89,6 +100,14 @@ type providerFileWireDeleteResult struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	Deleted bool   `json:"deleted"`
+}
+
+type providerFileWireListPage struct {
+	Object  string                     `json:"object"`
+	Data    []providerFileWireMetadata `json:"data"`
+	FirstID string                     `json:"first_id"`
+	LastID  string                     `json:"last_id"`
+	HasMore bool                       `json:"has_more"`
 }
 
 type ProviderFileUpstreamStatusError struct {
@@ -124,8 +143,25 @@ func (metadata ProviderFileMetadata) GoString() string {
 	return metadata.String()
 }
 
-func NewProviderFileClient(httpClient *http.Client, endpoint, apiKey, organization string) (*ProviderFileClient, error) {
-	if httpClient == nil || !validProviderFileHeaderValue(apiKey, false) || !validProviderFileHeaderValue(organization, true) {
+func (page ProviderFileListPage) String() string {
+	return fmt.Sprintf("ProviderFileListPage{Files:%d,Identity:***masked***,HasMore:%t}", len(page.Files), page.HasMore)
+}
+
+func (page ProviderFileListPage) GoString() string {
+	return page.String()
+}
+
+func (client ProviderFileClient) String() string {
+	return "ProviderFileClient{Endpoint:***masked***,APIKey:***masked***,Organization:***masked***,Project:***masked***}"
+}
+
+func (client ProviderFileClient) GoString() string {
+	return client.String()
+}
+
+func NewProviderFileClient(httpClient *http.Client, endpoint, apiKey, organization, project string) (*ProviderFileClient, error) {
+	if httpClient == nil || !validProviderFileHeaderValue(apiKey, false) || !validProviderFileHeaderValue(organization, true) ||
+		!validProviderFileHeaderValue(project, false) {
 		return nil, ErrOpenAIProviderFileClientConfiguration
 	}
 	parsedEndpoint, err := url.Parse(endpoint)
@@ -139,7 +175,7 @@ func NewProviderFileClient(httpClient *http.Client, endpoint, apiKey, organizati
 		return http.ErrUseLastResponse
 	}
 	return &ProviderFileClient{
-		httpClient: &isolatedHTTPClient, endpoint: parsedEndpoint, apiKey: apiKey, organization: organization, now: time.Now,
+		httpClient: &isolatedHTTPClient, endpoint: parsedEndpoint, apiKey: apiKey, organization: organization, project: project, now: time.Now,
 	}, nil
 }
 
@@ -206,6 +242,79 @@ func (client *ProviderFileClient) Retrieve(ctx context.Context, providerFileID s
 	}
 	defer response.Body.Close()
 	return client.decodeMetadataResponse(response, providerFileID, "", 0)
+}
+
+func (client *ProviderFileClient) List(ctx context.Context, after string) (ProviderFileListPage, error) {
+	if client == nil || ctx == nil || (after != "" && !validProviderFileID(after)) {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileRequest
+	}
+	requestURL, err := url.Parse(client.requestURL("/v1/files"))
+	if err != nil {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileRequest
+	}
+	query := requestURL.Query()
+	query.Set("purpose", OpenAIProviderFilePurposeUserData)
+	query.Set("order", "asc")
+	query.Set("limit", fmt.Sprintf("%d", openAIProviderFileListPageSize))
+	if after != "" {
+		query.Set("after", after)
+	}
+	requestURL.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileRequest
+	}
+	client.setHeaders(request)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileTransport
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ProviderFileListPage{}, ProviderFileUpstreamStatusError{StatusCode: response.StatusCode}
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, openAIProviderFileMaximumListBytes+1))
+	if err != nil {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+	}
+	if len(responseBody) > openAIProviderFileMaximumListBytes {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileResponseTooLarge
+	}
+	var wirePage providerFileWireListPage
+	if err := common.Unmarshal(responseBody, &wirePage); err != nil || wirePage.Object != "list" || wirePage.Data == nil || len(wirePage.Data) > openAIProviderFileListPageSize {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+	}
+	page := ProviderFileListPage{
+		Files: make([]ProviderFileMetadata, 0, len(wirePage.Data)), FirstID: wirePage.FirstID, LastID: wirePage.LastID,
+		ResponseBytes: len(responseBody), HasMore: wirePage.HasMore,
+	}
+	seenIDs := make(map[string]struct{}, len(wirePage.Data))
+	for _, item := range wirePage.Data {
+		if item.Object != "file" || item.Purpose != OpenAIProviderFilePurposeUserData || !validProviderFileID(item.ID) ||
+			!validProviderFileFilename(item.Filename) || item.Bytes < 0 || item.CreatedAt <= 0 || (item.ExpiresAt != 0 && item.ExpiresAt <= item.CreatedAt) {
+			return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+		}
+		if _, duplicate := seenIDs[item.ID]; duplicate {
+			return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+		}
+		seenIDs[item.ID] = struct{}{}
+		page.Files = append(page.Files, ProviderFileMetadata{
+			ProviderFileID: item.ID, Filename: item.Filename, Object: item.Object, Purpose: item.Purpose,
+			Bytes: item.Bytes, CreatedAtUnix: item.CreatedAt, ExpiresAtUnix: item.ExpiresAt,
+		})
+	}
+	if len(page.Files) == 0 {
+		if page.FirstID != "" || page.LastID != "" {
+			return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+		}
+	} else if page.FirstID != page.Files[0].ProviderFileID || page.LastID != page.Files[len(page.Files)-1].ProviderFileID {
+		return ProviderFileListPage{}, ErrOpenAIProviderFileResponse
+	}
+	return page, nil
 }
 
 func (client *ProviderFileClient) Delete(ctx context.Context, providerFileID string) error {
@@ -326,6 +435,7 @@ func (client *ProviderFileClient) requestURL(path string) string {
 
 func (client *ProviderFileClient) setHeaders(request *http.Request) {
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	request.Header.Set("OpenAI-Project", client.project)
 	if client.organization != "" {
 		request.Header.Set("OpenAI-Organization", client.organization)
 	}

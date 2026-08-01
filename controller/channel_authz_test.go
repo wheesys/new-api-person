@@ -53,6 +53,13 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"base_url": newBaseURL}))
 	})
 
+	t.Run("OpenAI project change", func(t *testing.T) {
+		updated := PatchChannel{Channel: *origin}
+		updated.OpenAIProject = common.GetPointer("proj-exclusive")
+
+		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"openai_project": "proj-exclusive"}))
+	})
+
 	t.Run("header override change", func(t *testing.T) {
 		updated := PatchChannel{Channel: *origin}
 		newHeaderOverride := `{"X-Key":"{api_key}"}`
@@ -94,6 +101,27 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 			"response_time": updated.ResponseTime,
 		}))
 	})
+}
+
+func TestValidateChannelRejectsUnsafeOpenAIIdentityHeaders(t *testing.T) {
+	validProject := "proj-safe"
+	channel := &model.Channel{Type: 1, Key: "sk-safe", Models: "gpt-4o", OpenAIProject: &validProject}
+	require.NoError(t, validateChannel(channel, true))
+
+	unsafeValues := []string{" proj-leading", "proj-trailing ", "proj\r\ninjected", strings.Repeat("p", 257), "项目"}
+	for _, unsafeValue := range unsafeValues {
+		channel.OpenAIProject = &unsafeValue
+		err := validateChannel(channel, true)
+		require.ErrorContains(t, err, "OpenAI project is invalid")
+		assert.NotContains(t, err.Error(), unsafeValue)
+	}
+
+	unsafeOrganization := "org\nunsafe"
+	channel.OpenAIProject = &validProject
+	channel.OpenAIOrganization = &unsafeOrganization
+	err := validateChannel(channel, true)
+	require.ErrorContains(t, err, "OpenAI organization is invalid")
+	assert.NotContains(t, err.Error(), unsafeOrganization)
 }
 
 func TestClearChannelReadOnlyFields(t *testing.T) {

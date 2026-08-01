@@ -22,6 +22,7 @@ const (
 	SystemTaskTypeMidjourneyPoll                       = "midjourney_poll"
 	SystemTaskTypeAsyncTaskPoll                        = "async_task_poll"
 	SystemTaskTypeProviderFileDeletion                 = "provider_file_deletion"
+	SystemTaskTypeProviderFileReconciliation           = "provider_file_reconciliation"
 	SystemTaskTypeSmartRoutingExternalBenchmarkRefresh = "smart_routing_external_benchmark_refresh"
 	SystemTaskTypeSmartRoutingModelProfileRefresh      = "smart_routing_model_profile_refresh"
 )

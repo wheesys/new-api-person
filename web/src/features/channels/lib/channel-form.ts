@@ -200,6 +200,7 @@ export const channelFormSchema = z
     base_url: z.string().optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
+    openai_project: z.string().max(256).optional(),
     models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
     group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
     model_mapping: z
@@ -405,6 +406,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   base_url: '',
   key: '',
   openai_organization: '',
+  openai_project: '',
   models: '',
   group: ['default'],
   model_mapping: '',
@@ -557,6 +559,7 @@ export function transformChannelToFormDefaults(
     base_url: channel.base_url || '',
     key: '', // Never populate key from backend for security
     openai_organization: channel.openai_organization || '',
+    openai_project: channel.openai_project || '',
     models: channel.models || '',
     group: parseGroups(channel.group || 'default'),
     model_mapping: channel.model_mapping || '',
@@ -784,6 +787,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     base_url: normalizeBaseUrl(formData.base_url) || null,
     key: formData.key,
     openai_organization: formData.openai_organization || null,
+    openai_project: formData.openai_project || null,
     models: formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
@@ -833,6 +837,7 @@ export function transformFormDataToUpdatePayload(
     type: formData.type,
     base_url: normalizeBaseUrl(formData.base_url) || null,
     openai_organization: formData.openai_organization || null,
+    openai_project: formData.openai_project || null,
     models: formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
@@ -866,6 +871,7 @@ export function transformFormDataToUpdatePayload(
   // Send explicit empty strings for nullable fields so GORM updates can clear them.
   payload.base_url = normalizeBaseUrl(formData.base_url) || ''
   payload.openai_organization = formData.openai_organization || ''
+  payload.openai_project = formData.openai_project || ''
   payload.test_model = formData.test_model || ''
   payload.tag = formData.tag || ''
   payload.remark = formData.remark || ''

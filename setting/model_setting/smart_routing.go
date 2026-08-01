@@ -236,8 +236,8 @@ func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) erro
 	if settings == nil || !settings.ProviderFileLifecycleEnabled {
 		return fmt.Errorf("provider file lifecycle is disabled")
 	}
-	if settings.ProviderFileOpenAIChannelID <= 0 {
-		return fmt.Errorf("provider file lifecycle requires a dedicated OpenAI channel")
+	if err := ValidateProviderFileDeletionReadiness(settings); err != nil {
+		return err
 	}
 	if settings.ProviderFileExpirationSeconds < 60 || settings.ProviderFileExpirationSeconds > 30*24*60*60 {
 		return fmt.Errorf("provider file lifecycle expiration must be between 60 seconds and 30 days")
@@ -247,6 +247,16 @@ func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) erro
 	}
 	if settings.ProviderFileDeletionLeadSeconds < 0 || settings.ProviderFileDeletionLeadSeconds >= settings.ProviderFileExpirationSeconds {
 		return fmt.Errorf("provider file lifecycle deletion lead is invalid")
+	}
+	return nil
+}
+
+func ValidateProviderFileDeletionReadiness(settings *SmartRoutingSettings) error {
+	if settings == nil {
+		return fmt.Errorf("provider file deletion settings are unavailable")
+	}
+	if settings.ProviderFileOpenAIChannelID <= 0 {
+		return fmt.Errorf("provider file lifecycle requires a dedicated OpenAI channel")
 	}
 	if settings.ProviderFileDeletionBatchSize <= 0 || settings.ProviderFileDeletionBatchSize > 100 {
 		return fmt.Errorf("provider file lifecycle deletion batch size is invalid")

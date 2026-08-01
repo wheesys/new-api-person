@@ -20,6 +20,7 @@ import (
 
 type deletionWorkerFixture struct {
 	runtime     *contextconsensus.ManagedConsensusRuntime
+	settings    *model_setting.SmartRoutingSettings
 	httpClient  *http.Client
 	lifecycle   model.ManagedProviderFileLifecycle
 	outbox      model.ManagedProviderFileDeletionOutbox
@@ -31,13 +32,12 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 	runtime := prepareProviderFileLifecycleTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
 	organization := "org-exclusive"
+	project := "proj-exclusive"
 	channel := model.Channel{
 		Id: 41, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
-		Key: "sk-provider-secret", Name: "provider-file-cleanup", OpenAIOrganization: &organization,
+		Key: "sk-provider-secret", Name: "provider-file-cleanup", OpenAIOrganization: &organization, OpenAIProject: &project,
 	}
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(map[string]interface{}{
-		"status": channel.Status, "key": channel.Key, "name": channel.Name, "open_ai_organization": organization,
-	}).Error)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(&channel).Error)
 
 	storage, contentType := managedProviderFileMultipart(t, "user_data", "facts.txt", []byte("deletion worker content"), "")
 	t.Cleanup(func() { _ = storage.Close() })
@@ -76,11 +76,11 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 			Body: io.NopCloser(strings.NewReader(string(responseBody))), Request: request,
 		}, nil
 	})}
-	client, err := openai.NewProviderFileClient(fixture.httpClient, openai.OpenAIProviderFileOrigin, channel.Key, organization)
+	client, err := openai.NewProviderFileClient(fixture.httpClient, openai.OpenAIProviderFileOrigin, channel.Key, organization, project)
 	require.NoError(t, err)
 	target := &Target{
 		ChannelID: channel.Id, ChannelType: channel.Type, Endpoint: openai.OpenAIProviderFileOrigin,
-		Organization: organization, credential: channel.Key, client: client,
+		Organization: organization, Project: project, credential: channel.Key, client: client,
 	}
 	settings := &model_setting.SmartRoutingSettings{
 		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: channel.Id, ProviderFileExpirationSeconds: 3600,
@@ -88,6 +88,7 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
 		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
 	}
+	fixture.settings = settings
 	upload, uploadErr := Upload(context.Background(), UploadRequest{
 		Owner: NewOwner(7, 9), IdempotencyKey: "deletion-worker-idempotency", Body: body,
 		Settings: settings, Runtime: runtime, Target: target,
@@ -109,7 +110,7 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 
 func (fixture *deletionWorkerFixture) options() DeletionWorkerOptions {
 	return DeletionWorkerOptions{
-		Runtime: fixture.runtime, ContractVerified: true, HTTPClient: fixture.httpClient,
+		Runtime: fixture.runtime, Settings: fixture.settings, HTTPClient: fixture.httpClient,
 		BatchSize: 10, Timeout: 5 * time.Second, Now: time.Now,
 	}
 }
@@ -172,13 +173,23 @@ func TestDeletionWorkerDoesNotRedispatchExpiredDispatchedLease(t *testing.T) {
 	assert.NotEmpty(t, lifecycle.ProviderPayload)
 }
 
-func TestDeletionWorkerContractGatePreventsProviderCall(t *testing.T) {
+func TestDeletionWorkerReadinessGatePreventsProviderCall(t *testing.T) {
 	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
 	options := fixture.options()
-	options.ContractVerified = false
+	options.Settings.ProviderFileSandboxContractVerified = false
 	_, err := RunDeletionBatch(context.Background(), options)
-	require.ErrorContains(t, err, "configuration is invalid")
+	require.ErrorContains(t, err, "readiness is unavailable")
 	assert.Equal(t, 0, fixture.deleteCount)
+}
+
+func TestDeletionWorkerContinuesAfterNewUploadsAreDisabled(t *testing.T) {
+	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
+	fixture.settings.ProviderFileLifecycleEnabled = false
+
+	summary, err := RunDeletionBatch(context.Background(), fixture.options())
+	require.NoError(t, err)
+	assert.Equal(t, DeletionSummary{Due: 1, Claimed: 1, Deleted: 1}, summary)
+	assert.Equal(t, 1, fixture.deleteCount)
 }
 
 func TestDeletionWorkerRetriesExplicitRateLimitWithoutExceedingAttemptBound(t *testing.T) {

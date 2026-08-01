@@ -483,6 +483,14 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if channel != nil && channel.PriceRatio != nil && *channel.PriceRatio < 0 {
 		return fmt.Errorf("渠道倍率不能小于 0")
 	}
+	if channel != nil {
+		if err := validateOpenAIChannelHeaderValue("organization", channel.OpenAIOrganization, 4096); err != nil {
+			return err
+		}
+		if err := validateOpenAIChannelHeaderValue("project", channel.OpenAIProject, 256); err != nil {
+			return err
+		}
+	}
 
 	if channel.Type == constant.ChannelTypeNewAPI && strings.TrimSpace(channel.GetBaseURL()) == "" {
 		return fmt.Errorf("New API channel base URL cannot be empty")

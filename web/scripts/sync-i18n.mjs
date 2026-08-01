@@ -211,6 +211,7 @@ function isLikelyUntranslated({ locale, baseValue, value }) {
     /^smtp\./i.test(s) ||
     /^socks5:/i.test(s) ||
     /^org-/.test(s) ||
+    /^proj-/.test(s) ||
     /^gpt-/i.test(s) ||
     /^checkout\./.test(s) ||
     /^footer\./.test(s) ||

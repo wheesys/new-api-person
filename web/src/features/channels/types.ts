@@ -39,6 +39,7 @@ export const channelSchema = z.object({
   type: z.number(),
   key: z.string(),
   openai_organization: z.string().nullish(),
+  openai_project: z.string().nullish(),
   test_model: z.string().nullish(),
   status: z.number(), // 1: enabled, 0: manual disabled, 2: auto disabled
   name: z.string(),
@@ -346,6 +347,7 @@ export interface ChannelFormData {
   base_url: string
   key: string
   openai_organization?: string
+  openai_project?: string
   models: string
   group: string
   model_mapping?: string

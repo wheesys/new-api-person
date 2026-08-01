@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	openai "github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/service/contextconsensus"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"gorm.io/gorm"
 )
 
@@ -21,13 +22,13 @@ const (
 )
 
 type DeletionWorkerOptions struct {
-	Runtime          *contextconsensus.ManagedConsensusRuntime
-	ContractVerified bool
-	HTTPClient       *http.Client
-	BatchSize        int
-	Timeout          time.Duration
-	Now              func() time.Time
-	Alert            func(resultCode string, outboxID, lifecycleID int64)
+	Runtime    *contextconsensus.ManagedConsensusRuntime
+	Settings   *model_setting.SmartRoutingSettings
+	HTTPClient *http.Client
+	BatchSize  int
+	Timeout    time.Duration
+	Now        func() time.Time
+	Alert      func(resultCode string, outboxID, lifecycleID int64)
 }
 
 type DeletionSummary struct {
@@ -42,7 +43,7 @@ type DeletionSummary struct {
 
 func RunDeletionBatch(ctx context.Context, options DeletionWorkerOptions) (DeletionSummary, error) {
 	summary := DeletionSummary{}
-	if ctx == nil || !options.ContractVerified || options.Runtime == nil || options.Runtime.KeyDeriver == nil || options.BatchSize <= 0 || options.BatchSize > 100 ||
+	if ctx == nil || options.Runtime == nil || options.Runtime.KeyDeriver == nil || options.BatchSize <= 0 || options.BatchSize > 100 ||
 		options.Timeout < minimumDeletionWorkerTimeout || options.Timeout > maximumDeletionWorkerTimeout {
 		return summary, fmt.Errorf("managed provider file deletion worker configuration is invalid")
 	}
@@ -50,6 +51,9 @@ func RunDeletionBatch(ctx context.Context, options DeletionWorkerOptions) (Delet
 		options.Now = time.Now
 	}
 	now := options.Now().UTC()
+	if err := VerifyDeletionReadiness(ctx, options.Settings, options.Runtime, options.HTTPClient, now); err != nil {
+		return summary, fmt.Errorf("managed provider file deletion readiness is unavailable")
+	}
 	outboxes, err := model.ListDueManagedProviderFileDeletions(ctx, now, options.BatchSize)
 	if err != nil {
 		return summary, err

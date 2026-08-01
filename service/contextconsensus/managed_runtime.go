@@ -311,6 +311,48 @@ func (runtime *ManagedConsensusRuntime) DecryptProviderFileReference(ctx context
 	return payload, nil
 }
 
+func (runtime *ManagedConsensusRuntime) EncryptProviderFileReconciliationReference(ctx context.Context, targetLookupHMAC string, payload ManagedProviderFileReconciliationPayload) ([]byte, string, error) {
+	if runtime == nil || runtime.Cipher == nil || runtime.KeyDeriver == nil || !validProviderFileHexHMAC(targetLookupHMAC) {
+		return nil, "", fmt.Errorf("managed provider file reconciliation key is unavailable")
+	}
+	if err := payload.Validate(); err != nil {
+		return nil, "", err
+	}
+	envelope, err := runtime.Cipher.EncryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: managedProviderFileRepositoryPrefix + ":reconciliation:" + targetLookupHMAC,
+		Purpose:       ManagedEncryptionPurposeProviderFileReconciliation, Revision: 1,
+	}, payload)
+	if err != nil {
+		return nil, "", err
+	}
+	encodedEnvelope, err := common.Marshal(envelope)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode managed provider file reconciliation envelope: %w", err)
+	}
+	return encodedEnvelope, envelope.KeyVersion, nil
+}
+
+func (runtime *ManagedConsensusRuntime) DecryptProviderFileReconciliationReference(ctx context.Context, targetLookupHMAC string, encodedEnvelope []byte) (ManagedProviderFileReconciliationPayload, error) {
+	if runtime == nil || !validProviderFileHexHMAC(targetLookupHMAC) || len(encodedEnvelope) == 0 {
+		return ManagedProviderFileReconciliationPayload{}, fmt.Errorf("managed provider file reconciliation reference is unavailable")
+	}
+	var envelope ManagedEncryptedEnvelope
+	if err := common.Unmarshal(encodedEnvelope, &envelope); err != nil {
+		return ManagedProviderFileReconciliationPayload{}, fmt.Errorf("decode managed provider file reconciliation envelope: %w", err)
+	}
+	var payload ManagedProviderFileReconciliationPayload
+	if err := runtime.decryptJSON(ctx, ManagedEncryptionContext{
+		RepositoryKey: managedProviderFileRepositoryPrefix + ":reconciliation:" + targetLookupHMAC,
+		Purpose:       ManagedEncryptionPurposeProviderFileReconciliation, Revision: 1,
+	}, envelope, &payload); err != nil {
+		return ManagedProviderFileReconciliationPayload{}, err
+	}
+	if err := payload.Validate(); err != nil {
+		return ManagedProviderFileReconciliationPayload{}, err
+	}
+	return payload, nil
+}
+
 func buildManagedConsensusKeyVersion(key []byte, keyVersion string) (*ManagedConsensusCipher, *ManagedConsensusKeyDeriver, error) {
 	cipherValue, err := NewManagedConsensusCipher(key, keyVersion)
 	if err != nil {

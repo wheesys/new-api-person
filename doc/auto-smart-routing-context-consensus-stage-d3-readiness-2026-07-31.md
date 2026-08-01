@@ -15,7 +15,7 @@
 - 仅允许管理员显式配置的专用单 Key 渠道，凭据槽固定为 `0`；多 Key 后续需先具备稳定槽位标识。
 - 上传强制使用 `purpose=user_data` 和服务端有限 `expires_after`，每个文件及单请求文件合计均不得超过 50 MB。
 - 客户端只使用 owner-bound 不透明网关句柄；原始 file ID 和文件名只允许出现在 AEAD 加密载荷及上游调用内存中。
-- `/v1/files` 上传、单文件查询和删除使用独立分发流程；列表与文件内容接口首期继续返回未实现。
+- `/v1/files` 上传、单文件查询和删除使用独立分发流程；公共列表与文件内容接口首期继续返回未实现，仅内部 reconciliation 使用固定 purpose/order/limit 的只读列表客户端。
 - 功能默认关闭。关闭新上传和新使用时，已有文件的删除 worker 与恢复流程不能随之停止。
 
 ## 权威所有权与目标绑定
@@ -55,7 +55,7 @@
 - D-3b.1：已完成领域契约、版本化 HMAC/AEAD、跨数据库持久化模型和默认关闭配置，见 `doc/auto-smart-routing-context-consensus-stage-d3b1-implementation-2026-07-31.md`。
 - D-3b.2：已完成专用上传/查询 API、原生 OpenAI 单 Key 客户端、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
 - D-3c.1：已完成严格 DELETE client、持久化派发边界、CAS lease worker、有限重试、未知终态、审计链、告警和渠道变更保护，生产硬门禁继续关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3c1-implementation-2026-07-31.md`。
-- D-3c.2：真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。
+- D-3c.2：已完成一等 Project、target/scope/credential-bound 短期签名 readiness、只读有界孤儿对账和 SQLite/MySQL 5.7/PostgreSQL 9.6 本地矩阵，见 `doc/auto-smart-routing-context-consensus-stage-d3c2-local-implementation-2026-07-31.md`；真实 sandbox、Project 独占性、外部 WORM 与生产恢复/监控证据仍待完成。
 
 ## 依据
 
