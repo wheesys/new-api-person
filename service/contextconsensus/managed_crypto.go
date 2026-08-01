@@ -18,15 +18,14 @@ const managedEncryptedEnvelopeVersion = 1
 type ManagedEncryptionPurpose string
 
 const (
-	ManagedEncryptionPurposeConsensusState             ManagedEncryptionPurpose = "consensus_state"
-	ManagedEncryptionPurposeProviderState              ManagedEncryptionPurpose = "provider_state_binding"
-	ManagedEncryptionPurposeOutcomeResponse            ManagedEncryptionPurpose = "managed_outcome_response"
-	ManagedEncryptionPurposeOutcomeAssistant           ManagedEncryptionPurpose = "managed_outcome_assistant"
-	ManagedEncryptionPurposeOutcomeSummaryExecution    ManagedEncryptionPurpose = "managed_outcome_summary_execution"
-	ManagedEncryptionPurposeOutcomeSummaryResult       ManagedEncryptionPurpose = "managed_outcome_summary_result"
-	ManagedEncryptionPurposeOutcomeNextState           ManagedEncryptionPurpose = "managed_outcome_next_state"
-	ManagedEncryptionPurposeProviderFileReference      ManagedEncryptionPurpose = "provider_file_reference"
-	ManagedEncryptionPurposeProviderFileReconciliation ManagedEncryptionPurpose = "provider_file_reconciliation"
+	ManagedEncryptionPurposeConsensusState          ManagedEncryptionPurpose = "consensus_state"
+	ManagedEncryptionPurposeProviderState           ManagedEncryptionPurpose = "provider_state_binding"
+	ManagedEncryptionPurposeOutcomeResponse         ManagedEncryptionPurpose = "managed_outcome_response"
+	ManagedEncryptionPurposeOutcomeAssistant        ManagedEncryptionPurpose = "managed_outcome_assistant"
+	ManagedEncryptionPurposeOutcomeSummaryExecution ManagedEncryptionPurpose = "managed_outcome_summary_execution"
+	ManagedEncryptionPurposeOutcomeSummaryResult    ManagedEncryptionPurpose = "managed_outcome_summary_result"
+	ManagedEncryptionPurposeOutcomeNextState        ManagedEncryptionPurpose = "managed_outcome_next_state"
+	ManagedEncryptionPurposeProviderFileReference   ManagedEncryptionPurpose = "provider_file_reference"
 )
 
 type ManagedEncryptionContext struct {
@@ -176,8 +175,7 @@ func validateManagedEncryptionContext(encryptionContext ManagedEncryptionContext
 	if encryptionContext.Purpose != ManagedEncryptionPurposeConsensusState && encryptionContext.Purpose != ManagedEncryptionPurposeProviderState &&
 		encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeResponse && encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeAssistant &&
 		encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeSummaryExecution && encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeSummaryResult &&
-		encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeNextState && encryptionContext.Purpose != ManagedEncryptionPurposeProviderFileReference &&
-		encryptionContext.Purpose != ManagedEncryptionPurposeProviderFileReconciliation {
+		encryptionContext.Purpose != ManagedEncryptionPurposeOutcomeNextState && encryptionContext.Purpose != ManagedEncryptionPurposeProviderFileReference {
 		return fmt.Errorf("unsupported managed consensus encryption purpose %q", encryptionContext.Purpose)
 	}
 	if encryptionContext.Revision == 0 {

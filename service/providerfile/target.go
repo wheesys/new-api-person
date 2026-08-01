@@ -1,11 +1,9 @@
 package providerfile
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -37,21 +35,14 @@ func (target Target) GoString() string {
 }
 
 func LoadTarget(settings *model_setting.SmartRoutingSettings, runtime *contextconsensus.ManagedConsensusRuntime, httpClient *http.Client) (*Target, error) {
-	if err := model_setting.ValidateProviderFileLifecycleReadiness(settings); err != nil || runtime == nil || runtime.KeyDeriver == nil {
+	if err := model_setting.ValidateProviderFileLifecycleSettings(settings); err != nil || runtime == nil || runtime.KeyDeriver == nil {
 		return nil, ErrTargetUnavailable
 	}
 	channel, err := model.GetChannelById(settings.ProviderFileOpenAIChannelID, true)
 	if err != nil {
 		return nil, ErrTargetUnavailable
 	}
-	target, err := targetFromChannel(channel, httpClient, true)
-	if err != nil {
-		return nil, err
-	}
-	if err := VerifyReadinessEvidence(context.Background(), settings, runtime, target, time.Now().UTC()); err != nil {
-		return nil, ErrTargetUnavailable
-	}
-	return target, nil
+	return targetFromChannel(channel, httpClient, true)
 }
 
 func loadDeletionTarget(channelID int, httpClient *http.Client) (*Target, error) {
@@ -63,21 +54,6 @@ func loadDeletionTarget(channelID int, httpClient *http.Client) (*Target, error)
 		return nil, ErrTargetUnavailable
 	}
 	return targetFromChannel(channel, httpClient, false)
-}
-
-func loadMaintenanceTarget(ctx context.Context, settings *model_setting.SmartRoutingSettings, runtime *contextconsensus.ManagedConsensusRuntime, httpClient *http.Client, now time.Time) (*Target, error) {
-	if ctx == nil || model_setting.ValidateProviderFileDeletionReadiness(settings) != nil || runtime == nil || runtime.KeyDeriver == nil {
-		return nil, ErrTargetUnavailable
-	}
-	channel, err := model.GetChannelById(settings.ProviderFileOpenAIChannelID, true)
-	if err != nil {
-		return nil, ErrTargetUnavailable
-	}
-	target, err := targetFromChannel(channel, httpClient, false)
-	if err != nil || VerifyMaintenanceReadinessEvidence(ctx, settings, runtime, target, now) != nil {
-		return nil, ErrTargetUnavailable
-	}
-	return target, nil
 }
 
 func targetFromChannel(channel *model.Channel, httpClient *http.Client, requireEnabled bool) (*Target, error) {
@@ -104,7 +80,7 @@ func targetFromChannel(channel *model.Channel, httpClient *http.Client, requireE
 	if channel.OpenAIProject != nil {
 		project = *channel.OpenAIProject
 	}
-	if strings.TrimSpace(project) == "" || strings.TrimSpace(project) != project {
+	if strings.TrimSpace(project) != project {
 		return nil, ErrTargetUnavailable
 	}
 	if httpClient == nil {

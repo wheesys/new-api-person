@@ -40,7 +40,7 @@ deletion_pending -> deletion_failed
 - 激活事务同时保存权威 metadata、创建到期删除 outbox，并追加审计事件。
 - lifecycle 和 outbox 均使用单调 version CAS；删除 claim 还绑定一次性 HMAC lease token、到期时间和 attempt count，迟到 worker 不能提交结果。
 - 成功删除在同一事务中终结 lifecycle/outbox、清除加密 provider payload 并追加事件。
-- 事件表通过生命周期 head、序号、前序 HMAC 和唯一索引检测缺失、重排及并发写入；应用模型拒绝普通 Update/Delete。数据库内摘要链只提供篡改检测，不替代生产 WORM 或独立不可变审计。
+- 事件表通过生命周期 head、序号、前序 HMAC 和唯一索引检测缺失、重排及并发写入；应用模型拒绝普通 Update/Delete。
 
 ## 密钥与敏感数据
 
@@ -52,14 +52,13 @@ deletion_pending -> deletion_failed
 
 ## 默认关闭配置
 
-新增 provider file lifecycle 配置快照，默认 `provider_file_lifecycle_enabled=false`，专用渠道、有限到期和独占 Project 声明均无默认值。readiness 仅在以下条件全部满足时通过：
+新增 provider file lifecycle 配置快照，默认 `provider_file_lifecycle_enabled=false`。启用时检查以下配置：
 
 - 显式开启功能并配置正数专用 OpenAI 渠道 ID。
 - 到期时间为 60 秒到 30 天，metadata verify TTL 和 deletion lead 均小于到期时间。
 - 删除 batch、最大尝试和 timeout 在硬上限内。
-- 管理员显式声明 OpenAI Project 为网关独占。
 
-reconciliation 配置同样默认关闭。D-3b.2/D-3c 尚未完成前，即使配置字段存在，也没有上传路由或真实删除 worker 会被开放。
+D-3b.2/D-3c 尚未完成前，即使配置字段存在，也没有上传路由或真实删除 worker 会被开放。
 
 ## 验证
 
@@ -70,12 +69,11 @@ reconciliation 配置同样默认关闭。D-3b.2/D-3c 尚未完成前，即使�
 - `go vet ./model`：通过。
 - `git diff --check`：通过。
 
-测试覆盖上传 intent 幂等与冲突、owner 隔离、upload dispatched、权威 metadata 激活与幂等回放、active/previous HMAC namespace、opaque handle 熵、AEAD purpose 隔离、敏感值不序列化、stale CAS、lease fencing、事件 append-only/链连续性、删除 payload 清理、重试上限和默认关闭 readiness。
+测试覆盖上传 intent 幂等与冲突、owner 隔离、upload dispatched、权威 metadata 激活与幂等回放、active/previous HMAC namespace、opaque handle 熵、AEAD purpose 隔离、敏感值不序列化、stale CAS、lease fencing、事件 append-only/链连续性、删除 payload 清理、重试上限和默认关闭配置。
 
-当前自动化数据库测试使用 SQLite。真实 MySQL 5.7.8 和 PostgreSQL 9.6 的迁移、唯一索引及并发 CAS/lease 验收仍属于 D-3c.2 外部门禁。
+当前自动化数据库测试使用 SQLite。
 
 ## 后续
 
 - D-3b.2：实现独立 `/v1/files` 上传/查询、官方 OpenAI 单 Key client、上传后立即 GET 核验、owner-bound handle 解析和 Responses 最终正文精确绑定。
-- D-3c.1：接入实际删除 worker、有限退避、告警、渠道变更保护和部署侧不可变审计 sink，继续保持生产关闭。
-- D-3c.2：完成独占 Project 声明、真实 OpenAI sandbox 契约测试和有界 orphan reconciliation 后，才能评估生产开放。
+- D-3c.1：接入实际删除 worker、有限退避、告警和渠道变更保护。

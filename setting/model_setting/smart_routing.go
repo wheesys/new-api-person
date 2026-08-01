@@ -34,9 +34,6 @@ type SmartRoutingSettings struct {
 	ProviderFileDeletionBatchSize        int                                        `json:"provider_file_deletion_batch_size"`
 	ProviderFileDeletionMaxAttempts      int                                        `json:"provider_file_deletion_max_attempts"`
 	ProviderFileDeletionTimeoutSeconds   int                                        `json:"provider_file_deletion_timeout_seconds"`
-	ProviderFileExclusiveProjectAttested bool                                       `json:"provider_file_exclusive_project_attested"`
-	ProviderFileSandboxContractVerified  bool                                       `json:"provider_file_sandbox_contract_verified"`
-	ProviderFileReconciliationEnabled    bool                                       `json:"provider_file_reconciliation_enabled"`
 }
 
 type AuthoritativeContextLimitConfig struct {
@@ -232,11 +229,11 @@ func ValidateSmartRoutingAuthoritativeContextLimits(value string) error {
 	return nil
 }
 
-func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) error {
+func ValidateProviderFileLifecycleSettings(settings *SmartRoutingSettings) error {
 	if settings == nil || !settings.ProviderFileLifecycleEnabled {
 		return fmt.Errorf("provider file lifecycle is disabled")
 	}
-	if err := ValidateProviderFileDeletionReadiness(settings); err != nil {
+	if err := ValidateProviderFileDeletionSettings(settings); err != nil {
 		return err
 	}
 	if settings.ProviderFileExpirationSeconds < 60 || settings.ProviderFileExpirationSeconds > 30*24*60*60 {
@@ -251,7 +248,7 @@ func ValidateProviderFileLifecycleReadiness(settings *SmartRoutingSettings) erro
 	return nil
 }
 
-func ValidateProviderFileDeletionReadiness(settings *SmartRoutingSettings) error {
+func ValidateProviderFileDeletionSettings(settings *SmartRoutingSettings) error {
 	if settings == nil {
 		return fmt.Errorf("provider file deletion settings are unavailable")
 	}
@@ -266,12 +263,6 @@ func ValidateProviderFileDeletionReadiness(settings *SmartRoutingSettings) error
 	}
 	if settings.ProviderFileDeletionTimeoutSeconds <= 0 || settings.ProviderFileDeletionTimeoutSeconds > 120 {
 		return fmt.Errorf("provider file lifecycle deletion timeout is invalid")
-	}
-	if !settings.ProviderFileExclusiveProjectAttested {
-		return fmt.Errorf("provider file lifecycle requires an exclusive OpenAI project attestation")
-	}
-	if !settings.ProviderFileSandboxContractVerified {
-		return fmt.Errorf("provider file lifecycle requires verified sandbox deletion contracts")
 	}
 	return nil
 }

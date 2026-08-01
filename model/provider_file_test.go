@@ -180,7 +180,7 @@ func TestManagedProviderFileActivationLookupAndDeletionScrubSensitivePayload(t *
 	activationEvent.PreviousEventHMAC = dispatchedEvent.EventHMAC
 	activation := ManagedProviderFileLifecycleActivation{
 		LifecycleId: created.Id, ExpectedVersion: created.Version + 1, RequestFingerprint: intent.RequestFingerprint,
-		ProviderLookupHMAC: providerLookupHMAC, TargetProviderLookupHMAC: managedProviderFileDigest("9"), ProviderPayload: providerPayload,
+		ProviderLookupHMAC: providerLookupHMAC, ProviderPayload: providerPayload,
 		ProviderBytes: 1024, ProviderCreatedAt: providerCreatedAt, MetadataVerifiedAt: metadataVerifiedAt, ExpiresAt: expiresAt,
 		DeletionOperationHMAC: managedProviderFileDigest("8"), MaxDeletionAttempts: 3,
 		Event: activationEvent,
@@ -326,7 +326,7 @@ func TestManagedProviderFileVerificationFailurePreservesEncryptedRecoveryReferen
 	providerCreatedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	require.NoError(t, RecordManagedProviderFileVerificationFailure(context.Background(), ManagedProviderFileVerificationFailure{
 		LifecycleId: created.Id, ExpectedVersion: created.Version, RequestFingerprint: intent.RequestFingerprint,
-		ProviderLookupHMAC: managedProviderFileDigest("e"), TargetProviderLookupHMAC: managedProviderFileDigest("1"), ProviderPayload: []byte("encrypted-reference"), ProviderBytes: 17,
+		ProviderLookupHMAC: managedProviderFileDigest("e"), ProviderPayload: []byte("encrypted-reference"), ProviderBytes: 17,
 		ProviderCreatedAt: providerCreatedAt, ExpiresAt: providerCreatedAt.Add(time.Hour), ReasonCode: "metadata_unverified",
 		DeletionOperationHMAC: managedProviderFileDigest("f"), DeletionNextAttemptAt: time.Now().UTC(), MaxDeletionAttempts: 3,
 		Event: verificationEvent,

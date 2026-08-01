@@ -142,73 +142,16 @@ func TestProviderFileClientRetrieveUsesExactIdentity(t *testing.T) {
 		assert.Equal(t, "/v1/files/"+providerFileID, request.URL.Path)
 		assert.Equal(t, "Bearer sk-retrieve", request.Header.Get("Authorization"))
 		assert.Empty(t, request.Header.Get("OpenAI-Organization"))
-		assert.Equal(t, "proj-retrieve", request.Header.Get("OpenAI-Project"))
+		assert.Empty(t, request.Header.Get("OpenAI-Project"))
 		responseWriter.Header().Set("Content-Type", "application/json")
 		_, _ = responseWriter.Write(responseBody)
 	})
-	client := newProviderFileTestClient(t, handler, "sk-retrieve", "", "proj-retrieve", fixedNow)
+	client := newProviderFileTestClient(t, handler, "sk-retrieve", "", "", fixedNow)
 
 	metadata, err := client.Retrieve(context.Background(), providerFileID)
 	require.NoError(t, err)
 	assert.Equal(t, providerFileID, metadata.ProviderFileID)
 	assert.Equal(t, OpenAIProviderFilePurposeUserData, metadata.Purpose)
-}
-
-func TestProviderFileClientListUsesBoundedProjectPaginationAndHidesIdentity(t *testing.T) {
-	fixedNow := time.Unix(2_000_000_000, 0).UTC()
-	firstID := "file-list_1"
-	lastID := "file-list_2"
-	responseBody := providerFileResponseBody(t, map[string]any{
-		"object": "list", "first_id": firstID, "last_id": lastID, "has_more": true,
-		"data": []map[string]any{
-			{"id": firstID, "object": "file", "bytes": 0, "created_at": fixedNow.Unix() - 120, "expires_at": fixedNow.Unix() + 3600, "filename": "first.txt", "purpose": OpenAIProviderFilePurposeUserData},
-			{"id": lastID, "object": "file", "bytes": 42, "created_at": fixedNow.Unix() - 60, "expires_at": 0, "filename": "second.txt", "purpose": OpenAIProviderFilePurposeUserData},
-		},
-	})
-	client := newProviderFileTestClient(t, http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		assert.Equal(t, http.MethodGet, request.Method)
-		assert.Equal(t, "/v1/files", request.URL.Path)
-		assert.Equal(t, OpenAIProviderFilePurposeUserData, request.URL.Query().Get("purpose"))
-		assert.Equal(t, "asc", request.URL.Query().Get("order"))
-		assert.Equal(t, "100", request.URL.Query().Get("limit"))
-		assert.Equal(t, "file-cursor_1", request.URL.Query().Get("after"))
-		assert.Equal(t, "proj-list", request.Header.Get("OpenAI-Project"))
-		responseWriter.Header().Set("Content-Type", "application/json")
-		_, _ = responseWriter.Write(responseBody)
-	}), "sk-list", "", "proj-list", fixedNow)
-
-	page, err := client.List(context.Background(), "file-cursor_1")
-	require.NoError(t, err)
-	assert.Len(t, page.Files, 2)
-	assert.Equal(t, lastID, page.LastID)
-	assert.True(t, page.HasMore)
-	serialized, err := common.Marshal(page)
-	require.NoError(t, err)
-	assert.NotContains(t, string(serialized), firstID)
-	assert.NotContains(t, string(serialized), lastID)
-	assert.NotContains(t, fmt.Sprintf("%#v", page), firstID)
-}
-
-func TestProviderFileClientListFailsClosedOnDuplicateOrNonProgressIdentity(t *testing.T) {
-	fixedNow := time.Unix(2_000_000_000, 0).UTC()
-	item := map[string]any{
-		"id": "file-list_duplicate", "object": "file", "bytes": 1, "created_at": fixedNow.Unix() - 60,
-		"expires_at": fixedNow.Unix() + 3600, "filename": "safe.txt", "purpose": OpenAIProviderFilePurposeUserData,
-	}
-	responseBody := providerFileResponseBody(t, map[string]any{
-		"object": "list", "first_id": "file-list_duplicate", "last_id": "file-list_duplicate", "has_more": false,
-		"data": []map[string]any{item, item},
-	})
-	client := newProviderFileTestClient(t, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
-		responseWriter.Header().Set("Content-Type", "application/json")
-		_, _ = responseWriter.Write(responseBody)
-	}), "sk-list", "", "proj-list", fixedNow)
-
-	_, err := client.List(context.Background(), "")
-	assert.ErrorIs(t, err, ErrOpenAIProviderFileResponse)
-	assert.NotContains(t, err.Error(), "file-list_duplicate")
-	_, err = client.List(context.Background(), "invalid-cursor")
-	assert.ErrorIs(t, err, ErrOpenAIProviderFileRequest)
 }
 
 func TestProviderFileClientDeleteRequiresExactSuccessReceipt(t *testing.T) {
@@ -377,12 +320,15 @@ func TestProviderFileClientRejectsNonOfficialOriginAndUnsafeInputs(t *testing.T)
 	assert.ErrorIs(t, err, ErrOpenAIProviderFileRequest)
 }
 
-func TestProviderFileClientRequiresSafeProjectIdentity(t *testing.T) {
+func TestProviderFileClientAllowsEmptyProjectAndRejectsUnsafeValues(t *testing.T) {
+	client, err := NewProviderFileClient(&http.Client{}, OpenAIProviderFileOrigin, "sk-safe", "", "")
+	require.NoError(t, err)
+	assert.NotNil(t, client)
+
 	tests := []struct {
 		name    string
 		project string
 	}{
-		{name: "empty", project: ""},
 		{name: "leading whitespace", project: " proj-secret"},
 		{name: "trailing whitespace", project: "proj-secret "},
 		{name: "header injection", project: "proj-secret\r\nAuthorization: exposed"},
@@ -395,9 +341,7 @@ func TestProviderFileClientRequiresSafeProjectIdentity(t *testing.T) {
 			require.ErrorIs(t, err, ErrOpenAIProviderFileClientConfiguration)
 			assert.Nil(t, client)
 			assert.Equal(t, ErrOpenAIProviderFileClientConfiguration.Error(), err.Error())
-			if test.project != "" {
-				assert.NotContains(t, err.Error(), test.project)
-			}
+			assert.NotContains(t, err.Error(), test.project)
 		})
 	}
 }

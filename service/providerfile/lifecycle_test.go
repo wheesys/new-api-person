@@ -38,24 +38,18 @@ func prepareProviderFileLifecycleTest(t *testing.T) *contextconsensus.ManagedCon
 	require.NoError(t, database.AutoMigrate(
 		&model.Channel{},
 		&model.ManagedProviderFileLifecycle{}, &model.ManagedProviderFileDeletionOutbox{}, &model.ManagedProviderFileLifecycleEvent{},
-		&model.ManagedProviderFileReadinessEvidence{},
-		&model.ManagedProviderFileReconciliationScan{}, &model.ManagedProviderFileReconciliationCandidate{},
 	))
 	require.True(t, database.Migrator().HasColumn(&model.Channel{}, "OpenAIProject"))
 	require.NoError(t, database.Create(&model.Channel{
 		Id: 41, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
-		Key: "sk-provider-secret", Name: "provider-file-test", OpenAIOrganization: common.GetPointer("org-exclusive"),
-		OpenAIProject: common.GetPointer("proj-exclusive"),
+		Key: "sk-provider-secret", Name: "provider-file-test", OpenAIOrganization: common.GetPointer("org-provider-file"),
+		OpenAIProject: common.GetPointer("proj-provider-file"),
 	}).Error)
 	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	t.Setenv("CONTEXT_CONSENSUS_ENCRYPTION_KEY_VERSION", "provider-file-v1")
 	t.Setenv("CONTEXT_CONSENSUS_PREVIOUS_ENCRYPTION_KEYS", "")
 	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
 	require.NoError(t, err)
-	persistProviderFileReadinessEvidence(t, runtime, providerFileLifecycleTestSettings(), &Target{
-		ChannelID: 41, ChannelType: constant.ChannelTypeOpenAI, Endpoint: openai.OpenAIProviderFileOrigin,
-		Organization: "org-exclusive", Project: "proj-exclusive", credential: "sk-provider-secret",
-	})
 	return runtime
 }
 
@@ -64,19 +58,7 @@ func providerFileLifecycleTestSettings() *model_setting.SmartRoutingSettings {
 		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
 		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
 		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
-		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
 	}
-}
-
-func persistProviderFileReadinessEvidence(t *testing.T, runtime *contextconsensus.ManagedConsensusRuntime, settings *model_setting.SmartRoutingSettings, target *Target) {
-	t.Helper()
-	now := time.Now().UTC().Truncate(time.Second)
-	evidence, err := BuildReadinessEvidence(runtime, settings, target, ReadinessArtifactEvidence{
-		ProjectEvidenceHMAC: strings.Repeat("1", 64), SandboxEvidenceHMAC: strings.Repeat("2", 64),
-		ImmutableAuditEvidenceHMAC: strings.Repeat("3", 64), DatabaseMatrixEvidenceHMAC: strings.Repeat("4", 64),
-	}, now.Add(-time.Hour), now.Add(time.Hour))
-	require.NoError(t, err)
-	require.NoError(t, model.CreateManagedProviderFileReadinessEvidence(context.Background(), evidence))
 }
 
 func TestUploadActivatesVerifiedLifecycleAndReplaysOpaqueHandle(t *testing.T) {
@@ -106,10 +88,10 @@ func TestUploadActivatesVerifiedLifecycleAndReplaysOpaqueHandle(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(string(responseBody))), Request: request,
 		}, nil
 	})}
-	client, err := openai.NewProviderFileClient(httpClient, openai.OpenAIProviderFileOrigin, "sk-provider-secret", "org-exclusive", "proj-exclusive")
+	client, err := openai.NewProviderFileClient(httpClient, openai.OpenAIProviderFileOrigin, "sk-provider-secret", "org-provider-file", "proj-provider-file")
 	require.NoError(t, err)
 	target := &Target{
-		ChannelID: 41, ChannelType: 1, Endpoint: openai.OpenAIProviderFileOrigin, Organization: "org-exclusive", Project: "proj-exclusive",
+		ChannelID: 41, ChannelType: 1, Endpoint: openai.OpenAIProviderFileOrigin, Organization: "org-provider-file", Project: "proj-provider-file",
 		credential: "sk-provider-secret", client: client,
 	}
 	settings := providerFileLifecycleTestSettings()
@@ -134,9 +116,9 @@ func TestUploadActivatesVerifiedLifecycleAndReplaysOpaqueHandle(t *testing.T) {
 	assert.Contains(t, string(rewrittenBody), providerFileID)
 	require.NoError(t, resolution.ValidateFinalBody(rewrittenBody))
 	require.NoError(t, resolution.ValidateFinalTarget(41, constant.ChannelTypeOpenAI, 0, false,
-		openai.OpenAIProviderFileOrigin, "org-exclusive", "proj-exclusive", "sk-provider-secret"))
+		openai.OpenAIProviderFileOrigin, "org-provider-file", "proj-provider-file", "sk-provider-secret"))
 	assert.Error(t, resolution.ValidateFinalTarget(41, constant.ChannelTypeOpenAI, 0, false,
-		openai.OpenAIProviderFileOrigin, "org-exclusive", "proj-other", "sk-provider-secret"))
+		openai.OpenAIProviderFileOrigin, "org-provider-file", "proj-other", "sk-provider-secret"))
 	assert.Equal(t, []string{http.MethodPost, http.MethodGet, http.MethodGet}, requestMethods)
 	tamperedBody := []byte(strings.Replace(string(rewrittenBody), providerFileID, "file-other", 1))
 	assert.ErrorIs(t, resolution.ValidateFinalBody(tamperedBody), ErrInvalidReference)

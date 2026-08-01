@@ -97,25 +97,10 @@
       - [x] 完成阶段 C-3b1：为主调用与摘要子调用增加数据库持久化计费 operation，原子处理 API Key 额度、用户/渠道统计、冻结价格结果及消费日志 outbox；支持 active/previous key 定位迁移和独立 SQL 日志库，ClickHouse 托管计费失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3b1-implementation-2026-07-29.md`。
       - [x] 完成阶段 C-3b2：增加稳定客户端幂等键、revision intent、`settled_pending_commit`/`committed` outcome 和已提交响应回放，闭合上游成功但客户端重试时的跨请求恢复，见 `doc/auto-smart-routing-context-consensus-stage-c3b2-implementation-2026-07-29.md`。
     - [x] 完成阶段 C-3c：接入 adaptor 真实 provider state report，首批仅闭环原生非流式 OpenAI Responses `id -> previous_response_id`，并原子提交 binding、固定最终模型/协议/渠道/精确凭据槽和 credential fingerprint；其余 provider state 继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-c3c-implementation-2026-07-30.md`。
-- [ ] 完成 `ContextConsensus` 阶段 D：工具结果安全压缩、provider file 生命周期和聚合可视化。
-  - [x] 完成阶段 D-1：首批 OpenAI Chat Completions 单工具串行原子段压缩和聚合诊断。
-    - [x] 完成阶段 D-1a：补齐 call/result 协议与因果序号证据，建立只含 digest 的结构资格评估；现有工具压缩硬门禁保持不变，见 `doc/auto-smart-routing-context-consensus-stage-d1a-implementation-2026-07-30.md`。
-    - [x] 完成阶段 D-1b：实现服务端构造、sanitizer/policy/tool/schema 版本精确绑定且默认拒绝的 JSON Pointer 白名单脱敏注册表；拒绝未知字段、重复键、敏感值和超限结构，仅输出带进程内完整性证明的有界标量投影，见 `doc/auto-smart-routing-context-consensus-stage-d1b-implementation-2026-07-30.md`。
-    - [x] 完成阶段 D-1c：新增 Summary v2，闭合单个旧串行 Chat 工具四消息原子段的 plan、prompt、rewrite、内部执行器版本绑定和最终 OpenAI Chat 协议门禁；开关默认关闭，编译期策略表默认空且未登记工具只压缩其之前的完整普通轮次，见 `doc/auto-smart-routing-context-consensus-stage-d1c-implementation-2026-07-30.md`。
-    - [x] 完成阶段 D-1d：增加有限 reason code 聚合诊断 API 和后台页面，只持久化版本、资格状态和有限原因，禁止展示原始工具状态、会话内容、digest 或摘要正文，见 `doc/auto-smart-routing-context-consensus-stage-d1d-implementation-2026-07-31.md`。
-  - [x] 完成阶段 D-2：统一 call-derived group 语义，闭合 OpenAI Chat 稳定 ID 并行工具组的整组证据、脱敏、Summary v2 与原子重写；Responses/Claude/Gemini 运行时继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d2-implementation-2026-07-31.md`。
-  - [ ] 完成阶段 D-3：具备 adaptor 权威所有权、到期和删除能力后，实现 provider file 生命周期。
-    - [x] 完成阶段 D-3a：建立四协议精确文件分类、无原文证据、adaptor 显式能力契约和最终冻结请求门禁；现有 adaptor 未声明完整能力，provider-owned 文件继续失败关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3a-implementation-2026-07-31.md`。
-    - [x] 完成阶段 D-3b：接入首个具备网关托管上传和持久化精确凭据绑定的 provider，只读核验权威所有权与实际到期时间。
-      - [x] 完成阶段 D-3b.1：实现领域契约、版本化 HMAC/AEAD、跨数据库持久化模型和默认关闭配置，见 `doc/auto-smart-routing-context-consensus-stage-d3b1-implementation-2026-07-31.md`。
-      - [x] 完成阶段 D-3b.2：实现专用 OpenAI 单 Key 上传/查询、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
-    - [ ] 完成阶段 D-3c：实现持久化删除 outbox、幂等到期删除、有限重试、失败告警和不可篡改终态审计后，开放首个 provider file 生命周期。
-      - [x] 完成阶段 D-3c.1：实现严格 DELETE client、持久化派发边界、CAS lease worker、有限重试、未知终态、审计链、告警和渠道变更保护，并保持生产关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3c1-implementation-2026-07-31.md`。
-      - [ ] 完成阶段 D-3c.2：完成真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。
-        - [x] 完成本地实现：一等 Project、target/scope/credential-bound 短期签名 readiness、只读有界扫描、AEAD/HMAC 候选隔离、系统任务和 SQLite/MySQL 5.7/PostgreSQL 9.6 实库矩阵，见 `doc/auto-smart-routing-context-consensus-stage-d3c2-local-implementation-2026-07-31.md`。
-        - [x] 准备真实 OpenAI Files live observation harness：build tag、双 Project 隔离、正确/错误/缺失 Project、删除/到期观察、有界 cleanup ledger 和脱敏证据文件，见 `doc/openai-files-sandbox-live-observation-v1.md`。
-        - [ ] 完成外部取证：真实 OpenAI sandbox、Project 独占性、外部 WORM、生产监控/备份/恢复证据及临执行前生产高风险确认。
-    - 阶段 D-3 的首期范围和外部门禁见 `doc/auto-smart-routing-context-consensus-stage-d3-readiness-2026-07-31.md`。
+- [x] 完成上下文处理阶段 D。
+  - [x] 支持压缩单个和并行工具调用的旧消息，并提供后台统计页面。
+  - [x] 支持 OpenAI 文件上传、查询、在 Responses 请求中引用以及到期自动删除。
+  - [x] 删除独占 Project、沙盒证明、外部存储证明和短期签名证明等额外启用限制；功能按正常配置启用，见 `doc/openai-provider-file-simplification-2026-08-01.md`。
 - [x] 补充“渠道、上游适配器、模型、能力”业务关系图，明确配置、路由与运行时边界，见 `doc/project-module-business-relationships.md`。
 - [x] 补充 API Key 额度预扣、补扣和退款的计费链路时序图，覆盖预扣失败、实际额度差额结算和幂等退款，见 `doc/project-module-business-relationships.md`。
 - [x] 在后台渠道行操作中增加能力预览，按去重后的模型、分组和模型映射展示将生成的能力数量与路由组合，并完成六语言、桌面端和移动端验证，见 `doc/admin-channel-ability-preview-implementation-2026-07-31.md`。

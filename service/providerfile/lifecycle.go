@@ -221,13 +221,13 @@ func Upload(ctx context.Context, request UploadRequest) (File, error) {
 		return recordVerificationFailure(ctx, request, lifecycle, activeBinding, handle, uploadMetadata, "upload_metadata_mismatch")
 	}
 
-	providerLookupHMAC, targetProviderLookupHMAC, encryptedPayload, payloadKeyVersion, err := providerReferenceEvidence(ctx, request, activeBinding, handle, uploadMetadata)
+	providerLookupHMAC, encryptedPayload, payloadKeyVersion, err := providerReference(ctx, request, activeBinding, handle, uploadMetadata)
 	if err != nil {
 		return File{}, ErrLifecycleUnavailable
 	}
 	retrievedMetadata, retrieveErr := request.Target.client.Retrieve(ctx, uploadMetadata.ProviderFileID)
 	if retrieveErr != nil || !sameProviderFileMetadata(uploadMetadata, retrievedMetadata) {
-		return recordEncryptedVerificationFailure(ctx, request, lifecycle, activeBinding, handle, uploadMetadata, providerLookupHMAC, targetProviderLookupHMAC, encryptedPayload, "metadata_unverified")
+		return recordEncryptedVerificationFailure(ctx, request, lifecycle, activeBinding, handle, uploadMetadata, providerLookupHMAC, encryptedPayload, "metadata_unverified")
 	}
 	deletionOperationHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileDeletionOperationHMAC(request.Owner, handle)
 	if err != nil {
@@ -245,7 +245,7 @@ func Upload(ctx context.Context, request UploadRequest) (File, error) {
 	deletionAt := expiresAt.Add(-time.Duration(request.Settings.ProviderFileDeletionLeadSeconds) * time.Second)
 	activated, _, _, err := model.ActivateManagedProviderFileLifecycle(ctx, model.ManagedProviderFileLifecycleActivation{
 		LifecycleId: lifecycle.Id, ExpectedVersion: lifecycle.Version, RequestFingerprint: activeBinding.RequestFingerprint,
-		ProviderLookupHMAC: providerLookupHMAC, TargetProviderLookupHMAC: targetProviderLookupHMAC, ProviderPayload: encryptedPayload, ProviderBytes: retrievedMetadata.Bytes,
+		ProviderLookupHMAC: providerLookupHMAC, ProviderPayload: encryptedPayload, ProviderBytes: retrievedMetadata.Bytes,
 		ProviderCreatedAt: createdAt, MetadataVerifiedAt: verifiedAt, ExpiresAt: expiresAt,
 		DeletionOperationHMAC: deletionOperationHMAC, DeletionNextAttemptAt: deletionAt,
 		MaxDeletionAttempts: request.Settings.ProviderFileDeletionMaxAttempts, Event: activationEvent,
@@ -306,30 +306,26 @@ func replayUpload(ctx context.Context, request UploadRequest, lifecycle *model.M
 	return publicFile(payload.GatewayHandle, metadata), nil
 }
 
-func providerReferenceEvidence(ctx context.Context, request UploadRequest, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata) (string, string, []byte, string, error) {
+func providerReference(ctx context.Context, request UploadRequest, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata) (string, []byte, string, error) {
 	providerLookupHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileReferenceHMAC(request.Owner, metadata.ProviderFileID)
 	if err != nil {
-		return "", "", nil, "", err
-	}
-	targetProviderLookupHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileTargetReferenceHMAC(binding.TargetFingerprint, metadata.ProviderFileID)
-	if err != nil {
-		return "", "", nil, "", err
+		return "", nil, "", err
 	}
 	payload, payloadKeyVersion, err := request.Runtime.EncryptProviderFileReference(ctx, binding.IntentKey, contextconsensus.ManagedProviderFileReferencePayload{
 		ProviderFileID: metadata.ProviderFileID, Filename: metadata.Filename, GatewayHandle: handle,
 	})
-	return providerLookupHMAC, targetProviderLookupHMAC, payload, payloadKeyVersion, err
+	return providerLookupHMAC, payload, payloadKeyVersion, err
 }
 
 func recordVerificationFailure(ctx context.Context, request UploadRequest, lifecycle *model.ManagedProviderFileLifecycle, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata, reason string) (File, error) {
-	providerLookupHMAC, targetProviderLookupHMAC, encryptedPayload, _, err := providerReferenceEvidence(ctx, request, binding, handle, metadata)
+	providerLookupHMAC, encryptedPayload, _, err := providerReference(ctx, request, binding, handle, metadata)
 	if err != nil {
 		return File{}, ErrLifecycleUnavailable
 	}
-	return recordEncryptedVerificationFailure(ctx, request, lifecycle, binding, handle, metadata, providerLookupHMAC, targetProviderLookupHMAC, encryptedPayload, reason)
+	return recordEncryptedVerificationFailure(ctx, request, lifecycle, binding, handle, metadata, providerLookupHMAC, encryptedPayload, reason)
 }
 
-func recordEncryptedVerificationFailure(ctx context.Context, request UploadRequest, lifecycle *model.ManagedProviderFileLifecycle, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata, providerLookupHMAC, targetProviderLookupHMAC string, encryptedPayload []byte, reason string) (File, error) {
+func recordEncryptedVerificationFailure(ctx context.Context, request UploadRequest, lifecycle *model.ManagedProviderFileLifecycle, binding contextconsensus.ManagedProviderFileUploadBinding, handle string, metadata openai.ProviderFileMetadata, providerLookupHMAC string, encryptedPayload []byte, reason string) (File, error) {
 	deletionOperationHMAC, err := request.Runtime.KeyDeriver.DeriveProviderFileDeletionOperationHMAC(request.Owner, handle)
 	if err != nil {
 		return File{}, ErrLifecycleUnavailable
@@ -343,7 +339,7 @@ func recordEncryptedVerificationFailure(ctx context.Context, request UploadReque
 	}
 	err = model.RecordManagedProviderFileVerificationFailure(ctx, model.ManagedProviderFileVerificationFailure{
 		LifecycleId: lifecycle.Id, ExpectedVersion: lifecycle.Version, RequestFingerprint: binding.RequestFingerprint,
-		ProviderLookupHMAC: providerLookupHMAC, TargetProviderLookupHMAC: targetProviderLookupHMAC, ProviderPayload: encryptedPayload, ProviderBytes: metadata.Bytes,
+		ProviderLookupHMAC: providerLookupHMAC, ProviderPayload: encryptedPayload, ProviderBytes: metadata.Bytes,
 		ProviderCreatedAt: time.Unix(metadata.CreatedAtUnix, 0), ExpiresAt: time.Unix(metadata.ExpiresAtUnix, 0), ReasonCode: reason,
 		DeletionOperationHMAC: deletionOperationHMAC, DeletionNextAttemptAt: now,
 		MaxDeletionAttempts: request.Settings.ProviderFileDeletionMaxAttempts, Event: event,

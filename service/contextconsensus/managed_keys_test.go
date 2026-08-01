@@ -120,25 +120,6 @@ func TestManagedConsensusKeyDeriverSeparatesProviderFileDomains(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, uploadFingerprint, 64)
-	maintenancePolicyFingerprint, err := deriver.DeriveProviderFileMaintenancePolicyFingerprint(ManagedProviderFileMaintenancePolicyIdentity{
-		DeletionBatchSize: 10, DeletionTimeoutSeconds: 5,
-	})
-	require.NoError(t, err)
-	otherMaintenancePolicyFingerprint, err := deriver.DeriveProviderFileMaintenancePolicyFingerprint(ManagedProviderFileMaintenancePolicyIdentity{
-		DeletionBatchSize: 11, DeletionTimeoutSeconds: 5,
-	})
-	require.NoError(t, err)
-	assert.NotEqual(t, maintenancePolicyFingerprint, otherMaintenancePolicyFingerprint)
-	uploadPolicyFingerprint, err := deriver.DeriveProviderFileUploadPolicyFingerprint(ManagedProviderFileUploadPolicyIdentity{
-		ExpirationSeconds: 3600, MetadataVerifyTTLSeconds: 0, DeletionLeadSeconds: 60, DeletionMaxAttempts: 3,
-	})
-	require.NoError(t, err)
-	otherUploadPolicyFingerprint, err := deriver.DeriveProviderFileUploadPolicyFingerprint(ManagedProviderFileUploadPolicyIdentity{
-		ExpirationSeconds: 7200, MetadataVerifyTTLSeconds: 0, DeletionLeadSeconds: 60, DeletionMaxAttempts: 3,
-	})
-	require.NoError(t, err)
-	assert.NotEqual(t, uploadPolicyFingerprint, otherUploadPolicyFingerprint)
-
 	eventHMAC, err := deriver.DeriveProviderFileEventHMAC(ManagedProviderFileEventIdentity{
 		LifecycleHMAC: storageKey.UploadIntentHMAC, Sequence: 1, EventType: "intent_created", ToState: "intent",
 		EvidenceDigest: strings.Repeat("a", 64), CreatedAtUnix: 100,

@@ -6,7 +6,7 @@
 
 阶段 D-3b.2 已完成默认关闭的 OpenAI provider file 托管上传、查询和原生 Responses 精确引用闭环。客户端只接触 owner-bound opaque handle；网关以专用官方 OpenAI 单 Key 渠道上传文件，立即读取并核对权威元数据，随后才把生命周期激活。Responses 请求在最终上游调用前把类型化句柄改写为原始 provider file ID，并再次校验冻结正文和精确渠道目标。
 
-本阶段未调用真实 OpenAI、未执行生产配置或数据库数据修改。列表、内容和删除接口仍返回未实现，删除 worker、不可变审计、真实 sandbox 契约和生产 readiness 属于 D-3c，功能继续默认关闭。
+本阶段未调用真实 OpenAI、未执行生产配置或数据库数据修改。列表、内容和删除接口仍返回未实现，自动删除在 D-3c 完成。
 
 ## 接口与上传边界
 
@@ -44,7 +44,6 @@ upload_dispatched -> verification_failed
 - 上传 intent、handle、repository key、target、credential、endpoint 和 scope 使用独立版本化 HMAC 域；provider reference 使用独立 AEAD purpose。
 - encrypted reference 同时保存原始 provider file ID、文件名和网关 handle，支持 active/previous key 读取窗口与幂等重放。
 - 生命周期事件身份改为稳定 upload-intent HMAC，避免依赖数据库分配前尚不存在的自增 ID；事件和错误只记录有限状态及 digest，不记录敏感原文。
-- 应用内事件摘要链仍不等价于生产不可变审计，D-3c.2 前不得据此开放生产能力。
 
 ## 验证
 
@@ -56,5 +55,4 @@ upload_dispatched -> verification_failed
 
 ## 后续
 
-- D-3c.1：实现实际 DELETE client、CAS lease worker、未知结果终态、有限告警、渠道变更保护和删除终态审计，继续保持生产关闭。
-- D-3c.2：在真实 sandbox 验证首次/重复删除、404、超时、到期和项目隔离语义，完成独占 Project、孤儿对账及生产门禁。
+- D-3c.1：实现实际 DELETE client、CAS lease worker、未知结果终态、有限告警、渠道变更保护和删除记录。

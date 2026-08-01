@@ -26,7 +26,6 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 	service.RegisterSystemTaskHandler(providerFileDeletionHandler{})
-	service.RegisterSystemTaskHandler(providerFileReconciliationHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -164,7 +163,7 @@ func (providerFileDeletionHandler) Type() string { return model.SystemTaskTypePr
 func (providerFileDeletionHandler) Enabled() bool {
 	settings := model_setting.GetSmartRoutingSettings()
 	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
-	if err != nil || runtime == nil || runtime.KeyDeriver == nil || model_setting.ValidateProviderFileDeletionReadiness(settings) != nil {
+	if err != nil || runtime == nil || runtime.KeyDeriver == nil || model_setting.ValidateProviderFileDeletionSettings(settings) != nil {
 		return false
 	}
 	due, err := model.HasDueManagedProviderFileDeletions(context.Background(), time.Now().UTC())
@@ -194,40 +193,6 @@ func (providerFileDeletionHandler) Run(ctx context.Context, task *model.SystemTa
 				fmt.Sprintf("托管 provider file 删除已停止，outbox=%d lifecycle=%d result=%s", outboxID, lifecycleID, resultCode))
 		},
 	})
-	if err != nil {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
-		return
-	}
-	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
-}
-
-type providerFileReconciliationHandler struct{}
-
-func (providerFileReconciliationHandler) Type() string {
-	return model.SystemTaskTypeProviderFileReconciliation
-}
-
-func (providerFileReconciliationHandler) Enabled() bool {
-	settings := model_setting.GetSmartRoutingSettings()
-	if !settings.ProviderFileReconciliationEnabled {
-		return false
-	}
-	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
-	return err == nil && providerfile.VerifyDeletionReadiness(context.Background(), settings, runtime, nil, time.Now().UTC()) == nil
-}
-
-func (providerFileReconciliationHandler) Interval() time.Duration { return time.Hour }
-
-func (providerFileReconciliationHandler) NewPayload() any { return nil }
-
-func (providerFileReconciliationHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	settings := model_setting.GetSmartRoutingSettings()
-	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
-	if err != nil {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, fmt.Errorf("托管 provider file 对账密钥不可用"))
-		return
-	}
-	summary, err := providerfile.RunReconciliationScan(ctx, providerfile.ReconciliationOptions{Runtime: runtime, Settings: settings})
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return

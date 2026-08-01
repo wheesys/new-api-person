@@ -330,9 +330,6 @@ func migrateDB() error {
 		&ManagedProviderFileLifecycle{},
 		&ManagedProviderFileDeletionOutbox{},
 		&ManagedProviderFileLifecycleEvent{},
-		&ManagedProviderFileReadinessEvidence{},
-		&ManagedProviderFileReconciliationScan{},
-		&ManagedProviderFileReconciliationCandidate{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -408,9 +405,6 @@ func migrateDBFast() error {
 		{&ManagedProviderFileLifecycle{}, "ManagedProviderFileLifecycle"},
 		{&ManagedProviderFileDeletionOutbox{}, "ManagedProviderFileDeletionOutbox"},
 		{&ManagedProviderFileLifecycleEvent{}, "ManagedProviderFileLifecycleEvent"},
-		{&ManagedProviderFileReadinessEvidence{}, "ManagedProviderFileReadinessEvidence"},
-		{&ManagedProviderFileReconciliationScan{}, "ManagedProviderFileReconciliationScan"},
-		{&ManagedProviderFileReconciliationCandidate{}, "ManagedProviderFileReconciliationCandidate"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

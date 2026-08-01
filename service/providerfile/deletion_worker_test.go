@@ -31,8 +31,8 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 	t.Helper()
 	runtime := prepareProviderFileLifecycleTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
-	organization := "org-exclusive"
-	project := "proj-exclusive"
+	organization := "org-provider-file"
+	project := "proj-provider-file"
 	channel := model.Channel{
 		Id: 41, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
 		Key: "sk-provider-secret", Name: "provider-file-cleanup", OpenAIOrganization: &organization, OpenAIProject: &project,
@@ -168,12 +168,12 @@ func TestDeletionWorkerDoesNotRedispatchExpiredDispatchedLease(t *testing.T) {
 	assert.NotEmpty(t, lifecycle.ProviderPayload)
 }
 
-func TestDeletionWorkerReadinessGatePreventsProviderCall(t *testing.T) {
+func TestDeletionWorkerRejectsInvalidDeletionSettings(t *testing.T) {
 	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
 	options := fixture.options()
-	options.Settings.ProviderFileSandboxContractVerified = false
+	options.Settings.ProviderFileDeletionMaxAttempts = 0
 	_, err := RunDeletionBatch(context.Background(), options)
-	require.ErrorContains(t, err, "readiness is unavailable")
+	require.ErrorContains(t, err, "settings are invalid")
 	assert.Equal(t, 0, fixture.deleteCount)
 }
 

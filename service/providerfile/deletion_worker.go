@@ -49,8 +49,8 @@ func RunDeletionBatch(ctx context.Context, options DeletionWorkerOptions) (Delet
 		options.Timeout < minimumDeletionWorkerTimeout || options.Timeout > maximumDeletionWorkerTimeout {
 		return summary, fmt.Errorf("managed provider file deletion worker configuration is invalid")
 	}
-	if model_setting.ValidateProviderFileDeletionReadiness(options.Settings) != nil {
-		return summary, fmt.Errorf("managed provider file deletion readiness is unavailable")
+	if model_setting.ValidateProviderFileDeletionSettings(options.Settings) != nil {
+		return summary, fmt.Errorf("managed provider file deletion settings are invalid")
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -100,8 +100,8 @@ func processDeletionOutbox(ctx context.Context, options DeletionWorkerOptions, s
 	}
 	now := options.Now().UTC()
 	target, err := loadDeletionTarget(lifecycle.ChannelId, options.HTTPClient)
-	if err != nil || VerifyMaintenanceReadinessEvidence(ctx, options.Settings, options.Runtime, target, now) != nil {
-		return fmt.Errorf("managed provider file deletion readiness is unavailable")
+	if err != nil {
+		return fmt.Errorf("managed provider file deletion target is unavailable")
 	}
 	targetBindings, err := options.Runtime.ProviderFileTargetBindings(target.identity(), target.credential)
 	if err != nil || !matchesLifecycleTarget(lifecycle, target, targetBindings) {

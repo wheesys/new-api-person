@@ -242,9 +242,6 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 		"smart_routing.provider_file_deletion_batch_size":         "20",
 		"smart_routing.provider_file_deletion_max_attempts":       "7",
 		"smart_routing.provider_file_deletion_timeout_seconds":    "45",
-		"smart_routing.provider_file_exclusive_project_attested":  "true",
-		"smart_routing.provider_file_sandbox_contract_verified":   "true",
-		"smart_routing.provider_file_reconciliation_enabled":      "false",
 	}))
 
 	snapshot := GetSmartRoutingSettings()
@@ -270,9 +267,6 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, 20, snapshot.ProviderFileDeletionBatchSize)
 	assert.Equal(t, 7, snapshot.ProviderFileDeletionMaxAttempts)
 	assert.Equal(t, 45, snapshot.ProviderFileDeletionTimeoutSeconds)
-	assert.True(t, snapshot.ProviderFileExclusiveProjectAttested)
-	assert.True(t, snapshot.ProviderFileSandboxContractVerified)
-	assert.False(t, snapshot.ProviderFileReconciliationEnabled)
 
 	snapshot.CompactionModelPool[0] = "mutated"
 	snapshot.CompactionChannelIDs[0] = 99
@@ -284,12 +278,12 @@ func TestSmartRoutingCompactionSettingsUseImmutableSnapshot(t *testing.T) {
 	assert.Equal(t, []int{3}, GetSmartRoutingSettings().AuthoritativeContextLimits["gpt-5-mini"].ChannelIDs)
 }
 
-func TestProviderFileLifecycleSettingsRemainDisabledUntilAllSafetyInputsExist(t *testing.T) {
+func TestProviderFileLifecycleSettingsValidateNormalConfiguration(t *testing.T) {
 	settings := GetSmartRoutingSettings()
-	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "disabled")
+	require.ErrorContains(t, ValidateProviderFileLifecycleSettings(settings), "disabled")
 
 	settings.ProviderFileLifecycleEnabled = true
-	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "dedicated OpenAI channel")
+	require.ErrorContains(t, ValidateProviderFileLifecycleSettings(settings), "dedicated OpenAI channel")
 	settings.ProviderFileOpenAIChannelID = 41
 	settings.ProviderFileExpirationSeconds = 3600
 	settings.ProviderFileMetadataVerifyTTLSeconds = 0
@@ -297,12 +291,10 @@ func TestProviderFileLifecycleSettingsRemainDisabledUntilAllSafetyInputsExist(t 
 	settings.ProviderFileDeletionBatchSize = 10
 	settings.ProviderFileDeletionMaxAttempts = 5
 	settings.ProviderFileDeletionTimeoutSeconds = 30
-	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "exclusive OpenAI project")
-
-	settings.ProviderFileExclusiveProjectAttested = true
-	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "sandbox deletion contracts")
-	settings.ProviderFileSandboxContractVerified = true
-	require.NoError(t, ValidateProviderFileLifecycleReadiness(settings))
+	require.NoError(t, ValidateProviderFileLifecycleSettings(settings))
 	settings.ProviderFileDeletionLeadSeconds = settings.ProviderFileExpirationSeconds
-	require.ErrorContains(t, ValidateProviderFileLifecycleReadiness(settings), "deletion lead")
+	require.ErrorContains(t, ValidateProviderFileLifecycleSettings(settings), "deletion lead")
+	settings.ProviderFileDeletionLeadSeconds = 300
+	settings.ProviderFileDeletionTimeoutSeconds = 0
+	require.ErrorContains(t, ValidateProviderFileDeletionSettings(settings), "timeout")
 }

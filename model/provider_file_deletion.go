@@ -21,7 +21,7 @@ var managedProviderFileChannelBindingStates = []string{
 
 func HasDueManagedProviderFileDeletions(ctx context.Context, now time.Time) (bool, error) {
 	if ctx == nil || now.IsZero() {
-		return false, fmt.Errorf("managed provider file deletion readiness query is invalid")
+		return false, fmt.Errorf("managed provider file deletion query is invalid")
 	}
 	var count int64
 	err := DB.WithContext(ctx).Model(&ManagedProviderFileDeletionOutbox{}).

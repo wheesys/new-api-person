@@ -69,7 +69,6 @@ type ManagedProviderFileLifecycle struct {
 	UploadIntentHMAC                string     `json:"-" gorm:"type:varchar(64);not null;uniqueIndex:idx_managed_provider_file_upload_intent;comment:Versioned HMAC uniquely identifying the gateway upload intent"`
 	HandleLookupHMAC                string     `json:"-" gorm:"type:varchar(64);not null;uniqueIndex:idx_managed_provider_file_handle_lookup;comment:Versioned owner-bound HMAC for the opaque gateway handle"`
 	ProviderLookupHMAC              *string    `json:"-" gorm:"type:varchar(64);uniqueIndex:idx_managed_provider_file_provider_lookup;comment:Versioned owner-scoped HMAC for the provider file reference"`
-	TargetProviderLookupHMAC        *string    `json:"-" gorm:"type:varchar(64);uniqueIndex:idx_managed_provider_file_target_lookup;comment:Versioned target-scoped HMAC for reconciliation without owner identity"`
 	OwnerHMAC                       string     `json:"-" gorm:"type:varchar(64);not null;index;comment:HMAC identifying user token and endpoint ownership"`
 	LookupKeyVersion                string     `json:"-" gorm:"type:varchar(64);not null;index;comment:Key version used for lookup HMAC values and encrypted payloads"`
 	RequestFingerprint              string     `json:"-" gorm:"type:varchar(64);not null;comment:Digest binding immutable upload intent inputs"`
@@ -157,37 +156,35 @@ type ManagedProviderFileUploadIntentLookupCandidate struct {
 }
 
 type ManagedProviderFileLifecycleActivation struct {
-	LifecycleId              int64
-	ExpectedVersion          int64
-	RequestFingerprint       string
-	ProviderLookupHMAC       string
-	TargetProviderLookupHMAC string
-	ProviderPayload          []byte
-	ProviderBytes            int64
-	ProviderCreatedAt        time.Time
-	MetadataVerifiedAt       time.Time
-	ExpiresAt                time.Time
-	DeletionOperationHMAC    string
-	DeletionNextAttemptAt    time.Time
-	MaxDeletionAttempts      int
-	Event                    ManagedProviderFileLifecycleEvent
+	LifecycleId           int64
+	ExpectedVersion       int64
+	RequestFingerprint    string
+	ProviderLookupHMAC    string
+	ProviderPayload       []byte
+	ProviderBytes         int64
+	ProviderCreatedAt     time.Time
+	MetadataVerifiedAt    time.Time
+	ExpiresAt             time.Time
+	DeletionOperationHMAC string
+	DeletionNextAttemptAt time.Time
+	MaxDeletionAttempts   int
+	Event                 ManagedProviderFileLifecycleEvent
 }
 
 type ManagedProviderFileVerificationFailure struct {
-	LifecycleId              int64
-	ExpectedVersion          int64
-	RequestFingerprint       string
-	ProviderLookupHMAC       string
-	TargetProviderLookupHMAC string
-	ProviderPayload          []byte
-	ProviderBytes            int64
-	ProviderCreatedAt        time.Time
-	ExpiresAt                time.Time
-	ReasonCode               string
-	DeletionOperationHMAC    string
-	DeletionNextAttemptAt    time.Time
-	MaxDeletionAttempts      int
-	Event                    ManagedProviderFileLifecycleEvent
+	LifecycleId           int64
+	ExpectedVersion       int64
+	RequestFingerprint    string
+	ProviderLookupHMAC    string
+	ProviderPayload       []byte
+	ProviderBytes         int64
+	ProviderCreatedAt     time.Time
+	ExpiresAt             time.Time
+	ReasonCode            string
+	DeletionOperationHMAC string
+	DeletionNextAttemptAt time.Time
+	MaxDeletionAttempts   int
+	Event                 ManagedProviderFileLifecycleEvent
 }
 
 type ManagedProviderFileDeletionClaim struct {
@@ -250,7 +247,7 @@ func (lifecycle ManagedProviderFileLifecycle) Validate() error {
 	} else if lifecycle.LastEventSequence < 0 || !validManagedProviderFileDigest(lifecycle.LastEventHMAC) {
 		return fmt.Errorf("managed provider file lifecycle event head is invalid")
 	}
-	hasBinding := lifecycle.ProviderLookupHMAC != nil || lifecycle.TargetProviderLookupHMAC != nil || len(lifecycle.ProviderPayload) != 0 || lifecycle.ProviderBytes != 0 || lifecycle.ProviderCreatedAt != nil || lifecycle.MetadataVerifiedAt != nil || lifecycle.ExpiresAt != nil || lifecycle.ActivatedAt != nil
+	hasBinding := lifecycle.ProviderLookupHMAC != nil || len(lifecycle.ProviderPayload) != 0 || lifecycle.ProviderBytes != 0 || lifecycle.ProviderCreatedAt != nil || lifecycle.MetadataVerifiedAt != nil || lifecycle.ExpiresAt != nil || lifecycle.ActivatedAt != nil
 	switch lifecycle.State {
 	case ManagedProviderFileLifecycleStateIntent:
 		if hasBinding || lifecycle.UploadDispatchedAt != nil || lifecycle.UploadFailedAt != nil || lifecycle.UploadUnknownAt != nil || lifecycle.VerificationFailedAt != nil ||
@@ -270,7 +267,7 @@ func (lifecycle ManagedProviderFileLifecycle) Validate() error {
 			return fmt.Errorf("managed provider file upload-unknown state is invalid")
 		}
 	case ManagedProviderFileLifecycleStateVerificationFailed:
-		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || lifecycle.TargetProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.TargetProviderLookupHMAC) || len(lifecycle.ProviderPayload) == 0 ||
+		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || len(lifecycle.ProviderPayload) == 0 ||
 			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() || lifecycle.MetadataVerifiedAt != nil ||
 			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) || lifecycle.ActivatedAt != nil ||
 			lifecycle.UploadDispatchedAt == nil || lifecycle.VerificationFailedAt == nil || lifecycle.VerificationFailedAt.IsZero() ||
@@ -280,7 +277,7 @@ func (lifecycle ManagedProviderFileLifecycle) Validate() error {
 	case ManagedProviderFileLifecycleStateActive, ManagedProviderFileLifecycleStateDeletionPending, ManagedProviderFileLifecycleStateDeleted, ManagedProviderFileLifecycleStateDeletionFailed:
 		verifiedBinding := lifecycle.VerificationFailedAt == nil && lifecycle.MetadataVerifiedAt != nil && !lifecycle.MetadataVerifiedAt.IsZero() && lifecycle.ActivatedAt != nil
 		recoveryBinding := lifecycle.VerificationFailedAt != nil && !lifecycle.VerificationFailedAt.IsZero() && lifecycle.MetadataVerifiedAt == nil && lifecycle.ActivatedAt == nil
-		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || lifecycle.TargetProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.TargetProviderLookupHMAC) || (!verifiedBinding && !recoveryBinding) ||
+		if lifecycle.ProviderLookupHMAC == nil || !validManagedProviderFileDigest(*lifecycle.ProviderLookupHMAC) || (!verifiedBinding && !recoveryBinding) ||
 			lifecycle.ProviderBytes <= 0 || lifecycle.ProviderCreatedAt == nil || lifecycle.ProviderCreatedAt.IsZero() ||
 			lifecycle.ExpiresAt == nil || lifecycle.ExpiresAt.IsZero() || !lifecycle.ExpiresAt.After(*lifecycle.ProviderCreatedAt) {
 			return fmt.Errorf("managed provider file active binding is invalid")
@@ -508,7 +505,7 @@ func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure M
 		failure.DeletionNextAttemptAt = failure.DeletionNextAttemptAt.UTC().Truncate(time.Second)
 	}
 	if failure.LifecycleId <= 0 || failure.ExpectedVersion <= 0 || !validManagedProviderFileDigest(failure.RequestFingerprint) ||
-		!validManagedProviderFileDigest(failure.ProviderLookupHMAC) || !validManagedProviderFileDigest(failure.TargetProviderLookupHMAC) || len(failure.ProviderPayload) == 0 || failure.ProviderBytes <= 0 ||
+		!validManagedProviderFileDigest(failure.ProviderLookupHMAC) || len(failure.ProviderPayload) == 0 || failure.ProviderBytes <= 0 ||
 		failure.ProviderCreatedAt.IsZero() || !failure.ExpiresAt.After(failure.ProviderCreatedAt) || strings.TrimSpace(failure.ReasonCode) == "" ||
 		len(failure.ReasonCode) > 64 || !validManagedProviderFileDigest(failure.DeletionOperationHMAC) ||
 		failure.DeletionNextAttemptAt.After(failure.ExpiresAt) || failure.MaxDeletionAttempts <= 0 || failure.MaxDeletionAttempts > maxManagedProviderFileDeletionAttempts {
@@ -526,7 +523,6 @@ func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure M
 			return ErrManagedProviderFileLifecycleStateConflict
 		}
 		providerLookupHMAC := failure.ProviderLookupHMAC
-		targetProviderLookupHMAC := failure.TargetProviderLookupHMAC
 		outbox := ManagedProviderFileDeletionOutbox{
 			LifecycleId: lifecycle.Id, OperationHMAC: failure.DeletionOperationHMAC,
 			State: ManagedProviderFileDeletionOutboxStatePending, Version: 1, MaxAttempts: failure.MaxDeletionAttempts,
@@ -539,7 +535,7 @@ func RecordManagedProviderFileVerificationFailure(ctx context.Context, failure M
 			return err
 		}
 		updates := map[string]interface{}{
-			"state": ManagedProviderFileLifecycleStateVerificationFailed, "provider_lookup_hmac": providerLookupHMAC, "target_provider_lookup_hmac": targetProviderLookupHMAC,
+			"state": ManagedProviderFileLifecycleStateVerificationFailed, "provider_lookup_hmac": providerLookupHMAC,
 			"provider_payload": append([]byte(nil), failure.ProviderPayload...), "provider_bytes": failure.ProviderBytes,
 			"provider_created_at": failure.ProviderCreatedAt, "expires_at": failure.ExpiresAt,
 			"verification_failed_at": now, "terminal_reason_code": failure.ReasonCode,
@@ -557,7 +553,7 @@ func ActivateManagedProviderFileLifecycle(ctx context.Context, activation Manage
 	} else {
 		activation.DeletionNextAttemptAt = activation.DeletionNextAttemptAt.UTC().Truncate(time.Second)
 	}
-	if activation.LifecycleId <= 0 || activation.ExpectedVersion <= 0 || !validManagedProviderFileDigest(activation.RequestFingerprint) || !validManagedProviderFileDigest(activation.ProviderLookupHMAC) || !validManagedProviderFileDigest(activation.TargetProviderLookupHMAC) ||
+	if activation.LifecycleId <= 0 || activation.ExpectedVersion <= 0 || !validManagedProviderFileDigest(activation.RequestFingerprint) || !validManagedProviderFileDigest(activation.ProviderLookupHMAC) ||
 		len(activation.ProviderPayload) == 0 || activation.ProviderBytes <= 0 || activation.ProviderCreatedAt.IsZero() || activation.MetadataVerifiedAt.IsZero() ||
 		activation.ExpiresAt.IsZero() || !activation.ExpiresAt.After(time.Now()) || !activation.ExpiresAt.After(activation.ProviderCreatedAt) ||
 		!validManagedProviderFileDigest(activation.DeletionOperationHMAC) || activation.DeletionNextAttemptAt.After(activation.ExpiresAt) ||
@@ -590,7 +586,6 @@ func ActivateManagedProviderFileLifecycle(ctx context.Context, activation Manage
 			return ErrManagedProviderFileLifecycleStateConflict
 		}
 		providerLookupHMAC := activation.ProviderLookupHMAC
-		targetProviderLookupHMAC := activation.TargetProviderLookupHMAC
 		now := time.Now().UTC()
 		outbox = ManagedProviderFileDeletionOutbox{
 			LifecycleId: lifecycle.Id, OperationHMAC: activation.DeletionOperationHMAC,
@@ -607,7 +602,7 @@ func ActivateManagedProviderFileLifecycle(ctx context.Context, activation Manage
 			return fmt.Errorf("managed provider file activation event is invalid")
 		}
 		if err := appendEventAndAdvanceManagedProviderFileLifecycle(tx, &lifecycle, activation.ExpectedVersion, map[string]interface{}{
-			"provider_lookup_hmac": providerLookupHMAC, "target_provider_lookup_hmac": targetProviderLookupHMAC, "provider_payload": activation.ProviderPayload,
+			"provider_lookup_hmac": providerLookupHMAC, "provider_payload": activation.ProviderPayload,
 			"provider_bytes": activation.ProviderBytes, "provider_created_at": activation.ProviderCreatedAt.UTC(),
 			"metadata_verified_at": activation.MetadataVerifiedAt.UTC(), "expires_at": activation.ExpiresAt.UTC(),
 			"state": ManagedProviderFileLifecycleStateActive, "activated_at": now,
@@ -615,7 +610,6 @@ func ActivateManagedProviderFileLifecycle(ctx context.Context, activation Manage
 			return err
 		}
 		lifecycle.ProviderLookupHMAC = &providerLookupHMAC
-		lifecycle.TargetProviderLookupHMAC = &targetProviderLookupHMAC
 		lifecycle.ProviderPayload = activation.ProviderPayload
 		lifecycle.ProviderBytes = activation.ProviderBytes
 		lifecycle.ProviderCreatedAt = &activation.ProviderCreatedAt
@@ -977,7 +971,7 @@ func sameManagedProviderFileIntent(existing, requested ManagedProviderFileLifecy
 }
 
 func sameManagedProviderFileActivation(lifecycle ManagedProviderFileLifecycle, activation ManagedProviderFileLifecycleActivation) bool {
-	return lifecycle.ProviderLookupHMAC != nil && *lifecycle.ProviderLookupHMAC == activation.ProviderLookupHMAC && lifecycle.TargetProviderLookupHMAC != nil && *lifecycle.TargetProviderLookupHMAC == activation.TargetProviderLookupHMAC &&
+	return lifecycle.ProviderLookupHMAC != nil && *lifecycle.ProviderLookupHMAC == activation.ProviderLookupHMAC &&
 		string(lifecycle.ProviderPayload) == string(activation.ProviderPayload) && lifecycle.ProviderBytes == activation.ProviderBytes &&
 		lifecycle.ProviderCreatedAt != nil && lifecycle.ProviderCreatedAt.Equal(activation.ProviderCreatedAt) &&
 		lifecycle.MetadataVerifiedAt != nil && lifecycle.MetadataVerifiedAt.Equal(activation.MetadataVerifiedAt) &&
