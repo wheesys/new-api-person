@@ -103,19 +103,34 @@ type ManagedProviderFileEventIdentity struct {
 }
 
 type ManagedProviderFileReadinessEvidenceIdentity struct {
-	TargetFingerprint          string
-	ScopeFingerprint           string
-	CredentialFingerprint      string
-	ProjectEvidenceHMAC        string
-	SandboxEvidenceHMAC        string
-	ImmutableAuditEvidenceHMAC string
-	DatabaseMatrixEvidenceHMAC string
-	ProjectAttestationVersion  string
-	SandboxContractVersion     string
-	ImmutableAuditVersion      string
-	DatabaseMatrixVersion      string
-	AttestedAtUnix             int64
-	ExpiresAtUnix              int64
+	TargetFingerprint            string
+	ScopeFingerprint             string
+	CredentialFingerprint        string
+	MaintenancePolicyFingerprint string
+	UploadPolicyFingerprint      string
+	ProjectEvidenceHMAC          string
+	SandboxEvidenceHMAC          string
+	ImmutableAuditEvidenceHMAC   string
+	DatabaseMatrixEvidenceHMAC   string
+	ProjectAttestationVersion    string
+	SandboxContractVersion       string
+	ImmutableAuditVersion        string
+	DatabaseMatrixVersion        string
+	PolicyVersion                string
+	AttestedAtUnix               int64
+	ExpiresAtUnix                int64
+}
+
+type ManagedProviderFileMaintenancePolicyIdentity struct {
+	DeletionBatchSize      int
+	DeletionTimeoutSeconds int
+}
+
+type ManagedProviderFileUploadPolicyIdentity struct {
+	ExpirationSeconds        int
+	MetadataVerifyTTLSeconds int
+	DeletionLeadSeconds      int
+	DeletionMaxAttempts      int
 }
 
 type ManagedConsensusKeyDeriver struct {
@@ -403,17 +418,37 @@ func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileDeletionEvidenceHMA
 
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileReadinessEvidenceHMAC(identity ManagedProviderFileReadinessEvidenceIdentity) (string, error) {
 	if !validProviderFileHexHMAC(identity.TargetFingerprint) || !validProviderFileHexHMAC(identity.ScopeFingerprint) || !validProviderFileHexHMAC(identity.CredentialFingerprint) ||
+		!validProviderFileHexHMAC(identity.MaintenancePolicyFingerprint) || !validProviderFileHexHMAC(identity.UploadPolicyFingerprint) ||
 		!validProviderFileHexHMAC(identity.ProjectEvidenceHMAC) || !validProviderFileHexHMAC(identity.SandboxEvidenceHMAC) ||
 		!validProviderFileHexHMAC(identity.ImmutableAuditEvidenceHMAC) || !validProviderFileHexHMAC(identity.DatabaseMatrixEvidenceHMAC) ||
 		strings.TrimSpace(identity.ProjectAttestationVersion) == "" || strings.TrimSpace(identity.ProjectAttestationVersion) != identity.ProjectAttestationVersion ||
 		strings.TrimSpace(identity.SandboxContractVersion) == "" || strings.TrimSpace(identity.SandboxContractVersion) != identity.SandboxContractVersion ||
 		strings.TrimSpace(identity.ImmutableAuditVersion) == "" || strings.TrimSpace(identity.ImmutableAuditVersion) != identity.ImmutableAuditVersion ||
 		strings.TrimSpace(identity.DatabaseMatrixVersion) == "" || strings.TrimSpace(identity.DatabaseMatrixVersion) != identity.DatabaseMatrixVersion ||
+		strings.TrimSpace(identity.PolicyVersion) == "" || strings.TrimSpace(identity.PolicyVersion) != identity.PolicyVersion ||
 		len(identity.ProjectAttestationVersion) > 64 || len(identity.SandboxContractVersion) > 64 || len(identity.ImmutableAuditVersion) > 64 || len(identity.DatabaseMatrixVersion) > 64 ||
+		len(identity.PolicyVersion) > 64 ||
 		identity.AttestedAtUnix <= 0 || identity.ExpiresAtUnix <= identity.AttestedAtUnix || identity.ExpiresAtUnix-identity.AttestedAtUnix > int64((24*time.Hour).Seconds()) {
 		return "", fmt.Errorf("managed provider file readiness evidence identity is invalid")
 	}
 	return deriver.calculateHexHMAC("provider_file_readiness_evidence", identity)
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileMaintenancePolicyFingerprint(identity ManagedProviderFileMaintenancePolicyIdentity) (string, error) {
+	if identity.DeletionBatchSize <= 0 || identity.DeletionBatchSize > 100 ||
+		identity.DeletionTimeoutSeconds <= 0 || identity.DeletionTimeoutSeconds > 120 {
+		return "", fmt.Errorf("managed provider file maintenance policy identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_maintenance_policy", identity)
+}
+
+func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileUploadPolicyFingerprint(identity ManagedProviderFileUploadPolicyIdentity) (string, error) {
+	if identity.ExpirationSeconds < 60 || identity.ExpirationSeconds > 30*24*60*60 || identity.MetadataVerifyTTLSeconds < 0 ||
+		identity.MetadataVerifyTTLSeconds >= identity.ExpirationSeconds || identity.DeletionLeadSeconds < 0 ||
+		identity.DeletionLeadSeconds >= identity.ExpirationSeconds || identity.DeletionMaxAttempts <= 0 || identity.DeletionMaxAttempts > 100 {
+		return "", fmt.Errorf("managed provider file upload policy identity is invalid")
+	}
+	return deriver.calculateHexHMAC("provider_file_upload_policy", identity)
 }
 
 func (deriver *ManagedConsensusKeyDeriver) DeriveProviderFileTargetFingerprint(identity ManagedProviderFileTargetIdentity) (string, error) {

@@ -52,17 +52,26 @@ func prepareProviderFileLifecycleTest(t *testing.T) *contextconsensus.ManagedCon
 	t.Setenv("CONTEXT_CONSENSUS_PREVIOUS_ENCRYPTION_KEYS", "")
 	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
 	require.NoError(t, err)
-	persistProviderFileReadinessEvidence(t, runtime, &Target{
+	persistProviderFileReadinessEvidence(t, runtime, providerFileLifecycleTestSettings(), &Target{
 		ChannelID: 41, ChannelType: constant.ChannelTypeOpenAI, Endpoint: openai.OpenAIProviderFileOrigin,
 		Organization: "org-exclusive", Project: "proj-exclusive", credential: "sk-provider-secret",
 	})
 	return runtime
 }
 
-func persistProviderFileReadinessEvidence(t *testing.T, runtime *contextconsensus.ManagedConsensusRuntime, target *Target) {
+func providerFileLifecycleTestSettings() *model_setting.SmartRoutingSettings {
+	return &model_setting.SmartRoutingSettings{
+		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
+		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
+		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
+		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
+	}
+}
+
+func persistProviderFileReadinessEvidence(t *testing.T, runtime *contextconsensus.ManagedConsensusRuntime, settings *model_setting.SmartRoutingSettings, target *Target) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
-	evidence, err := BuildReadinessEvidence(runtime, target, ReadinessArtifactEvidence{
+	evidence, err := BuildReadinessEvidence(runtime, settings, target, ReadinessArtifactEvidence{
 		ProjectEvidenceHMAC: strings.Repeat("1", 64), SandboxEvidenceHMAC: strings.Repeat("2", 64),
 		ImmutableAuditEvidenceHMAC: strings.Repeat("3", 64), DatabaseMatrixEvidenceHMAC: strings.Repeat("4", 64),
 	}, now.Add(-time.Hour), now.Add(time.Hour))
@@ -103,12 +112,7 @@ func TestUploadActivatesVerifiedLifecycleAndReplaysOpaqueHandle(t *testing.T) {
 		ChannelID: 41, ChannelType: 1, Endpoint: openai.OpenAIProviderFileOrigin, Organization: "org-exclusive", Project: "proj-exclusive",
 		credential: "sk-provider-secret", client: client,
 	}
-	settings := &model_setting.SmartRoutingSettings{
-		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
-		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
-		ProviderFileDeletionMaxAttempts: 5, ProviderFileDeletionTimeoutSeconds: 30, ProviderFileExclusiveProjectAttested: true,
-		ProviderFileSandboxContractVerified: true,
-	}
+	settings := providerFileLifecycleTestSettings()
 	request := UploadRequest{
 		Owner:          contextconsensus.ManagedConsensusOwner{UserID: 7, TokenID: 9, EndpointFamily: managedProviderFileEndpointFamily},
 		IdempotencyKey: "upload-idempotency-key", Body: body, Settings: settings, Runtime: runtime, Target: target,

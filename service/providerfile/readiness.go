@@ -28,8 +28,8 @@ func VerifyDeletionReadiness(ctx context.Context, settings *model_setting.SmartR
 	return nil
 }
 
-func BuildReadinessEvidence(runtime *contextconsensus.ManagedConsensusRuntime, target *Target, artifacts ReadinessArtifactEvidence, attestedAt, expiresAt time.Time) (*model.ManagedProviderFileReadinessEvidence, error) {
-	if runtime == nil || runtime.KeyDeriver == nil || target == nil {
+func BuildReadinessEvidence(runtime *contextconsensus.ManagedConsensusRuntime, settings *model_setting.SmartRoutingSettings, target *Target, artifacts ReadinessArtifactEvidence, attestedAt, expiresAt time.Time) (*model.ManagedProviderFileReadinessEvidence, error) {
+	if runtime == nil || runtime.KeyDeriver == nil || target == nil || model_setting.ValidateProviderFileLifecycleReadiness(settings) != nil {
 		return nil, ErrReadinessEvidenceUnavailable
 	}
 	attestedAt = attestedAt.UTC().Truncate(time.Second)
@@ -46,14 +46,24 @@ func BuildReadinessEvidence(runtime *contextconsensus.ManagedConsensusRuntime, t
 	if err != nil {
 		return nil, ErrReadinessEvidenceUnavailable
 	}
+	maintenancePolicyFingerprint, err := providerFileMaintenancePolicyFingerprint(runtime.KeyDeriver, settings)
+	if err != nil {
+		return nil, ErrReadinessEvidenceUnavailable
+	}
+	uploadPolicyFingerprint, err := providerFileUploadPolicyFingerprint(runtime.KeyDeriver, settings)
+	if err != nil {
+		return nil, ErrReadinessEvidenceUnavailable
+	}
 	evidence := &model.ManagedProviderFileReadinessEvidence{
 		TargetFingerprint: targetFingerprint, ScopeFingerprint: scopeFingerprint, CredentialFingerprint: credentialFingerprint,
+		MaintenancePolicyFingerprint: maintenancePolicyFingerprint, UploadPolicyFingerprint: uploadPolicyFingerprint,
 		ProjectEvidenceHMAC: artifacts.ProjectEvidenceHMAC, SandboxEvidenceHMAC: artifacts.SandboxEvidenceHMAC,
 		ImmutableAuditEvidenceHMAC: artifacts.ImmutableAuditEvidenceHMAC, DatabaseMatrixEvidenceHMAC: artifacts.DatabaseMatrixEvidenceHMAC,
 		ProjectAttestationVersion: model.ManagedProviderFileProjectAttestationVersion,
 		SandboxContractVersion:    model.ManagedProviderFileSandboxContractVersion,
 		ImmutableAuditVersion:     model.ManagedProviderFileImmutableAuditVersion,
 		DatabaseMatrixVersion:     model.ManagedProviderFileDatabaseMatrixVersion,
+		PolicyVersion:             model.ManagedProviderFilePolicyVersion,
 		KeyVersion:                runtime.KeyDeriver.KeyVersion(), AttestedAt: attestedAt, ExpiresAt: expiresAt,
 	}
 	evidenceHMAC, err := runtime.KeyDeriver.DeriveProviderFileReadinessEvidenceHMAC(readinessEvidenceIdentity(evidence))
@@ -68,6 +78,18 @@ func BuildReadinessEvidence(runtime *contextconsensus.ManagedConsensusRuntime, t
 }
 
 func VerifyReadinessEvidence(ctx context.Context, settings *model_setting.SmartRoutingSettings, runtime *contextconsensus.ManagedConsensusRuntime, target *Target, now time.Time) error {
+	evidence, err := GetVerifiedReadinessEvidence(ctx, settings, runtime, target, now)
+	if err != nil {
+		return err
+	}
+	uploadPolicyFingerprint, err := providerFileUploadPolicyFingerprint(runtime.KeyDeriver, settings)
+	if err != nil || !hmac.Equal([]byte(uploadPolicyFingerprint), []byte(evidence.UploadPolicyFingerprint)) {
+		return ErrReadinessEvidenceUnavailable
+	}
+	return nil
+}
+
+func VerifyMaintenanceReadinessEvidence(ctx context.Context, settings *model_setting.SmartRoutingSettings, runtime *contextconsensus.ManagedConsensusRuntime, target *Target, now time.Time) error {
 	_, err := GetVerifiedReadinessEvidence(ctx, settings, runtime, target, now)
 	return err
 }
@@ -89,7 +111,12 @@ func GetVerifiedReadinessEvidence(ctx context.Context, settings *model_setting.S
 	if err != nil {
 		return nil, ErrReadinessEvidenceUnavailable
 	}
-	evidence, err := model.GetManagedProviderFileReadinessEvidence(ctx, targetFingerprint, scopeFingerprint, credentialFingerprint, runtime.KeyDeriver.KeyVersion(), now.UTC())
+	maintenancePolicyFingerprint, err := providerFileMaintenancePolicyFingerprint(runtime.KeyDeriver, settings)
+	if err != nil {
+		return nil, ErrReadinessEvidenceUnavailable
+	}
+	evidence, err := model.GetManagedProviderFileReadinessEvidence(ctx, targetFingerprint, scopeFingerprint, credentialFingerprint,
+		maintenancePolicyFingerprint, runtime.KeyDeriver.KeyVersion(), now.UTC())
 	if err != nil || evidence == nil || evidence.AttestedAt.After(now.UTC()) {
 		return nil, ErrReadinessEvidenceUnavailable
 	}
@@ -106,10 +133,39 @@ func readinessEvidenceIdentity(evidence *model.ManagedProviderFileReadinessEvide
 	}
 	return contextconsensus.ManagedProviderFileReadinessEvidenceIdentity{
 		TargetFingerprint: evidence.TargetFingerprint, ScopeFingerprint: evidence.ScopeFingerprint, CredentialFingerprint: evidence.CredentialFingerprint,
+		MaintenancePolicyFingerprint: evidence.MaintenancePolicyFingerprint, UploadPolicyFingerprint: evidence.UploadPolicyFingerprint,
 		ProjectEvidenceHMAC: evidence.ProjectEvidenceHMAC, SandboxEvidenceHMAC: evidence.SandboxEvidenceHMAC,
 		ImmutableAuditEvidenceHMAC: evidence.ImmutableAuditEvidenceHMAC, DatabaseMatrixEvidenceHMAC: evidence.DatabaseMatrixEvidenceHMAC,
 		ProjectAttestationVersion: evidence.ProjectAttestationVersion, SandboxContractVersion: evidence.SandboxContractVersion,
 		ImmutableAuditVersion: evidence.ImmutableAuditVersion, DatabaseMatrixVersion: evidence.DatabaseMatrixVersion,
+		PolicyVersion:  evidence.PolicyVersion,
 		AttestedAtUnix: evidence.AttestedAt.UTC().Unix(), ExpiresAtUnix: evidence.ExpiresAt.UTC().Unix(),
 	}
+}
+
+func providerFileMaintenancePolicyFingerprint(deriver *contextconsensus.ManagedConsensusKeyDeriver, settings *model_setting.SmartRoutingSettings) (string, error) {
+	if deriver == nil || settings == nil {
+		return "", ErrReadinessEvidenceUnavailable
+	}
+	maintenancePolicyFingerprint, err := deriver.DeriveProviderFileMaintenancePolicyFingerprint(contextconsensus.ManagedProviderFileMaintenancePolicyIdentity{
+		DeletionBatchSize: settings.ProviderFileDeletionBatchSize, DeletionTimeoutSeconds: settings.ProviderFileDeletionTimeoutSeconds,
+	})
+	if err != nil {
+		return "", ErrReadinessEvidenceUnavailable
+	}
+	return maintenancePolicyFingerprint, nil
+}
+
+func providerFileUploadPolicyFingerprint(deriver *contextconsensus.ManagedConsensusKeyDeriver, settings *model_setting.SmartRoutingSettings) (string, error) {
+	if deriver == nil || settings == nil {
+		return "", ErrReadinessEvidenceUnavailable
+	}
+	uploadPolicyFingerprint, err := deriver.DeriveProviderFileUploadPolicyFingerprint(contextconsensus.ManagedProviderFileUploadPolicyIdentity{
+		ExpirationSeconds: settings.ProviderFileExpirationSeconds, MetadataVerifyTTLSeconds: settings.ProviderFileMetadataVerifyTTLSeconds,
+		DeletionLeadSeconds: settings.ProviderFileDeletionLeadSeconds, DeletionMaxAttempts: settings.ProviderFileDeletionMaxAttempts,
+	})
+	if err != nil {
+		return "", ErrReadinessEvidenceUnavailable
+	}
+	return uploadPolicyFingerprint, nil
 }

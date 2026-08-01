@@ -164,7 +164,7 @@ func (providerFileDeletionHandler) Type() string { return model.SystemTaskTypePr
 func (providerFileDeletionHandler) Enabled() bool {
 	settings := model_setting.GetSmartRoutingSettings()
 	runtime, err := contextconsensus.NewManagedConsensusCryptoRuntimeFromEnvironment()
-	if err != nil || providerfile.VerifyDeletionReadiness(context.Background(), settings, runtime, nil, time.Now().UTC()) != nil {
+	if err != nil || runtime == nil || runtime.KeyDeriver == nil || model_setting.ValidateProviderFileDeletionReadiness(settings) != nil {
 		return false
 	}
 	due, err := model.HasDueManagedProviderFileDeletions(context.Background(), time.Now().UTC())

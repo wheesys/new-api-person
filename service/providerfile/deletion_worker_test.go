@@ -82,12 +82,7 @@ func prepareDeletionWorkerFixture(t *testing.T, deleteStatus int, deleteBody str
 		ChannelID: channel.Id, ChannelType: channel.Type, Endpoint: openai.OpenAIProviderFileOrigin,
 		Organization: organization, Project: project, credential: channel.Key, client: client,
 	}
-	settings := &model_setting.SmartRoutingSettings{
-		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: channel.Id, ProviderFileExpirationSeconds: 3600,
-		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
-		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
-		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
-	}
+	settings := providerFileLifecycleTestSettings()
 	fixture.settings = settings
 	upload, uploadErr := Upload(context.Background(), UploadRequest{
 		Owner: NewOwner(7, 9), IdempotencyKey: "deletion-worker-idempotency", Body: body,
@@ -185,10 +180,38 @@ func TestDeletionWorkerReadinessGatePreventsProviderCall(t *testing.T) {
 func TestDeletionWorkerContinuesAfterNewUploadsAreDisabled(t *testing.T) {
 	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
 	fixture.settings.ProviderFileLifecycleEnabled = false
+	fixture.settings.ProviderFileExpirationSeconds = 0
+	fixture.settings.ProviderFileMetadataVerifyTTLSeconds = 0
+	fixture.settings.ProviderFileDeletionLeadSeconds = 0
 
 	summary, err := RunDeletionBatch(context.Background(), fixture.options())
 	require.NoError(t, err)
 	assert.Equal(t, DeletionSummary{Due: 1, Claimed: 1, Deleted: 1}, summary)
+	assert.Equal(t, 1, fixture.deleteCount)
+}
+
+func TestDeletionWorkerUsesSignedExecutionPolicy(t *testing.T) {
+	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
+	options := fixture.options()
+	options.BatchSize--
+	_, err := RunDeletionBatch(context.Background(), options)
+	require.ErrorContains(t, err, "configuration is invalid")
+	assert.Zero(t, fixture.deleteCount)
+
+	options = fixture.options()
+	options.Timeout -= time.Second
+	_, err = RunDeletionBatch(context.Background(), options)
+	require.ErrorContains(t, err, "configuration is invalid")
+	assert.Zero(t, fixture.deleteCount)
+}
+
+func TestDeletionWorkerVerifiesLifecycleTargetInsteadOfCurrentUploadTarget(t *testing.T) {
+	fixture := prepareDeletionWorkerFixture(t, http.StatusOK, `{"id":"file-deletion-worker","object":"file","deleted":true}`, false)
+	fixture.settings.ProviderFileOpenAIChannelID = 999
+
+	summary, err := RunDeletionBatch(context.Background(), fixture.options())
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Deleted)
 	assert.Equal(t, 1, fixture.deleteCount)
 }
 
@@ -272,12 +295,12 @@ func TestDeletionWorkerIsolatesPoisonedOutboxWithinBatch(t *testing.T) {
 	require.NoError(t, model.DB.Create(&poisoned).Error)
 
 	options := fixture.options()
-	options.BatchSize = 1
 	summary, err := RunDeletionBatch(context.Background(), options)
 	require.NoError(t, err)
-	assert.Equal(t, 1, summary.Due)
+	assert.Equal(t, 2, summary.Due)
 	assert.Equal(t, 1, summary.Failed)
-	assert.Equal(t, 0, fixture.deleteCount)
+	assert.Equal(t, 1, summary.Deleted)
+	assert.Equal(t, 1, fixture.deleteCount)
 	require.NoError(t, model.DB.First(&poisoned, "id = ?", poisoned.Id).Error)
 	require.NoError(t, poisoned.Validate())
 	assert.Equal(t, model.ManagedProviderFileDeletionOutboxStateTerminalFailed, poisoned.State)
@@ -285,8 +308,7 @@ func TestDeletionWorkerIsolatesPoisonedOutboxWithinBatch(t *testing.T) {
 
 	summary, err = RunDeletionBatch(context.Background(), options)
 	require.NoError(t, err)
-	assert.Equal(t, 1, summary.Due)
-	assert.Equal(t, 1, summary.Deleted)
+	assert.Zero(t, summary.Due)
 	assert.Equal(t, 1, fixture.deleteCount)
 }
 

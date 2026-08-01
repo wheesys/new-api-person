@@ -74,7 +74,7 @@ func loadMaintenanceTarget(ctx context.Context, settings *model_setting.SmartRou
 		return nil, ErrTargetUnavailable
 	}
 	target, err := targetFromChannel(channel, httpClient, false)
-	if err != nil || VerifyReadinessEvidence(ctx, settings, runtime, target, now) != nil {
+	if err != nil || VerifyMaintenanceReadinessEvidence(ctx, settings, runtime, target, now) != nil {
 		return nil, ErrTargetUnavailable
 	}
 	return target, nil

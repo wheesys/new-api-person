@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -49,15 +48,18 @@ func TestTargetFromChannelRequiresDedicatedOfficialSingleKeyChannel(t *testing.T
 
 func TestLoadTargetRequiresValidTargetBoundReadinessEvidence(t *testing.T) {
 	runtime := prepareProviderFileLifecycleTest(t)
-	settings := &model_setting.SmartRoutingSettings{
-		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
-		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
-		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
-		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
-	}
+	settings := providerFileLifecycleTestSettings()
 	target, err := LoadTarget(settings, runtime, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "proj-exclusive", target.Project)
+	settings.ProviderFileExpirationSeconds = 7200
+	_, err = LoadTarget(settings, runtime, nil)
+	assert.ErrorIs(t, err, ErrTargetUnavailable)
+	settings.ProviderFileExpirationSeconds = 3600
+	settings.ProviderFileDeletionMaxAttempts++
+	_, err = LoadTarget(settings, runtime, nil)
+	assert.ErrorIs(t, err, ErrTargetUnavailable)
+	settings.ProviderFileDeletionMaxAttempts--
 
 	settings.ProviderFileSandboxContractVerified = false
 	_, err = LoadTarget(settings, runtime, nil)
@@ -73,14 +75,18 @@ func TestLoadTargetRequiresValidTargetBoundReadinessEvidence(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTargetUnavailable)
 }
 
+func TestMaintenanceReadinessRejectsDeletionPolicyDrift(t *testing.T) {
+	runtime := prepareProviderFileLifecycleTest(t)
+	settings := providerFileLifecycleTestSettings()
+	settings.ProviderFileDeletionBatchSize++
+
+	assert.ErrorIs(t, VerifyDeletionReadiness(context.Background(), settings, runtime, nil, time.Now().UTC()),
+		ErrReadinessEvidenceUnavailable)
+}
+
 func TestLoadTargetRejectsDisabledUploadsAndCredentialRotationWithoutNewEvidence(t *testing.T) {
 	runtime := prepareProviderFileLifecycleTest(t)
-	settings := &model_setting.SmartRoutingSettings{
-		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
-		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
-		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
-		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true,
-	}
+	settings := providerFileLifecycleTestSettings()
 
 	settings.ProviderFileLifecycleEnabled = false
 	_, err := LoadTarget(settings, runtime, nil)

@@ -167,12 +167,9 @@ func TestReconciliationObjectCapTerminalStateAcceptsExactBound(t *testing.T) {
 }
 
 func reconciliationTestSettings() *model_setting.SmartRoutingSettings {
-	return &model_setting.SmartRoutingSettings{
-		ProviderFileLifecycleEnabled: true, ProviderFileOpenAIChannelID: 41, ProviderFileExpirationSeconds: 3600,
-		ProviderFileMetadataVerifyTTLSeconds: 0, ProviderFileDeletionLeadSeconds: 60, ProviderFileDeletionBatchSize: 10,
-		ProviderFileDeletionMaxAttempts: 3, ProviderFileDeletionTimeoutSeconds: 5,
-		ProviderFileExclusiveProjectAttested: true, ProviderFileSandboxContractVerified: true, ProviderFileReconciliationEnabled: true,
-	}
+	settings := providerFileLifecycleTestSettings()
+	settings.ProviderFileReconciliationEnabled = true
+	return settings
 }
 
 func reconciliationListItem(providerFileID, filename string, bytes int64, createdAt, expiresAt time.Time) map[string]any {

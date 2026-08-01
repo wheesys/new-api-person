@@ -113,6 +113,7 @@
       - [x] 完成阶段 D-3c.1：实现严格 DELETE client、持久化派发边界、CAS lease worker、有限重试、未知终态、审计链、告警和渠道变更保护，并保持生产关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3c1-implementation-2026-07-31.md`。
       - [ ] 完成阶段 D-3c.2：完成真实 sandbox 契约测试、独占 Project 声明、孤儿对账和生产 readiness 门禁。
         - [x] 完成本地实现：一等 Project、target/scope/credential-bound 短期签名 readiness、只读有界扫描、AEAD/HMAC 候选隔离、系统任务和 SQLite/MySQL 5.7/PostgreSQL 9.6 实库矩阵，见 `doc/auto-smart-routing-context-consensus-stage-d3c2-local-implementation-2026-07-31.md`。
+        - [x] 准备真实 OpenAI Files live observation harness：build tag、双 Project 隔离、正确/错误/缺失 Project、删除/到期观察、有界 cleanup ledger 和脱敏证据文件，见 `doc/openai-files-sandbox-live-observation-v1.md`。
         - [ ] 完成外部取证：真实 OpenAI sandbox、Project 独占性、外部 WORM、生产监控/备份/恢复证据及临执行前生产高风险确认。
     - 阶段 D-3 的首期范围和外部门禁见 `doc/auto-smart-routing-context-consensus-stage-d3-readiness-2026-07-31.md`。
 - [x] 补充“渠道、上游适配器、模型、能力”业务关系图，明确配置、路由与运行时边界，见 `doc/project-module-business-relationships.md`。

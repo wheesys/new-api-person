@@ -1,6 +1,6 @@
 # ContextConsensus 阶段 D-3 就绪性核查
 
-日期：2026-07-31
+日期：2026-08-01
 
 ## 结论
 
@@ -56,6 +56,7 @@
 - D-3b.2：已完成专用上传/查询 API、原生 OpenAI 单 Key 客户端、权威元数据核验、owner-bound 句柄和 Responses 精确目标绑定，见 `doc/auto-smart-routing-context-consensus-stage-d3b2-implementation-2026-07-31.md`。
 - D-3c.1：已完成严格 DELETE client、持久化派发边界、CAS lease worker、有限重试、未知终态、审计链、告警和渠道变更保护，生产硬门禁继续关闭，见 `doc/auto-smart-routing-context-consensus-stage-d3c1-implementation-2026-07-31.md`。
 - D-3c.2：已完成一等 Project、target/scope/credential-bound 短期签名 readiness、只读有界孤儿对账和 SQLite/MySQL 5.7/PostgreSQL 9.6 本地矩阵，见 `doc/auto-smart-routing-context-consensus-stage-d3c2-local-implementation-2026-07-31.md`；真实 sandbox、Project 独占性、外部 WORM 与生产恢复/监控证据仍待完成。
+- 已准备但未执行真实 sandbox observation harness，运行边界和证据格式见 `doc/openai-files-sandbox-live-observation-v1.md`；该 harness 不等价于外部 readiness 证据。
 
 ## 依据
 
