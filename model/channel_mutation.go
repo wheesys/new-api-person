@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -118,6 +119,9 @@ func (channel *Channel) Delete() error {
 	var lockedChannel Channel
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedChannel, "id = ?", channel.Id).Error; err != nil {
 		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
 		return err
 	}
 	if err := ensureManagedProviderFileChannelsMutable(tx, []int{channel.Id}); err != nil {

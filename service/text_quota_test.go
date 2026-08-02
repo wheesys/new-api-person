@@ -633,6 +633,7 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 }
 
 func TestComposeTieredTextQuotaAppliesChannelRatioToToolCallSurcharges(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)

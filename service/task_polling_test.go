@@ -376,6 +376,7 @@ func TestUpdateVideoTasksMixedChannelSleepSettings(t *testing.T) {
 }
 
 func TestUpdateSunoTasksStalePollsRefundExactlyOnce(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 
 	const userID, tokenID, channelID = 401, 401, 401
@@ -458,6 +459,7 @@ func TestRunTaskPollingOnceDoesNotRefundHistoricalFailedTask(t *testing.T) {
 }
 
 func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 
 	const (

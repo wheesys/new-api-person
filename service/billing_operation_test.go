@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	apitypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -92,9 +93,9 @@ func TestPostTextConsumeQuotaDurableOperationFreezesFixedBilling(t *testing.T) {
 	common.BatchUpdateEnabled = true
 	t.Cleanup(func() { common.BatchUpdateEnabled = originalBatchUpdateEnabled })
 	ctx, info, user, token, channel := prepareDurableTextBillingTest(t, "main-fixed")
-	info.PriceData = types.PriceData{
+	info.PriceData = apitypes.PriceData{
 		ModelRatio: 1, CompletionRatio: 1, ChannelRatio: 1, ChannelRatioSet: true,
-		QuotaToPreConsume: 20, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		QuotaToPreConsume: 20, GroupRatioInfo: apitypes.GroupRatioInfo{GroupRatio: 1},
 	}
 	require.Nil(t, PreConsumeBilling(ctx, 20, info))
 	result, err := PostTextConsumeQuotaResult(ctx, info, &dto.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}, nil)
@@ -105,9 +106,9 @@ func TestPostTextConsumeQuotaDurableOperationFreezesFixedBilling(t *testing.T) {
 
 func TestNewBillingSessionDurableOperationRestoresReservedPricingSnapshot(t *testing.T) {
 	ctx, info, _, token, _ := prepareDurableTextBillingTest(t, "reserved-replay")
-	info.PriceData = types.PriceData{
+	info.PriceData = apitypes.PriceData{
 		ModelRatio: 1, CompletionRatio: 2, ChannelRatio: 1, ChannelRatioSet: true,
-		QuotaToPreConsume: 20, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		QuotaToPreConsume: 20, GroupRatioInfo: apitypes.GroupRatioInfo{GroupRatio: 1},
 	}
 	require.Nil(t, PreConsumeBilling(ctx, 20, info))
 
@@ -128,9 +129,9 @@ func TestNewBillingSessionDurableOperationRestoresReservedPricingSnapshot(t *tes
 func TestPostTextConsumeQuotaDurableOperationFreezesTieredBilling(t *testing.T) {
 	ctx, info, user, token, channel := prepareDurableTextBillingTest(t, "summary")
 	expression := `tier("base", p * 2 + c * 4)`
-	info.PriceData = types.PriceData{
+	info.PriceData = apitypes.PriceData{
 		ModelRatio: 1, CompletionRatio: 1, ChannelRatio: 1, ChannelRatioSet: true,
-		QuotaToPreConsume: 20, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		QuotaToPreConsume: 20, GroupRatioInfo: apitypes.GroupRatioInfo{GroupRatio: 1},
 	}
 	info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{
 		BillingMode: "tiered_expr", ModelName: info.OriginModelName, ExprString: expression,
@@ -147,7 +148,7 @@ func TestPostTextConsumeQuotaDurableOperationFreezesTieredBilling(t *testing.T) 
 
 func TestPostTextConsumeQuotaDurableOperationFreezesFreeBilling(t *testing.T) {
 	ctx, info, user, token, channel := prepareDurableTextBillingTest(t, "main-free")
-	info.PriceData = types.PriceData{FreeModel: true, ChannelRatio: 1, ChannelRatioSet: true}
+	info.PriceData = apitypes.PriceData{FreeModel: true, ChannelRatio: 1, ChannelRatioSet: true}
 	require.Nil(t, PreConsumeBilling(ctx, 0, info))
 	result, err := PostTextConsumeQuotaResult(ctx, info, &dto.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}, nil)
 	require.NoError(t, err)

@@ -407,6 +407,7 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 }
 
 func TestRefundTaskQuota_FundingFailureKeepsPendingMarker(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 	ctx := context.Background()
 

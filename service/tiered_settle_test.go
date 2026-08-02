@@ -366,6 +366,7 @@ func TestPrepareTieredBillingForSelectedGroupUpdatesReservation(t *testing.T) {
 }
 
 func TestPrepareTieredBillingForSelectedGroupStartsBillingAfterFreeGroup(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 	gin.SetMode(gin.TestMode)
 
@@ -437,6 +438,7 @@ func TestPrepareTieredBillingForSelectedGroupPaidToFreeKeepsFreeModelFalse(t *te
 }
 
 func TestPrepareTieredBillingForSelectedGroupTopUpArrearsAllowsNegativeBalance(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 
 	const userID = 701
@@ -490,6 +492,7 @@ func TestPrepareTieredBillingForSelectedGroupTopUpArrearsAllowsNegativeBalance(t
 }
 
 func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {
+	t.Skip("skipped: wallet user-balance funding removed in this fork")
 	truncate(t)
 
 	const userID = 702

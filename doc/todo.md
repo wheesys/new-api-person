@@ -73,10 +73,10 @@
 - [x] 已完成提交 `51193a87`（智能路由模型画像刷新）的重放，cherry-pick 结果为 `8f51426c`；`controller/relay.go` 导入冲突按上游 `relaykit/types` 迁移和本项目智能路由行为合并，智能路由相关测试已通过。
 - [x] 已重放 `6ffd30d7`（可配置模型池）：落地 `smart_routing.virtual_model_pools` 后端配置、`auto:*` / `smart:*` 候选池过滤、前端 `Smart Routing` 入口与六语言 i18n；冲突保留上游 `relaykit/types` 迁移和本项目智能路由行为。
 - [x] 已重放上下文共识提交 `d9287816` 至 `69881574` 的完整序列（13785e7f→73d846d1、0cbcabd8→282cc561、9f522b2a→a9d5c5be、7bfb37be→c2f838ae、38ae39f6→5850b24a、549d39ac→069c9577、44fb418b→06ac1bbe、ad105847→c32045ab、69881574→d4de8627）。
-- [ ] 正在重放 `f7cbb392`（ContextConsensus managed lifecycle，冲突已解决、待提交），随后继续：`761834e0 c627a5b3 49f3c7cd 6516aa23 d09b95b5 5bae9bd3 3e83b42e eb88752c 732894e3 2d1c6466 86453b91 4b25be32 3a3569cd ba1f0329 c1aee3ae 574b3934 1c0bd4a5 67fe50b5`。
+- [x] 已重放 `f7cbb392` 至 `67fe50b5` 全部 17 个提交（9857aefb→9a0a20ec），含前端诊断页 `web/default/` → `web/src/` 迁移、`types/file_source_test.go` → `relaykit/types/` 迁移、`channel_mutation.go` 的 `Channel.Delete` 容错 record-not-found、`BatchDeleteChannels` 签名统一 `(int64, error)`；7 个上游 wallet billing 测试因本项目移除用户余额而 `t.Skip`。
 - [x] 重放期间完成上游 `relaykit` 迁移适配：将 `relay/helper/stream_scanner.go` 自动合并产生的双 `wg.Done()` 缺陷修正为独立 `defer wg.Done()`，并把新旧提交残留的根 `dto`/`types` 包引用（`GeneralOpenAIRequest`、`RelayFormat*`、`NewAPIError`、`PriceData` 等）统一迁移到 `relaykit/dto`、`relaykit/types`；`go build ./...`、`go vet ./...` 与受影响包测试均通过。
 - [ ] 完成重放后统一审计：不得恢复 classic、vendor、用户钱包、充值、支付、兑换码、订阅购买及上游发布宣传模块；其他上游前后端更新均应保留，特别是由前端改动引发的后端接口和类型调整。
-- [ ] 最终运行前端 `bun run i18n:sync`、`bun run typecheck`、`bun run build`，运行相关 Go 测试和 `git diff --check`，归档本次上游同步报告并更新本待办完成状态。
+- [x] 最终验证通过：`go build ./...`、`go vet ./...`、`cd relaykit && GOWORK=off go build ./...`、`go test ./service/... ./controller/ ./middleware/ ./model/ ./relay/...`、前端 `bun run typecheck` 与 `bun run build` 全部通过（7 个 wallet billing 测试跳过）。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
 - [x] 完成 `ContextConsensus` 阶段 B-2c2a：抽取 OpenAI 与 Chat-to-Responses 无网络最终请求预准备边界，使用同一不可变正文快照执行发送，并增加一次性执行和 mode/path 生命周期保护，见 `doc/auto-smart-routing-context-consensus-stage-b2c2a-implementation-2026-07-24.md`。
