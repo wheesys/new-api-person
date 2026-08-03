@@ -174,13 +174,10 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 	if callID == "" {
 		callID = fmt.Sprintf("%s_call_%d", responseID, index)
 	}
-	// OpenAI Responses 的 function_call item id 用 fc_ 前缀，且与 call_id（客户端
-	// 在 tool_result 中引用的值）区分；call_id 沿用上游 chat tool_call.id。
-	itemID := fmt.Sprintf("fc_%s_%d", sanitizeResponseID(responseID), index)
 	if toolCall.Type == "" || toolCall.Type == "function" {
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
-			ID:        itemID,
+			ID:        callID,
 			Status:    status,
 			CallId:    callID,
 			Name:      toolCall.Function.Name,
@@ -189,25 +186,11 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 	}
 	return dto.ResponsesOutput{
 		Type:      toolCall.Type,
-		ID:        itemID,
+		ID:        callID,
 		Status:    status,
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
-}
-
-// sanitizeResponseID 保留 id 的字母数字/下划线/连字符部分，用于派生合规的 item id。
-func sanitizeResponseID(id string) string {
-	var b strings.Builder
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			b.WriteRune(r)
-		}
-	}
-	if b.Len() == 0 {
-		return "resp"
-	}
-	return b.String()
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {

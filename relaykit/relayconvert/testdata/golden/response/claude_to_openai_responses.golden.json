@@ -24,7 +24,7 @@
     },
     {
       "type": "function_call",
-      "id": "fc_msg_fixed_0",
+      "id": "toolu_abc",
       "status": "completed",
       "role": "",
       "content": null,

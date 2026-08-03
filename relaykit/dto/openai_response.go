@@ -395,10 +395,6 @@ type ResponsesStreamResponse struct {
 	SummaryIndex *int                           `json:"summary_index,omitempty"`
 	ItemID       string                         `json:"item_id,omitempty"`
 	Part         *ResponsesReasoningSummaryPart `json:"part,omitempty"`
-	// Arguments 用于 response.function_call_arguments.done 携带完整参数字符串。
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	// SequenceNumber 是事件在响应内的单调递增序号（OpenAI Responses 流式规范）。
-	SequenceNumber int `json:"sequence_number,omitempty"`
 }
 
 // GetOpenAIError 从动态错误类型中提取OpenAIError结构

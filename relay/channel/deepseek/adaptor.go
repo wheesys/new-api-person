@@ -14,7 +14,6 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
@@ -69,9 +68,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		switch info.RelayMode {
 		case constant.RelayModeCompletions:
 			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
+		case constant.RelayModeResponses:
+			return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
 		default:
-			// RelayModeResponses 也走 /v1/chat/completions：DeepSeek 官方不支持 /responses，
-			// 由 ConvertOpenAIResponsesRequest 把 responses 请求转成 chat，响应侧再转回。
 			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
 		}
 	}
@@ -161,21 +160,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	return nil, errors.New("not implemented")
 }
 
-func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// DeepSeek 官方只支持 /chat/completions，把 responses 请求转成 chat 请求，
-	// 响应侧由 DeepSeekChatToResponses(Stream)Handler 转回 responses（含 DSML 解析）。
-	result, err := relayconvert.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, &request)
-	if err != nil {
-		return nil, err
-	}
-	chatReq, ok := result.Value.(*dto.GeneralOpenAIRequest)
-	if !ok {
-		return nil, fmt.Errorf("expected *dto.GeneralOpenAIRequest, got %T", result.Value)
-	}
-	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, chatReq); err != nil {
-		return nil, err
-	}
-	return chatReq, nil
+func (a *Adaptor) ConvertOpenAIResponsesRequest(_ *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	applyDeepSeekV4ResponsesThinkingSuffix(info, &request)
+	return request, nil
 }
 
 func applyDeepSeekV4ResponsesThinkingSuffix(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) {
@@ -211,12 +198,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case types.RelayFormatClaude:
 		adaptor := claude.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
-	case types.RelayFormatOpenAIResponses:
-		// DeepSeek 走 chat→responses，并在响应侧解析 content 里的 DSML 工具调用。
-		if info.IsStream {
-			return DeepSeekChatToResponsesStreamHandler(c, info, resp)
-		}
-		return DeepSeekChatToResponsesHandler(c, info, resp)
 	default:
 		adaptor := openai.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
