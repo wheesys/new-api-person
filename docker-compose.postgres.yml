@@ -5,9 +5,9 @@
 #   2. docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 
 services:
-  new-api:
+  new-api-person:
     environment:
-      SQL_DSN: "postgresql://root:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}@postgres:5432/new-api"
+      SQL_DSN: "postgresql://root:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}@postgres:5432/new-api-person"
       SQL_MAX_OPEN_CONNS: "1000"
       SQL_MAX_IDLE_CONNS: "100"
     depends_on:
@@ -18,18 +18,18 @@ services:
 
   postgres:
     image: postgres:15
-    container_name: new-api-postgres
+    container_name: new-api-person-postgres
     restart: always
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env before starting}"
-      POSTGRES_DB: new-api
+      POSTGRES_DB: new-api-person
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     networks:
-      - new-api-network
+      - new-api-person-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
+      test: ["CMD-SHELL", "pg_isready -U root -d new-api-person"]
       interval: 5s
       timeout: 3s
       retries: 5

@@ -1,4 +1,4 @@
-# New-API Docker Compose Configuration
+# New-API-Person Docker Compose Configuration
 #
 # Quick Start:
 #   1. Copy .env.example to .env, then set SESSION_SECRET and REDIS_PASSWORD
@@ -11,9 +11,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 
 services:
-  new-api:
+  new-api-person:
     image: walllee/new-api-person:latest
-    container_name: new-api
+    container_name: new-api-person
     restart: always
     command: --log-dir /app/logs
     ports:
@@ -30,7 +30,7 @@ services:
       TZ: Asia/Shanghai
       ERROR_LOG_ENABLED: "true"
       BATCH_UPDATE_ENABLED: "true"
-      NODE_NAME: new-api-node-1
+      NODE_NAME: new-api-person-node-1
       SESSION_COOKIE_SECURE: "false"
 #      SESSION_COOKIE_TRUSTED_URL: "https://example.com,https://admin.example.com"
 #      TRUSTED_PROXIES: "172.20.0.0/16"
@@ -47,7 +47,7 @@ services:
     depends_on:
       - redis
     networks:
-      - new-api-network
+      - new-api-person-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
@@ -56,15 +56,15 @@ services:
 
   redis:
     image: redis:latest
-    container_name: new-api-redis
+    container_name: new-api-person-redis
     restart: always
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env before starting}"]
     networks:
-      - new-api-network
+      - new-api-person-network
 
 #  clickhouse:
 #    image: clickhouse/clickhouse-server:24.8
-#    container_name: new-api-clickhouse
+#    container_name: new-api-person-clickhouse
 #    restart: always
 #    environment:
 #      CLICKHOUSE_DB: new_api_logs
@@ -74,11 +74,11 @@ services:
 #    volumes:
 #      - ./clickhouse-data:/var/lib/clickhouse
 #    networks:
-#      - new-api-network
+#      - new-api-person-network
 #    ports:
 #      - "8123:8123"  # HTTP interface, uncomment if you need external access
 #      - "9000:9000" # Native interface used by the LOG_SQL_DSN example above.
 
 networks:
-  new-api-network:
+  new-api-person-network:
     driver: bridge

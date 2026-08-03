@@ -15,7 +15,7 @@ const DEV_FRONTEND_PORT = 5173; // Rsbuild dev server port
 function saveAndOpenErrorLog() {
   try {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const logFileName = `new-api-crash-${timestamp}.log`;
+    const logFileName = `new-api-person-crash-${timestamp}.log`;
     const logDir = app.getPath('logs');
     const logFilePath = path.join(logDir, logFileName);
     
@@ -152,23 +152,23 @@ function getBinaryPath() {
   const platform = process.platform;
 
   if (isDev) {
-    const binaryName = platform === 'win32' ? 'new-api.exe' : 'new-api';
+    const binaryName = platform === 'win32' ? 'new-api-person.exe' : 'new-api-person';
     return path.join(__dirname, '..', binaryName);
   }
 
   let binaryName;
   switch (platform) {
     case 'win32':
-      binaryName = 'new-api.exe';
+      binaryName = 'new-api-person.exe';
       break;
     case 'darwin':
-      binaryName = 'new-api';
+      binaryName = 'new-api-person';
       break;
     case 'linux':
-      binaryName = 'new-api';
+      binaryName = 'new-api-person';
       break;
     default:
-      binaryName = 'new-api';
+      binaryName = 'new-api-person';
   }
 
   return path.join(process.resourcesPath, 'bin', binaryName);
@@ -261,7 +261,7 @@ function startServer() {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    env.SQLITE_PATH = path.join(dataDir, 'new-api.db');
+    env.SQLITE_PATH = path.join(dataDir, 'new-api-person.db');
     
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('📁 您的数据存储位置：');
