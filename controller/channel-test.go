@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/shopspring/decimal"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -542,15 +542,25 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData,
 
 	quota := 0
 	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
-		if priceData.ModelRatio != 0 && quota <= 0 {
-			quota = 1
+		promptQuota := decimal.NewFromInt(int64(usage.PromptTokens))
+		completionQuota := decimal.NewFromInt(int64(usage.CompletionTokens)).Mul(decimal.NewFromFloat(priceData.CompletionRatio))
+		ratio := decimal.NewFromFloat(priceData.ModelRatio).
+			Mul(decimal.NewFromFloat(priceData.GroupRatioInfo.GroupRatio)).
+			Mul(decimal.NewFromFloat(priceData.GetChannelRatio()))
+		quotaDecimal := promptQuota.Add(completionQuota).Mul(ratio)
+		if !ratio.IsZero() && quotaDecimal.LessThanOrEqual(decimal.Zero) {
+			quotaDecimal = decimal.NewFromInt(1)
 		}
+		quota, _ = common.QuotaFromDecimalChecked(quotaDecimal)
 		return quota, nil
 	}
 
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	quotaDecimal := decimal.NewFromFloat(priceData.ModelPrice).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+		Mul(decimal.NewFromFloat(priceData.GroupRatioInfo.GroupRatio)).
+		Mul(decimal.NewFromFloat(priceData.GetChannelRatio()))
+	quota, _ = common.QuotaFromDecimalChecked(quotaDecimal)
+	return quota, nil
 }
 
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {

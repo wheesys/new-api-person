@@ -245,6 +245,58 @@ func TestSettleTestQuotaUsesTieredBilling(t *testing.T) {
 	require.Equal(t, "stream", result.MatchedTier)
 }
 
+func TestSettleTestQuotaAppliesGroupAndChannelRatio(t *testing.T) {
+	tests := []struct {
+		name      string
+		priceData types.PriceData
+		usage     *dto.Usage
+		want      int
+	}{
+		{
+			name: "per-token applies channel ratio",
+			priceData: types.PriceData{
+				ModelRatio:      2.5,
+				CompletionRatio: 6,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+				ChannelRatio:    0.15,
+				ChannelRatioSet: true,
+			},
+			usage: &dto.Usage{PromptTokens: 7, CompletionTokens: 11},
+			want:  27, // (7 + 11*6) * 2.5 * 1 * 0.15 = 27.375
+		},
+		{
+			name: "per-token applies group ratio",
+			priceData: types.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 2},
+			},
+			usage: &dto.Usage{PromptTokens: 10, CompletionTokens: 10},
+			want:  40, // (10 + 10) * 1 * 2 * 1 = 40
+		},
+		{
+			name: "per-request applies channel ratio",
+			priceData: types.PriceData{
+				ModelPrice:      0.001,
+				UsePrice:        true,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+				ChannelRatio:    0.15,
+				ChannelRatioSet: true,
+			},
+			usage: &dto.Usage{},
+			want:  75, // 0.001 * 500000 * 1 * 0.15 = 75
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			quota, result := settleTestQuota(nil, tt.priceData, tt.usage)
+			require.Nil(t, result)
+			require.Equal(t, tt.want, quota)
+		})
+	}
+}
+
 func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
