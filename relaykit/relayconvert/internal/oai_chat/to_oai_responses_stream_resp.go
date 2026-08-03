@@ -145,6 +145,7 @@ func (s *ChatToResponsesStreamState) appendTextDelta(delta string) []ChatToRespo
 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemAdded,
 			OutputIndex: intPtr(s.textOutputIndex),
+			ItemID:      s.messageID(),
 			Item: &dto.ResponsesOutput{
 				Type:    responsesOutputTypeMessage,
 				ID:      s.messageID(),
@@ -173,6 +174,7 @@ func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatTo
 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemAdded,
 			OutputIndex: intPtr(s.reasoningIndex),
+			ItemID:      s.reasoningID(),
 			Item: &dto.ResponsesOutput{
 				Type:    responsesOutputTypeReasoning,
 				ID:      s.reasoningID(),
