@@ -1,6 +1,6 @@
 # 项目待办事项
 
-更新时间：2026-08-01
+更新时间：2026-08-03
 
 ## 已完成
 
@@ -75,7 +75,7 @@
 - [x] 已重放上下文共识提交 `d9287816` 至 `69881574` 的完整序列（13785e7f→73d846d1、0cbcabd8→282cc561、9f522b2a→a9d5c5be、7bfb37be→c2f838ae、38ae39f6→5850b24a、549d39ac→069c9577、44fb418b→06ac1bbe、ad105847→c32045ab、69881574→d4de8627）。
 - [x] 已重放 `f7cbb392` 至 `67fe50b5` 全部 17 个提交（9857aefb→9a0a20ec），含前端诊断页 `web/default/` → `web/src/` 迁移、`types/file_source_test.go` → `relaykit/types/` 迁移、`channel_mutation.go` 的 `Channel.Delete` 容错 record-not-found、`BatchDeleteChannels` 签名统一 `(int64, error)`；7 个上游 wallet billing 测试因本项目移除用户余额而 `t.Skip`。
 - [x] 重放期间完成上游 `relaykit` 迁移适配：将 `relay/helper/stream_scanner.go` 自动合并产生的双 `wg.Done()` 缺陷修正为独立 `defer wg.Done()`，并把新旧提交残留的根 `dto`/`types` 包引用（`GeneralOpenAIRequest`、`RelayFormat*`、`NewAPIError`、`PriceData` 等）统一迁移到 `relaykit/dto`、`relaykit/types`；`go build ./...`、`go vet ./...` 与受影响包测试均通过。
-- [ ] 完成重放后统一审计：不得恢复 classic、vendor、用户钱包、充值、支付、兑换码、订阅购买及上游发布宣传模块；其他上游前后端更新均应保留，特别是由前端改动引发的后端接口和类型调整。
+- [x] 完成重放后统一审计：不得恢复 classic、vendor、用户钱包、充值、支付、兑换码、订阅购买及上游发布宣传模块；其他上游前后端更新均应保留，特别是由前端改动引发的后端接口和类型调整；本次审计仅发现并补齐 `service/http_client.go` 上游 stage D 的 redirect 错误脱敏遗漏。
 - [x] 最终验证通过：`go build ./...`、`go vet ./...`、`cd relaykit && GOWORK=off go build ./...`、`go test ./service/... ./controller/ ./middleware/ ./model/ ./relay/...`、前端 `bun run typecheck` 与 `bun run build` 全部通过（7 个 wallet billing 测试跳过）。
 - [ ] 原分支保留为 `research/context-consensus-d3`；`stash@{0}` 是早期选择性同步工作，不要整体弹出，只有确认缺少某项改动时才按文件检查。
 
