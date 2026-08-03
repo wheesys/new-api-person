@@ -458,7 +458,26 @@ func migrateLOGDB() error {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return migrateClickHouseLogDB()
 	}
-	return LOG_DB.AutoMigrate(&Log{})
+	if err := LOG_DB.AutoMigrate(&Log{}); err != nil {
+		return err
+	}
+	// billing_operation_id UNIQUE cannot be expressed via the gorm uniqueIndex
+	// tag: GORM emits ALTER TABLE ... ADD COLUMN ... UNIQUE for existing tables,
+	// which SQLite rejects (ADD COLUMN cannot carry UNIQUE). Create the unique
+	// index manually after migration instead (SQLite/MySQL/PostgreSQL all OK).
+	return ensureLogsBillingOperationUniqueIndex()
+}
+
+// ensureLogsBillingOperationUniqueIndex creates the billing_operation_id unique
+// index on logs, backing the ON CONFLICT DO NOTHING idempotent insert used by
+// managed billing. Multiple NULLs (logs not tied to a billing operation) do not
+// conflict; only non-NULL values must be unique.
+func ensureLogsBillingOperationUniqueIndex() error {
+	migrator := LOG_DB.Migrator()
+	if migrator.HasIndex(&Log{}, "idx_logs_billing_operation_id") {
+		return nil
+	}
+	return LOG_DB.Exec("CREATE UNIQUE INDEX idx_logs_billing_operation_id ON logs(billing_operation_id)").Error
 }
 
 func migrateClickHouseLogDB() error {

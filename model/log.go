@@ -78,7 +78,7 @@ type Log struct {
 	Ip                 string `json:"ip" gorm:"index;default:''"`
 	RequestId          string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId  string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
-	BillingOperationId *int64 `json:"billing_operation_id,omitempty" gorm:"uniqueIndex:idx_logs_billing_operation_id;comment:Durable billing operation owning this consume log"`
+	BillingOperationId *int64 `json:"billing_operation_id,omitempty" gorm:"comment:Durable billing operation owning this consume log"`
 	Other              string `json:"other"`
 }
 
