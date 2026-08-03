@@ -189,11 +189,6 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 	if role == "" {
 		role = "user"
 	}
-	// OpenAI responses 用 developer role 表示系统级指令，等价于 chat completions 的 system。
-	// 部分上游（如 deepseek）只认 system，不认 developer，需归一化，否则上游会 400。
-	if role == "developer" {
-		role = "system"
-	}
 	content, err := responsesInputContentToChatContent(item["content"])
 	if err != nil {
 		return nil, err

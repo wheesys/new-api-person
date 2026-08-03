@@ -301,22 +301,3 @@ func mustRawMessage(t *testing.T, value any) []byte {
 	require.NoError(t, err)
 	return raw
 }
-
-// TestResponsesRequestDeveloperRoleNormalizedToSystem guards that the responses
-// "developer" role (used by Codex for system-level instructions) is normalized
-// to "system" when converting to chat completions. Upstreams such as deepseek
-// reject "developer" with a 400 deserialization error.
-func TestResponsesRequestDeveloperRoleNormalizedToSystem(t *testing.T) {
-	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
-		Model: "gpt-test",
-		Input: mustRawMessage(t, []map[string]any{
-			{"role": "developer", "content": "you are a coding agent"},
-			{"role": "user", "content": "check git status"},
-		}),
-	})
-	require.NoError(t, err)
-
-	require.Len(t, got.Messages, 2)
-	assert.Equal(t, dto.Message{Role: "system", Content: "you are a coding agent"}, got.Messages[0])
-	assert.Equal(t, dto.Message{Role: "user", Content: "check git status"}, got.Messages[1])
-}
