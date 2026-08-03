@@ -40,7 +40,8 @@ type ChatToResponsesStreamState struct {
 type chatToResponsesStreamTool struct {
 	ChatIndex   int
 	OutputIndex int
-	ID          string
+	ID          string // function_call item id（fc_ 前缀）
+	CallId      string // 上游 chat tool_call.id（客户端 tool_result 引用）
 	Name        string
 	Arguments   strings.Builder
 	Done        bool
@@ -199,14 +200,16 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 	tool := s.toolsByIndex[chatIndex]
 	events := make([]ChatToResponsesStreamEvent, 0, 2)
 	if tool == nil {
+		callID := strings.TrimSpace(toolCall.ID)
+		if callID == "" {
+			callID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
+		}
 		tool = &chatToResponsesStreamTool{
 			ChatIndex:   chatIndex,
 			OutputIndex: s.nextIndex("tool", chatIndex),
-			ID:          strings.TrimSpace(toolCall.ID),
+			ID:          fmt.Sprintf("fc_%s_%d", sanitizeResponseID(s.ID), chatIndex),
+			CallId:      callID,
 			Name:        strings.TrimSpace(toolCall.Function.Name),
-		}
-		if tool.ID == "" {
-			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
 		}
 		s.toolsByIndex[chatIndex] = tool
 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
@@ -217,14 +220,14 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 				Type:      responsesOutputTypeFunctionCall,
 				ID:        tool.ID,
 				Status:    "in_progress",
-				CallId:    tool.ID,
+				CallId:    tool.CallId,
 				Name:      tool.Name,
 				Arguments: []byte(`""`),
 			},
 		}))
 	}
 	if strings.TrimSpace(toolCall.ID) != "" {
-		tool.ID = strings.TrimSpace(toolCall.ID)
+		tool.CallId = strings.TrimSpace(toolCall.ID)
 	}
 	if strings.TrimSpace(toolCall.Function.Name) != "" {
 		tool.Name = strings.TrimSpace(toolCall.Function.Name)
@@ -285,6 +288,7 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
 			Type:        responsesEventFunctionArgsDone,
 			OutputIndex: intPtr(tool.OutputIndex),
 			ItemID:      tool.ID,
+			Arguments:   chatArgumentsRawMessage(tool.Arguments.String()),
 		}))
 		events = append(events, responsesStreamEvent(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemDone,
@@ -410,7 +414,7 @@ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool,
 		Type:      responsesOutputTypeFunctionCall,
 		ID:        tool.ID,
 		Status:    status,
-		CallId:    tool.ID,
+		CallId:    tool.CallId,
 		Name:      tool.Name,
 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
 	}

@@ -39,7 +39,7 @@
     },
     {
       "type": "function_call",
-      "id": "call_abc",
+      "id": "fc_chatcmpl-fixed_0",
       "status": "completed",
       "role": "",
       "content": null,

@@ -24,7 +24,7 @@
     },
     {
       "type": "function_call",
-      "id": "call_<uuid>",
+      "id": "fc_chatcmpl-<uuid>_0",
       "status": "completed",
       "role": "",
       "content": null,
