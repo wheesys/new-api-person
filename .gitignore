@@ -52,3 +52,6 @@ go.work.sum
 
 # spec-workflow MCP tool working directory.
 .spec-workflow/
+
+# serena MCP tool working directory.
+.serena/
