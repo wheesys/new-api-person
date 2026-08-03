@@ -95,9 +95,14 @@ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStrea
 			events = append(events, state.appendReasoningDelta(choice.Delta.GetReasoningContent())...)
 		}
 		if choice.Delta.GetContentString() != "" {
+			// 上游从 reasoning 阶段切换到 message 正文时，必须先关闭尚未收尾的 reasoning item，
+			// 保证 reasoning 的 done 先于 message 的 added，符合 OpenAI responses 流契约。
+			events = append(events, state.closeReasoningIfNeeded()...)
 			events = append(events, state.appendTextDelta(choice.Delta.GetContentString())...)
 		}
 		for _, toolCall := range choice.Delta.ToolCalls {
+			// 同理，切换到 tool_call 前先关闭已开始的 reasoning item。
+			events = append(events, state.closeReasoningIfNeeded()...)
 			toolEvents, err := state.appendToolCallDelta(toolCall)
 			if err != nil {
 				return nil, err
@@ -263,24 +268,7 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
 			Item:        s.messageOutput(status),
 		}))
 	}
-	if s.reasoningStarted && !s.reasoningDone {
-		s.reasoningDone = true
-		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryDone, dto.ResponsesStreamResponse{
-			Type:         responsesEventReasoningSummaryDone,
-			OutputIndex:  intPtr(s.reasoningIndex),
-			SummaryIndex: intPtr(0),
-			ItemID:       s.reasoningID(),
-			Part: &dto.ResponsesReasoningSummaryPart{
-				Type: "summary_text",
-				Text: s.reasoning.String(),
-			},
-		}))
-		events = append(events, responsesStreamEvent(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
-			Type:        responsesEventOutputItemDone,
-			OutputIndex: intPtr(s.reasoningIndex),
-			Item:        s.reasoningOutput(status),
-		}))
-	}
+	events = append(events, s.closeReasoningIfNeeded()...)
 	for _, tool := range s.sortedTools() {
 		if tool.Done {
 			continue
@@ -306,6 +294,35 @@ func (s *ChatToResponsesStreamState) applyFinishReason(finishReason string) {
 		s.status = status
 		s.incompleteDetails = details
 	}
+}
+
+// closeReasoningIfNeeded 在 reasoning item 已开始但尚未收尾时，补发其完成事件。
+// OpenAI responses 流契约要求：reasoning 内容发完后必须先 output_item.done，
+// 才能开始下一个 output item（message/tool_call），否则客户端会报
+// "ReasoningSummaryDelta without active item"。
+func (s *ChatToResponsesStreamState) closeReasoningIfNeeded() []ChatToResponsesStreamEvent {
+	if !s.reasoningStarted || s.reasoningDone {
+		return nil
+	}
+	events := make([]ChatToResponsesStreamEvent, 0, 2)
+	s.reasoningDone = true
+	status := s.outputStatus()
+	events = append(events, responsesStreamEvent(responsesEventReasoningSummaryDone, dto.ResponsesStreamResponse{
+		Type:         responsesEventReasoningSummaryDone,
+		OutputIndex:  intPtr(s.reasoningIndex),
+		SummaryIndex: intPtr(0),
+		ItemID:       s.reasoningID(),
+		Part: &dto.ResponsesReasoningSummaryPart{
+			Type: "summary_text",
+			Text: s.reasoning.String(),
+		},
+	}))
+	events = append(events, responsesStreamEvent(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemDone,
+		OutputIndex: intPtr(s.reasoningIndex),
+		Item:        s.reasoningOutput(status),
+	}))
+	return events
 }
 
 func (s *ChatToResponsesStreamState) finalResponse() *dto.OpenAIResponsesResponse {
