@@ -218,10 +218,13 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
     const savedByName = new Map(savedRows.map((row) => [row.name, row]))
     const draftByName = new Map(draftRows.map((row) => [row.name, row]))
-    const modelNames =
-      filterMode === 'unset'
-        ? new Set(candidateModelNames ?? [])
-        : new Set([...savedByName.keys(), ...draftByName.keys()])
+    // candidateModelNames 存在时以渠道能力覆盖的模型为骨架（定价页签），
+    // 否则回退到字典 key 并集（保留旧行为）
+    const useCandidateSkeleton =
+      Array.isArray(candidateModelNames) && candidateModelNames.length > 0
+    const modelNames = useCandidateSkeleton
+      ? new Set(candidateModelNames)
+      : new Set([...savedByName.keys(), ...draftByName.keys()])
 
     return [...modelNames]
       .map((name) => {
@@ -241,7 +244,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
           isDraftNew: Boolean(!saved && draft),
         }
       })
-      .filter((row) => !row.isDraftDeleted)
+      .filter((row) => useCandidateSkeleton || !row.isDraftDeleted)
       .filter((row) => filterMode !== 'unset' || isBasePricingUnset(row.saved))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [
