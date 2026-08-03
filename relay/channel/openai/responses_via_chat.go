@@ -82,11 +82,6 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
 		seq++
 		event.Payload.SequenceNumber = seq
-		oidx := -1
-		if event.Payload.OutputIndex != nil {
-			oidx = *event.Payload.OutputIndex
-		}
-		logger.LogInfo(c, fmt.Sprintf("[diag] emit responses event seq=%d type=%s output_index=%d item_id=%s", seq, event.Type, oidx, event.Payload.ItemID))
 		data, err := common.Marshal(event.Payload)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
@@ -116,18 +111,6 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
 			sr.Error(err)
 			return
-		}
-		for _, choice := range chunk.Choices {
-			reasoning := choice.Delta.GetReasoningContent()
-			text := choice.Delta.GetContentString()
-			toolCalls := len(choice.Delta.ToolCalls)
-			finish := ""
-			if choice.FinishReason != nil {
-				finish = *choice.FinishReason
-			}
-			if reasoning != "" || text != "" || toolCalls > 0 || finish != "" {
-				logger.LogInfo(c, fmt.Sprintf("[diag] upstream chunk reasoning_len=%d text_len=%d toolcalls=%d finish=%q", len(reasoning), len(text), toolCalls, finish))
-			}
 		}
 
 		results, err := relayconvert.ConvertStreamResponseChunk(c, info, state, &chunk)
