@@ -12,7 +12,7 @@
 
 services:
   new-api:
-    image: calciumion/new-api:latest
+    image: walllee/new-api-person:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
