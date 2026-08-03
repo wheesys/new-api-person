@@ -13,6 +13,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 
@@ -102,8 +103,20 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	// 智谱官方只支持 /chat/completions（编码计划 OpenAI 兼容端点），不支持 /responses。
+	// 把 responses 请求转成 chat 请求发给智谱，响应侧由 OaiChatToResponses(Stream)Handler 转回 responses。
+	result, err := relayconvert.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, &request)
+	if err != nil {
+		return nil, err
+	}
+	chatReq, ok := result.Value.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected *dto.GeneralOpenAIRequest, got %T", result.Value)
+	}
+	if chatReq == nil {
+		return nil, errors.New("converted request is nil")
+	}
+	return requestOpenAI2Zhipu(*chatReq), nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -115,6 +128,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case types.RelayFormatClaude:
 		adaptor := claude.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
+	case types.RelayFormatOpenAIResponses:
+		// 请求侧把 responses 转成 chat 发给智谱，这里把 chat 响应转回 responses 给 codex。
+		if info.IsStream {
+			return openai.OaiChatToResponsesStreamHandler(c, info, resp)
+		}
+		return openai.OaiChatToResponsesHandler(c, info, resp)
 	default:
 		if info.RelayMode == relayconstant.RelayModeImagesGenerations {
 			return zhipu4vImageHandler(c, resp, info)
