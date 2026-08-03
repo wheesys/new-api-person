@@ -104,3 +104,5 @@
 - [x] 补充“渠道、上游适配器、模型、能力”业务关系图，明确配置、路由与运行时边界，见 `doc/project-module-business-relationships.md`。
 - [x] 补充 API Key 额度预扣、补扣和退款的计费链路时序图，覆盖预扣失败、实际额度差额结算和幂等退款，见 `doc/project-module-business-relationships.md`。
 - [x] 在后台渠道行操作中增加能力预览，按去重后的模型、分组和模型映射展示将生成的能力数量与路由组合，并完成六语言、桌面端和移动端验证，见 `doc/admin-channel-ability-preview-implementation-2026-07-31.md`。
+- [x] 统一定价页签与模型列表的模型口径：定价页签改为以渠道能力覆盖的模型为骨架展示（复用 `getEnabledModels`），不再显示全局 ratio 字典里的上游默认模型；新增渠道模型可在定价页签直接配置，保存写回字典；不动计费链路与数据库。
+- [x] 修复 `logs.billing_operation_id` 在 SQLite 上的迁移失败：字段原用 gorm `uniqueIndex` tag，GORM 对已存在表生成 `ALTER TABLE ... ADD COLUMN ... UNIQUE`，SQLite 不允许；改为迁移后手动 `CREATE UNIQUE INDEX`（`ensureLogsBillingOperationUniqueIndex`），三库兼容，支撑托管计费 `ON CONFLICT DO NOTHING` 幂等。
