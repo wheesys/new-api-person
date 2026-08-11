@@ -114,6 +114,9 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
+	// LiteLLM 社区价格同步（默认价目表第二层：页面手填 > LiteLLM > 代码默认表）
+	service.StartLitellmPriceSync()
+
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
 		if err != nil {

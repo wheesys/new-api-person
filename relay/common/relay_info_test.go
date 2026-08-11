@@ -78,3 +78,57 @@ func TestRelayInfoMetaTypedNilReceiver(t *testing.T) {
 	assert.NotNil(t, firstOptions.Gemini.SafetySetting)
 	assert.NotNil(t, firstOptions.PreserveThinkingSuffix)
 }
+
+func TestRelayInfoBillingModelName(t *testing.T) {
+	cases := []struct {
+		name         string
+		info         *RelayInfo
+		expected     string
+	}{
+		{
+			name:     "nil receiver",
+			info:     nil,
+			expected: "",
+		},
+		{
+			name:     "nil ChannelMeta falls back to Origin",
+			info:     &RelayInfo{OriginModelName: "gpt-4o"},
+			expected: "gpt-4o",
+		},
+		{
+			name: "unmapped uses Origin",
+			info: &RelayInfo{
+				OriginModelName: "gpt-4o",
+				ChannelMeta:     &ChannelMeta{},
+			},
+			expected: "gpt-4o",
+		},
+		{
+			name: "mapped uses Upstream",
+			info: &RelayInfo{
+				OriginModelName: "gpt-4o",
+				ChannelMeta: &ChannelMeta{
+					UpstreamModelName: "gpt-4o-mini",
+					IsModelMapped:     true,
+				},
+			},
+			expected: "gpt-4o-mini",
+		},
+		{
+			name: "mapped flag set but empty upstream falls back to Origin",
+			info: &RelayInfo{
+				OriginModelName: "gpt-4o",
+				ChannelMeta: &ChannelMeta{
+					IsModelMapped: true,
+				},
+			},
+			expected: "gpt-4o",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.info.BillingModelName())
+		})
+	}
+}

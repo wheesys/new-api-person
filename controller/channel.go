@@ -712,6 +712,10 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 渠道模型映射的目标（上游模型）同步进 models 表，使其出现在模型列表/定价列表中。
+	if _, err := model.EnsureChannelMappingTargetModels(channels); err != nil {
+		common.SysLog("failed to sync channel mapping target models: " + err.Error())
+	}
 	recordManageAudit(c, "channel.create", map[string]interface{}{
 		"name":  addChannelRequest.Channel.Name,
 		"type":  addChannelRequest.Channel.Type,
@@ -1098,6 +1102,10 @@ func UpdateChannel(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// 渠道模型映射的目标（上游模型）同步进 models 表，使其出现在模型列表/定价列表中。
+	if _, err := model.EnsureChannelMappingTargetModels([]model.Channel{{ModelMapping: channel.ModelMapping}}); err != nil {
+		common.SysLog("failed to sync channel mapping target models: " + err.Error())
 	}
 	model.InitChannelCache()
 	if proxyChanged {

@@ -790,6 +790,23 @@ func (info *RelayInfo) GetUpstreamModelName() string {
 	return info.UpstreamModelName
 }
 
+// BillingModelName 返回计费时真正应依据的模型名：渠道发生模型映射时按实际发给
+// 上游的模型（UpstreamModelName），否则按用户请求的原始模型名（OriginModelName）。
+// 未映射时 Upstream == Origin，行为与旧实现完全一致。ChannelMeta 缺失（如单测）
+// 时视为未映射，回退到 OriginModelName。
+func (info *RelayInfo) BillingModelName() string {
+	if info == nil {
+		return ""
+	}
+	if info.ChannelMeta == nil {
+		return info.OriginModelName
+	}
+	if info.IsModelMapped && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return info.OriginModelName
+}
+
 func (info *RelayInfo) HasChannelMeta() bool { return info != nil && info.ChannelMeta != nil }
 
 func (info *RelayInfo) GetChannelID() int {

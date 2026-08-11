@@ -88,6 +88,8 @@ func EnsureDefaultOptionModels() (int, error) {
 	for modelName := range defaultModelPrices {
 		modelNames = append(modelNames, modelName)
 	}
+	// 渠道模型映射的目标（上游模型）也纳入模型列表/定价列表，便于为它们配置价格。
+	modelNames = append(modelNames, collectChannelMappingTargetModels()...)
 	created, err := EnsureModelMetadata(modelNames)
 	if err != nil {
 		return 0, err
@@ -102,4 +104,54 @@ func EnsureDefaultOptionModels() (int, error) {
 	}
 	InvalidatePricingCache()
 	return created, nil
+}
+
+// extractMappingTargets 从一组渠道 model_mapping 中收集所有映射目标模型名（上游模型）。
+func extractMappingTargets(mappings []*string) []string {
+	targets := make(map[string]struct{})
+	for _, mapping := range mappings {
+		if mapping == nil || strings.TrimSpace(*mapping) == "" || *mapping == "{}" {
+			continue
+		}
+		var modelMap map[string]string
+		if err := common.Unmarshal([]byte(*mapping), &modelMap); err != nil {
+			continue
+		}
+		for _, target := range modelMap {
+			target = strings.TrimSpace(target)
+			if target != "" {
+				targets[target] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(targets))
+	for target := range targets {
+		out = append(out, target)
+	}
+	return out
+}
+
+// collectChannelMappingTargetModels 返回所有渠道 model_mapping 的映射目标模型名
+// （即渠道把请求模型重定向到的上游模型），确保它们出现在模型列表与定价列表中，便于配价。
+func collectChannelMappingTargetModels() []string {
+	var mappings []*string
+	if err := DB.Model(&Channel{}).Pluck("model_mapping", &mappings).Error; err != nil {
+		common.SysError("collect channel mapping target models failed: " + err.Error())
+		return nil
+	}
+	return extractMappingTargets(mappings)
+}
+
+// EnsureChannelMappingTargetModels 把指定渠道 model_mapping 的映射目标（上游模型）
+// 纳入 models 表，使它们在模型列表/定价列表中可见可配价。
+func EnsureChannelMappingTargetModels(channels []Channel) (int, error) {
+	mappings := make([]*string, 0, len(channels))
+	for i := range channels {
+		mappings = append(mappings, channels[i].ModelMapping)
+	}
+	targets := extractMappingTargets(mappings)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	return EnsureModelMetadata(targets)
 }
