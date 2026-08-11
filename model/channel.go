@@ -35,7 +35,8 @@ type Channel struct {
 	ResponseTime       int     `json:"response_time"` // in milliseconds
 	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
 	Other              string  `json:"other"`
-	Balance            float64 `json:"balance"` // in USD
+	Balance            float64 `json:"balance"` // upstream balance, in BalanceCurrency
+	BalanceCurrency    string  `json:"balance_currency" gorm:"type:varchar(16);default:'USD';comment:ISO currency code of the upstream balance (USD, CNY, ...)"`
 	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
 	Models             string  `json:"models"`
 	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
@@ -521,10 +522,20 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	}
 }
 
-func (channel *Channel) UpdateBalance(balance float64) {
-	err := DB.Model(channel).Select("balance_updated_time", "balance").Updates(Channel{
-		BalanceUpdatedTime: common.GetTimestamp(),
+// UpdateBalance writes the refreshed upstream balance together with its currency
+// code (e.g. "USD", "CNY"). Each provider balance fetcher passes the currency
+// the upstream reports, so refresh always re-stamps the authoritative currency.
+func (channel *Channel) UpdateBalance(balance float64, currency string) {
+	if currency == "" {
+		currency = "USD"
+	}
+	channel.Balance = balance
+	channel.BalanceCurrency = currency
+	channel.BalanceUpdatedTime = common.GetTimestamp()
+	err := DB.Model(channel).Select("balance_updated_time", "balance", "balance_currency").Updates(Channel{
+		BalanceUpdatedTime: channel.BalanceUpdatedTime,
 		Balance:            balance,
+		BalanceCurrency:    currency,
 	}).Error
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to update balance: channel_id=%d, error=%v", channel.Id, err))

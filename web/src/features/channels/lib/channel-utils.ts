@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
+import {
+  formatCurrencyFromUSD,
+  formatQuotaWithCurrency,
+  getCurrencyDisplay,
+  type CurrencyFormatOptions,
+} from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
@@ -324,16 +329,32 @@ export function validateChannelSettings(settings: string): boolean {
 // ============================================================================
 
 /**
- * Format balance with currency symbol
+ * Format an upstream balance for display.
+ *
+ * Upstream balances are stored in `balanceCurrency` (e.g. DeepSeek returns CNY,
+ * most providers return USD). Normalize to USD first using the global exchange
+ * rate, then hand off to the standard display pipeline so USD/CNY/TOKENS/CUSTOM
+ * display all stay consistent.
  */
-export function formatBalance(balance: number | null | undefined): string {
+export function formatBalance(
+  balanceCurrency: string | null | undefined,
+  balance: number | null | undefined,
+  options?: CurrencyFormatOptions
+): string {
   if (balance == null || Number.isNaN(balance)) {
     return '-'
   }
-  return formatCurrencyFromUSD(balance, {
+  const { config } = getCurrencyDisplay()
+  const rate =
+    balanceCurrency === 'CNY' && config.usdExchangeRate > 0
+      ? config.usdExchangeRate
+      : 1
+  const usdValue = balance / rate
+  return formatCurrencyFromUSD(usdValue, {
     digitsLarge: 2,
     digitsSmall: 4,
     abbreviate: false,
+    ...options,
   })
 }
 

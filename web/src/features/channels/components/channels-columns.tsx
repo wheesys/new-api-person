@@ -48,7 +48,6 @@ import {
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
 import {
-  formatCurrencyFromUSD,
   formatQuotaWithCurrency,
   getCurrencyLabel,
 } from '@/lib/currency'
@@ -58,6 +57,7 @@ import { truncateText } from '@/lib/utils'
 import { getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
+  formatBalance,
   formatRelativeTime,
   formatResponseTime,
   getBalanceVariant,
@@ -359,7 +359,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
     })
   )
   const remainingFull = withSuffix(
-    formatCurrencyFromUSD(balance, balanceFormatOptions)
+    formatBalance(channel.balance_currency, balance, balanceFormatOptions)
   )
   const usedDisplay =
     usedFull.length > MAX_INLINE_BALANCE_CHARS
@@ -374,7 +374,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const remainingDisplay =
     remainingFull.length > MAX_INLINE_BALANCE_CHARS
       ? withSuffix(
-          formatCurrencyFromUSD(balance, {
+          formatBalance(channel.balance_currency, balance, {
             compact: true,
             locale,
             showSymbol: layout !== 'card',
@@ -442,7 +442,11 @@ function BalanceCell({ channel }: { channel: Channel }) {
       return
     }
 
-    await handleUpdateChannelBalance(channel.id, queryClient)
+    await handleUpdateChannelBalance(
+      channel.id,
+      channel.balance_currency,
+      queryClient
+    )
     setIsUpdating(false)
   }
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK

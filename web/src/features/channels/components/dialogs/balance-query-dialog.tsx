@@ -25,11 +25,11 @@ import { toast } from 'sonner'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { IconBadge } from '@/components/ui/icon-badge'
-import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { getCodexUsage, updateChannelBalance } from '../../api'
 import { channelsQueryKeys } from '../../lib'
+import { formatBalance } from '../../lib/channel-utils'
 import { useChannels } from '../channels-provider'
 import {
   CodexUsageDialog,
@@ -92,6 +92,7 @@ export function BalanceQueryDialog({
       const response = await updateChannelBalance(currentRow.id)
       if (response.success && response.balance !== undefined) {
         const newBalance = response.balance
+        const newCurrency = response.balance_currency
         const now = Math.floor(Date.now() / 1000)
 
         setBalance(newBalance)
@@ -102,6 +103,7 @@ export function BalanceQueryDialog({
         setCurrentRow({
           ...currentRow,
           balance: newBalance,
+          balance_currency: newCurrency ?? currentRow.balance_currency,
           balance_updated_time: now,
         })
 
@@ -128,12 +130,8 @@ export function BalanceQueryDialog({
     onOpenChange(false)
   }
 
-  const formatBalance = (bal: number) =>
-    formatCurrencyFromUSD(bal, {
-      digitsLarge: 2,
-      digitsSmall: 4,
-      abbreviate: false,
-    })
+  const formatRowBalance = (bal: number) =>
+    formatBalance(currentRow.balance_currency, bal)
 
   const formatDate = (timestamp: number) => {
     if (!timestamp) return 'Never'
@@ -186,8 +184,8 @@ export function BalanceQueryDialog({
           </div>
           <div className='text-2xl font-bold'>
             {balance !== null
-              ? formatBalance(balance)
-              : formatBalance(currentRow.balance)}
+              ? formatRowBalance(balance)
+              : formatRowBalance(currentRow.balance)}
           </div>
           <div className='text-muted-foreground mt-2 text-xs'>
             {t('Last updated:')}{' '}

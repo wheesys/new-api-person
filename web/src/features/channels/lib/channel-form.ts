@@ -213,6 +213,10 @@ export const channelFormSchema = z
     priority: z.number().optional(),
     weight: z.number().optional(),
     price_ratio: z.number().min(0, ERROR_MESSAGES.INVALID_PRICE_RATIO),
+    balance_currency: z
+      .enum(['USD', 'CNY'])
+      .default('USD')
+      .optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
@@ -413,6 +417,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   priority: 0,
   weight: 0,
   price_ratio: 1,
+  balance_currency: 'USD',
   test_model: '',
   auto_ban: 1,
   status: CHANNEL_STATUS.ENABLED,
@@ -566,6 +571,8 @@ export function transformChannelToFormDefaults(
     priority: channel.priority || 0,
     weight: channel.weight || 0,
     price_ratio: channel.price_ratio ?? 1,
+    balance_currency:
+      channel.balance_currency === 'CNY' ? 'CNY' : 'USD',
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -794,6 +801,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     priority: formData.priority || null,
     weight: formData.weight || null,
     price_ratio: formData.price_ratio ?? 1,
+    balance_currency: formData.balance_currency || 'USD',
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
@@ -844,6 +852,7 @@ export function transformFormDataToUpdatePayload(
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
     price_ratio: formData.price_ratio ?? 1,
+    balance_currency: formData.balance_currency || 'USD',
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status_code_mapping: formData.status_code_mapping || null,

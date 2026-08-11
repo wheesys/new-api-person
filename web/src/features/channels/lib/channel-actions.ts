@@ -20,7 +20,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import { formatCurrencyFromUSD } from '@/lib/currency'
+import { formatBalance } from './channel-utils'
 
 import {
   copyChannel,
@@ -367,6 +367,7 @@ export async function handleCopyChannel(
  */
 export async function handleUpdateChannelBalance(
   id: number,
+  balanceCurrency: string | null | undefined,
   queryClient?: QueryClient,
   onSuccess?: (balance: number) => void
 ): Promise<void> {
@@ -374,13 +375,10 @@ export async function handleUpdateChannelBalance(
     const response = await updateChannelBalance(id)
     if (response.success && response.balance !== undefined) {
       const balance = response.balance
+      const currency = response.balance_currency ?? balanceCurrency
       toast.success(
         i18next.t('Balance updated: {{balance}}', {
-          balance: formatCurrencyFromUSD(balance, {
-            digitsLarge: 2,
-            digitsSmall: 4,
-            abbreviate: false,
-          }),
+          balance: formatBalance(currency, balance),
         })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })

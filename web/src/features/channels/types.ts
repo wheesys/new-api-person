@@ -49,7 +49,8 @@ export const channelSchema = z.object({
   response_time: z.number(), // in milliseconds
   base_url: z.string().nullish(),
   other: z.string().default(''),
-  balance: z.number().default(0), // in USD
+  balance: z.number().default(0), // in balance_currency
+  balance_currency: z.string().default('USD'), // ISO code of upstream balance (USD, CNY, ...)
   balance_updated_time: z.number(),
   models: z.string().default(''),
   group: z.string().default('default'),
@@ -198,6 +199,7 @@ export interface ChannelBalanceResponse {
   success: boolean
   message?: string
   balance?: number
+  balance_currency?: string
   currency?: string
 }
 

@@ -139,6 +139,7 @@ import {
 import {
   ADD_MODE_OPTIONS,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_DEEPSEEK,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
@@ -1287,6 +1288,11 @@ export function ChannelMutateDrawer({
       if (!currentOther || currentOther === '') {
         form.setValue('other', 'v2.1')
       }
+    }
+
+    // DeepSeek 余额接口直接返回人民币
+    if (currentType === CHANNEL_TYPE_DEEPSEEK) {
+      form.setValue('balance_currency', 'CNY', { shouldDirty: false })
     }
   }, [currentType, isEditing, form])
 
@@ -3739,6 +3745,48 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                     <FormDescription>
                                       {t(FIELD_DESCRIPTIONS.PRICE_RATIO)}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name='balance_currency'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Balance Currency')}
+                                    </FormLabel>
+                                    <Select
+                                      value={field.value || 'USD'}
+                                      onValueChange={field.onChange}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger>
+                                          <SelectValue
+                                            placeholder={t('Select currency')}
+                                          />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent
+                                        alignItemWithTrigger={false}
+                                      >
+                                        <SelectGroup>
+                                          <SelectItem value='USD'>
+                                            {t('USD')}
+                                          </SelectItem>
+                                          <SelectItem value='CNY'>
+                                            {t('CNY')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                      {t(
+                                        'Currency of the upstream balance. Refresh re-stamps it from the provider.'
+                                      )}
                                     </FormDescription>
                                     <FormMessage />
                                   </FormItem>
