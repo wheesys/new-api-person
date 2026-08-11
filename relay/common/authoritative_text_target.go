@@ -107,7 +107,7 @@ func (info *RelayInfo) ValidateAuthoritativeTextTarget() error {
 	if requestPath != seal.target.RequestURLPath || authoritativeTextRequestPathDigest(info.RequestURLPath) != seal.requestURLPathDigest {
 		return fmt.Errorf("authoritative text target request path changed after preparation")
 	}
-	if info.FinalRequestBodyDigest != seal.bodyDigest || info.FinalRequestBodySize != seal.bodySize || info.UpstreamRequestBodySize != seal.bodySize {
+	if info.FinalRequestBodyDigest != seal.bodyDigest || info.FinalRequestBodySize != seal.bodySize {
 		return fmt.Errorf("authoritative text request snapshot changed after preparation")
 	}
 	return nil

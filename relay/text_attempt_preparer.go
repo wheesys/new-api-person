@@ -550,7 +550,7 @@ func prepareResponsesTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.Re
 
 func prepareResponsesTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
-		!common.IsResponsesCompactAPIType(info.ApiType) {
+		!common.SupportsResponsesCompact(info.ChannelType, info.ApiType) {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("unsupported endpoint %q for api type %d", "/v1/responses/compact", info.ApiType),
 			types.ErrorCodeInvalidRequest,

@@ -38,6 +38,7 @@ const defaultBillingSettings: BillingSettings = {
   'general_setting.custom_currency_exchange_rate': 1,
   DisplayInCurrencyEnabled: true,
   DisplayTokenStatEnabled: true,
+  MaxTokenAutoGroups: 5,
   'checkin_setting.enabled': false,
   'checkin_setting.min_quota': 1000,
   'checkin_setting.max_quota': 10000,

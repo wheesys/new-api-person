@@ -166,7 +166,7 @@ func (request *PreparedRelayRequest) Reader() (io.Reader, error) {
 	if _, err := request.storage.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewind prepared request body: %w", err)
 	}
-	return appcommon.ReaderOnly(request.storage), nil
+	return appcommon.NewReplayableBodyReader(request.storage), nil
 }
 
 func (request *PreparedRelayRequest) Close() error {

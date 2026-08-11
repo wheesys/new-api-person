@@ -131,12 +131,6 @@ func GetModelFixedPrice(name string, printErr bool) (float64, bool) {
 		return price, true
 	}
 
-	if strings.HasSuffix(formattedName, ratio_setting.CompactModelSuffix) {
-		if price, ok := ratio_setting.GetModelPrice(ratio_setting.CompactWildcardModelKey, false); ok {
-			return price, true
-		}
-	}
-
 	if printErr {
 		common.SysError("model price not found: " + formattedName)
 	}

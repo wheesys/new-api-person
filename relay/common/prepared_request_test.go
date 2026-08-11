@@ -173,7 +173,6 @@ func TestRelayInfoRecordsPreparedMetadataAndConversionChain(t *testing.T) {
 	assert.Equal(t, types.RelayFormat(types.RelayFormatOpenAIResponses), info.GetFinalRequestRelayFormat())
 	assert.Equal(t, prepared.BodyDigest(), info.FinalRequestBodyDigest)
 	assert.Equal(t, prepared.Size(), info.FinalRequestBodySize)
-	assert.Equal(t, prepared.Size(), info.UpstreamRequestBodySize)
 	require.NotNil(t, info.FinalRequestRequestedMaxOutput)
 	assert.Zero(t, *info.FinalRequestRequestedMaxOutput)
 }
@@ -188,7 +187,6 @@ func TestRelayInfoResetPreparedRequestPreventsCrossAttemptProtocolLeak(t *testin
 		FinalRequestBodyDigest:         "previous-digest",
 		FinalRequestBodySize:           128,
 		FinalRequestRequestedMaxOutput: &zero,
-		UpstreamRequestBodySize:        128,
 	}
 
 	info.ResetPreparedRelayRequest()
@@ -198,7 +196,6 @@ func TestRelayInfoResetPreparedRequestPreventsCrossAttemptProtocolLeak(t *testin
 	assert.Empty(t, info.FinalRequestBodyDigest)
 	assert.Zero(t, info.FinalRequestBodySize)
 	assert.Nil(t, info.FinalRequestRequestedMaxOutput)
-	assert.Zero(t, info.UpstreamRequestBodySize)
 
 	info.AppendRequestConversion(types.RelayFormatClaude)
 	assert.Equal(t, []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude}, info.RequestConversionChain)
