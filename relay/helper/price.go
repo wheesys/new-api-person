@@ -34,11 +34,48 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 	)
 }
 
-// billingModelName 返回计费时真正应依据的模型名：渠道发生模型映射时按实际发给
-// 上游的模型（UpstreamModelName），否则按用户请求的原始模型名（OriginModelName）。
-// 未映射时 Upstream == Origin，行为与旧实现完全一致。
-func billingModelName(info *relaycommon.RelayInfo) string {
-	return info.BillingModelName()
+// billingModelName 返回计费时真正应依据的模型名。
+//   - 映射已应用阶段（结算）：IsModelMapped=true，直接复用 UpstreamModelName
+//   - 预扣费阶段：ModelMappedHelper 尚未执行、IsModelMapped 仍为初始 false，
+//     此时从渠道 model_mapping 自行解析上游模型名，避免按原始（贵）模型倍率计费
+func billingModelName(c *gin.Context, info *relaycommon.RelayInfo) string {
+	if info.ChannelMeta != nil && info.IsModelMapped && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	if c != nil && info.OriginModelName != "" {
+		if upstream := resolveUpstreamModelForBilling(info.OriginModelName, c.GetString("model_mapping")); upstream != info.OriginModelName {
+			return upstream
+		}
+	}
+	return info.OriginModelName
+}
+
+// resolveUpstreamModelForBilling 对 origin 应用 model_mapping JSON 链式解析，返回最终上游模型名。
+// 链式映射（a→b→c）解析到链尾；遇到循环或自环停在当前模型；空映射、未命中、非法 JSON 回退 origin。
+// 仅供计费预扣费阶段使用（此时 ModelMappedHelper 尚未应用映射），语义聚焦模型名解析，
+// 不处理 Compact 后缀与 IsModelMapped 布尔（由 ModelMappedHelper 在请求阶段负责）。
+func resolveUpstreamModelForBilling(origin, modelMapping string) string {
+	if modelMapping == "" || modelMapping == "{}" {
+		return origin
+	}
+	mapping := make(map[string]string)
+	if err := common.Unmarshal([]byte(modelMapping), &mapping); err != nil {
+		return origin
+	}
+	current := origin
+	visited := map[string]bool{current: true}
+	for i := 0; i < len(mapping); i++ {
+		next, ok := mapping[current]
+		if !ok || next == "" {
+			break
+		}
+		if visited[next] {
+			break
+		}
+		visited[next] = true
+		current = next
+	}
+	return current
 }
 
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
@@ -94,7 +131,7 @@ func channelPriceRatioForBilling(c *gin.Context, info *relaycommon.RelayInfo) fl
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
-	modelName := billingModelName(info)
+	modelName := billingModelName(c, info)
 	modelPrice, usePrice := model.GetModelFixedPrice(modelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
@@ -219,7 +256,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	groupRatioInfo := HandleGroupRatio(c, info)
 	channelRatio := info.GetChannelPriceRatio()
 
-	modelName := billingModelName(info)
+	modelName := billingModelName(c, info)
 	modelPrice, success := model.GetModelFixedPrice(modelName, true)
 	usePrice := success
 	var modelRatio float64
@@ -310,7 +347,7 @@ func HasModelBillingConfig(modelName string) bool {
 }
 
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo hosttypes.GroupRatioInfo, channelRatio float64) (hosttypes.PriceData, error) {
-	modelName := billingModelName(info)
+	modelName := billingModelName(c, info)
 	exprStr, ok := billing_setting.GetBillingExpr(modelName)
 	if !ok {
 		return hosttypes.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", modelName)
