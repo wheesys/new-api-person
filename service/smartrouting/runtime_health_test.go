@@ -206,3 +206,27 @@ func TestRuntimeHealthTrackerRecordsThroughputConcurrently(t *testing.T) {
 	assert.Equal(t, 100, snapshot.ThroughputSampleCount)
 	assert.True(t, validThroughput(snapshot.ThroughputTokensPerSecond))
 }
+
+func TestRuntimeHealthTrackerSnapshotAllReturnsEveryObservedEntry(t *testing.T) {
+	currentTime := time.Now()
+	tracker := newRuntimeHealthTracker(func() time.Time { return currentTime })
+
+	// No observations yet -> empty.
+	assert.Len(t, tracker.SnapshotAll(), 0)
+
+	// One healthy (with latency, so it lands an entry) + one open across channels.
+	tracker.RecordSuccessWithLatency(11, "gpt-5", 250*time.Millisecond)
+	tracker.RecordFailure(22, "claude-opus")
+	tracker.RecordFailure(22, "claude-opus")
+	tracker.RecordFailure(22, "claude-opus") // consecutive 3 -> open
+
+	all := tracker.SnapshotAll()
+	assert.Len(t, all, 2)
+
+	byChannel := map[int]ChannelHealthState{}
+	for _, s := range all {
+		byChannel[s.ChannelID] = s.State
+	}
+	assert.Equal(t, ChannelHealthHealthy, byChannel[11])
+	assert.Equal(t, ChannelHealthOpen, byChannel[22])
+}

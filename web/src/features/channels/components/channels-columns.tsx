@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
@@ -35,7 +35,11 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BadgeListCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { ProviderBadge } from '@/components/provider-badge'
-import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import {
+  StatusBadge,
+  type StatusBadgeProps,
+  type StatusVariant,
+} from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
@@ -54,7 +58,7 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { truncateText } from '@/lib/utils'
 
-import { getCodexUsage } from '../api'
+import { getChannelHealth, getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   formatBalance,
@@ -322,6 +326,20 @@ function TagWeightCell({ channel }: { channel: TagRow }) {
 const MAX_INLINE_BALANCE_CHARS = 8
 const SENSITIVE_MASK = '••••'
 
+// Map circuit-breaker health state -> StatusBadge variant and i18n label.
+const CHANNEL_HEALTH_VARIANT: Record<string, StatusVariant> = {
+  healthy: 'success',
+  degraded: 'warning',
+  open: 'danger',
+  half_open: 'info',
+}
+const CHANNEL_HEALTH_LABEL: Record<string, string> = {
+  healthy: 'Healthy',
+  degraded: 'Degraded',
+  open: 'Circuit Open',
+  half_open: 'Half Open',
+}
+
 /**
  * Balance cell component with click to update
  */
@@ -556,6 +574,22 @@ export function useChannelsColumns(
   const { sensitiveVisible } = useChannels()
   const enableSelection = options.enableSelection ?? true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+
+  // Aggregate circuit-breaker health for every observed channel/model, keyed by
+  // channel id. Absent entries mean healthy (the backend reports unobserved
+  // pairs as healthy).
+  const { data: healthData } = useQuery({
+    queryKey: ['channel-health'],
+    queryFn: getChannelHealth,
+    refetchInterval: 30_000,
+  })
+  const healthByChannel = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const item of healthData?.data ?? []) {
+      map.set(item.channel_id, item.state)
+    }
+    return map
+  }, [healthData])
   // The column definitions only depend on the translation function, the active
   // locale, and sensitive-data visibility. Memoizing keeps the array (and every
   // cell renderer reference) stable across unrelated re-renders, so react-table
@@ -1118,6 +1152,27 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      // Health column (circuit-breaker state)
+      {
+        accessorKey: 'channel_health',
+        header: t('Health'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => {
+          const state = healthByChannel.get(row.original.id) ?? 'healthy'
+          const variant = CHANNEL_HEALTH_VARIANT[state] ?? 'neutral'
+          return (
+            <StatusBadge
+              label={t(CHANNEL_HEALTH_LABEL[state] ?? 'Healthy')}
+              variant={variant}
+              size='sm'
+              copyable={false}
+            />
+          )
+        },
+        size: 90,
+        enableSorting: false,
+      },
+
       // Response Time column
       {
         accessorKey: 'response_time',
@@ -1206,6 +1261,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible]
+    [enableSelection, t, locale, sensitiveVisible, healthByChannel]
   )
 }
