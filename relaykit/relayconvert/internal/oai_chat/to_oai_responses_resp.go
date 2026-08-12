@@ -26,6 +26,8 @@ const (
 	responsesEventFunctionArgsDone         = "response.function_call_arguments.done"
 	responsesEventReasoningSummaryDelta    = "response.reasoning_summary_text.delta"
 	responsesEventReasoningSummaryDone     = "response.reasoning_summary_text.done"
+	responsesEventReasoningSummaryPartAdded = "response.reasoning_summary_part.added"
+	responsesEventReasoningSummaryPartDone  = "response.reasoning_summary_part.done"
 	responsesOutputTypeFunctionCall        = "function_call"
 	responsesOutputTypeCustomToolCall      = "custom_tool_call"
 	responsesOutputTypeMessage             = "message"
@@ -89,7 +91,7 @@ func ChatCompletionsResponseToResponsesResponseWithMeta(resp *dto.OpenAITextResp
 			Type:   responsesOutputTypeReasoning,
 			ID:     fmt.Sprintf("%s_reasoning_0", id),
 			Status: responseOutputStatus(out),
-			Content: []dto.ResponsesOutputContent{
+			Summary: []dto.ResponsesReasoningSummaryPart{
 				{
 					Type: "summary_text",
 					Text: reasoning,

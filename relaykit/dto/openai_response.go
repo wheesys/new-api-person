@@ -336,6 +336,10 @@ type ResponsesOutput struct {
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments json.RawMessage          `json:"arguments,omitempty"`
+	// Summary carries the reasoning summary parts of a reasoning output item.
+	// Codex expects reasoning items to use "summary" (a list of summary_text
+	// parts), matching the format produced by cc-switch, rather than "content".
+	Summary []ResponsesReasoningSummaryPart `json:"summary,omitempty"`
 	// Input carries the raw input string of a custom_tool_call output (the
 	// Responses wire field `input`), used when a downgraded Chat tool call is
 	// resolved back to its freeform custom tool identity.
@@ -399,6 +403,7 @@ type ResponsesStreamResponse struct {
 	SummaryIndex *int                           `json:"summary_index,omitempty"`
 	ItemID       string                         `json:"item_id,omitempty"`
 	Part         *ResponsesReasoningSummaryPart `json:"part,omitempty"`
+	Text         string                         `json:"text,omitempty"`
 }
 
 // GetOpenAIError 从动态错误类型中提取OpenAIError结构
