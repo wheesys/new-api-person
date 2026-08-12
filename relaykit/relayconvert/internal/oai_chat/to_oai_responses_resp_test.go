@@ -1,6 +1,7 @@
 package oaichat
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -137,4 +138,88 @@ func mustResponsesEventsFromChatChunk(t *testing.T, state *ChatToResponsesStream
 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
 	require.NoError(t, err)
 	return events
+}
+
+// TestChatCompletionsStreamToResponsesReasoningEmitsSummary guards the wire
+// contract that Codex requires: an in-progress reasoning item must carry an
+// explicit "summary" array (cc-switch format), never a "content" array, or
+// Codex fails to parse the item and drops the whole stream.
+func TestChatCompletionsStreamToResponsesReasoningEmitsSummary(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	state.Created = 123
+	reasoning := "thinking step one"
+
+	events := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Id:      "chatcmpl_1",
+		Model:   "gpt-test",
+		Created: 123,
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Role: "assistant", ReasoningContent: lo.ToPtr(reasoning)}},
+		},
+	})
+
+	// Find the output_item.added event and assert its item uses "summary".
+	found := false
+	for _, ev := range events {
+		if ev.Type != responsesEventOutputItemAdded {
+			continue
+		}
+		raw, err := json.Marshal(ev.Payload.Item)
+		require.NoError(t, err)
+		item := map[string]any{}
+		require.NoError(t, json.Unmarshal(raw, &item))
+		if item["type"] != responsesOutputTypeReasoning {
+			continue
+		}
+		found = true
+		_, hasContent := item["content"]
+		assert.False(t, hasContent, "reasoning item must not carry a content array")
+		summary, ok := item["summary"].([]any)
+		require.True(t, ok, "reasoning item must carry a summary array")
+		assert.Empty(t, summary, "in-progress reasoning summary should be empty")
+	}
+	require.True(t, found, "expected a reasoning output_item.added event")
+}
+
+// TestChatCompletionsStreamToResponsesReasoningCloseSummary verifies the
+// completed reasoning item carries the full summary_text part.
+func TestChatCompletionsStreamToResponsesReasoningCloseSummary(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	state.Created = 123
+	reasoning := "deep thought"
+	_ = mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Id: "chatcmpl_1", Model: "gpt-test", Created: 123,
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Role: "assistant", ReasoningContent: lo.ToPtr(reasoning)}},
+		},
+	})
+	finishReason := "stop"
+	_ = mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, FinishReason: &finishReason},
+		},
+	})
+	closeEvents := FinalizeChatCompletionsStreamToResponses(state)
+
+	for _, ev := range closeEvents {
+		if ev.Type != responsesEventOutputItemDone {
+			continue
+		}
+		raw, err := json.Marshal(ev.Payload.Item)
+		require.NoError(t, err)
+		item := map[string]any{}
+		require.NoError(t, json.Unmarshal(raw, &item))
+		if item["type"] != responsesOutputTypeReasoning {
+			continue
+		}
+		summary, ok := item["summary"].([]any)
+		require.True(t, ok, "completed reasoning item must carry a summary array")
+		require.Len(t, summary, 1)
+		part, ok := summary[0].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "summary_text", part["type"])
+		assert.Equal(t, reasoning, part["text"])
+		_, hasContent := item["content"]
+		assert.False(t, hasContent, "completed reasoning item must not carry a content array")
+	}
 }

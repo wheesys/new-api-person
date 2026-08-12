@@ -339,11 +339,33 @@ type ResponsesOutput struct {
 	// Summary carries the reasoning summary parts of a reasoning output item.
 	// Codex expects reasoning items to use "summary" (a list of summary_text
 	// parts), matching the format produced by cc-switch, rather than "content".
-	Summary []ResponsesReasoningSummaryPart `json:"summary,omitempty"`
+	// A pointer keeps "summary" emitted as [] for in-progress reasoning items
+	// (so codex sees the field) while omitting it entirely for other item kinds.
+	Summary *[]ResponsesReasoningSummaryPart `json:"summary,omitempty"`
 	// Input carries the raw input string of a custom_tool_call output (the
 	// Responses wire field `input`), used when a downgraded Chat tool call is
 	// resolved back to its freeform custom tool identity.
 	Input json.RawMessage `json:"input,omitempty"`
+}
+
+// MarshalJSON omits the "content" field for reasoning and function_call items.
+// Codex expects a reasoning item to carry "summary" (never a "content" array)
+// and function_call items carry no content; emitting "content": null makes
+// codex fail to parse the item. Message and custom_tool_call items keep their
+// content as-is.
+func (r *ResponsesOutput) MarshalJSON() ([]byte, error) {
+	type alias ResponsesOutput
+	switch r.Type {
+	case "reasoning", "function_call":
+		return json.Marshal(&struct {
+			*alias
+			Content []ResponsesOutputContent `json:"content,omitempty"`
+		}{
+			alias: (*alias)(r),
+		})
+	default:
+		return json.Marshal((*alias)(r))
+	}
 }
 
 // ArgumentsString returns function call arguments in the string form expected by Chat Completions.

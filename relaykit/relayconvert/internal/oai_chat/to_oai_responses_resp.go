@@ -91,7 +91,7 @@ func ChatCompletionsResponseToResponsesResponseWithMeta(resp *dto.OpenAITextResp
 			Type:   responsesOutputTypeReasoning,
 			ID:     fmt.Sprintf("%s_reasoning_0", id),
 			Status: responseOutputStatus(out),
-			Summary: []dto.ResponsesReasoningSummaryPart{
+			Summary: &[]dto.ResponsesReasoningSummaryPart{
 				{
 					Type: "summary_text",
 					Text: reasoning,

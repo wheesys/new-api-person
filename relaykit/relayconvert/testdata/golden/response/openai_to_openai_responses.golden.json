@@ -27,7 +27,6 @@
       "id": "chatcmpl-fixed_reasoning_0",
       "status": "completed",
       "role": "",
-      "content": null,
       "quality": "",
       "size": "",
       "summary": [
@@ -42,7 +41,6 @@
       "id": "call_abc",
       "status": "completed",
       "role": "",
-      "content": null,
       "quality": "",
       "size": "",
       "call_id": "call_abc",
