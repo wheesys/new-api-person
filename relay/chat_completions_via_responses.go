@@ -216,6 +216,48 @@ func executePreparedChatCompletionsViaResponses(c *gin.Context, info *relaycommo
 	return usage, nil
 }
 
+// executePreparedResponsesViaChat runs a downgraded Responses attempt whose
+// upstream request was sent as Chat Completions. It forwards the upstream Chat
+// response back to the Codex client as a Responses response (mirror of
+// executePreparedChatCompletionsViaResponses).
+func executePreparedResponsesViaChat(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, requestBody io.Reader) (*dto.Usage, *types.NewAPIError) {
+	var httpResp *http.Response
+	resp, err := adaptor.DoRequest(c, info, requestBody)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	}
+	if resp == nil {
+		return nil, types.NewOpenAIError(nil, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+
+	statusCodeMappingStr := c.GetString("status_code_mapping")
+
+	httpResp = resp.(*http.Response)
+	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
+	info.IsStream = info.IsStream || upstreamStream
+	if httpResp.StatusCode != http.StatusOK {
+		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+		return nil, newApiErr
+	}
+
+	if info.IsStream {
+		usage, newApiErr := openaichannel.OaiChatToResponsesStreamHandler(c, info, httpResp)
+		if newApiErr != nil {
+			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+			return nil, newApiErr
+		}
+		return usage, nil
+	}
+
+	usage, newApiErr := openaichannel.OaiChatToResponsesHandler(c, info, httpResp)
+	if newApiErr != nil {
+		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+		return nil, newApiErr
+	}
+	return usage, nil
+}
+
 func isResponsesEventStreamContentType(contentType string) bool {
 	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }

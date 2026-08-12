@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
@@ -25,6 +26,15 @@ const (
 )
 
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithMeta(req, nil)
+}
+
+// ResponsesRequestToChatCompletionsRequestWithMeta converts a Responses request
+// to Chat Completions. When meta indicates a Responses→Chat downgrade
+// (CodexOptions.ResponsesChatFallback), freeform custom tools and namespaces
+// are adapted so Chat-completions-only upstreams (GLM, DeepSeek, etc.) can
+// represent them, and the mapping is recorded for reverse conversion.
+func ResponsesRequestToChatCompletionsRequestWithMeta(req *dto.OpenAIResponsesRequest, meta convmeta.Meta) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -35,12 +45,12 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		return nil, err
 	}
 
-	messages, err := responsesRequestMessagesToChat(req)
+	messages, err := responsesRequestMessagesToChat(req, meta)
 	if err != nil {
 		return nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools)
+	tools, err := responsesRequestToolsToChat(req.Tools, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +141,7 @@ func ValidateRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error
 	return validateResponsesRequestChatUnsupportedFields(req)
 }
 
-func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, meta convmeta.Meta) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -161,7 +171,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		for _, item := range items {
-			nextMessages, err := responsesInputItemToChatMessages(item, messages)
+			nextMessages, err := responsesInputItemToChatMessages(item, messages, meta)
 			if err != nil {
 				return nil, err
 			}
@@ -173,7 +183,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 	}
 }
 
-func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
+func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, meta convmeta.Meta) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 	switch itemType {
 	case responsesInputTypeFunctionCall:
@@ -183,7 +193,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		}
 		return appendToolCallToLastAssistant(messages, toolCall), nil
 	case responsesInputTypeCustomToolCall:
-		toolCall, err := responsesCustomToolCallItemToChatToolCall(item)
+		toolCall, err := responsesCustomToolCallItemToChatToolCall(item, meta)
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +309,37 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 	}, nil
 }
 
-func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
+// codexToolMappingEnabled reports whether the current conversion should apply
+// codex-style tool adaptation (custom→function wrapping + namespace flattening).
+func codexToolMappingEnabled(meta convmeta.Meta) bool {
+	if meta == nil {
+		return false
+	}
+	return convmeta.OptionsOf(meta).Codex.ResponsesChatFallback
+}
+
+func responsesCustomToolCallItemToChatToolCall(item map[string]any, meta convmeta.Meta) (dto.ToolCallRequest, error) {
+	name := strings.TrimSpace(kitutil.Interface2String(item["name"]))
+	if codexToolMappingEnabled(meta) {
+		ctx := meta.EnsureCodexToolContext()
+		// The original custom tool was sent upstream as a flattened function;
+		// mirror its name so the wrapped input round-trips under the same name.
+		chatName := ctx.FlattenNamespaceName("", name)
+		input := responsesArgumentsString(item["input"])
+		arguments, err := kitutil.Marshal(map[string]any{convmeta.ChatToolCustomInputField: input})
+		if err != nil {
+			return dto.ToolCallRequest{}, err
+		}
+		return dto.ToolCallRequest{
+			ID:   responsesCallID(item),
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name:      chatName,
+				Arguments: string(arguments),
+			},
+		}, nil
+	}
+
 	raw, err := kitutil.Marshal(item)
 	if err != nil {
 		return dto.ToolCallRequest{}, err
@@ -309,7 +349,7 @@ func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCal
 		Type:   dto.CustomType,
 		Custom: raw,
 		Function: dto.FunctionRequest{
-			Name:      strings.TrimSpace(kitutil.Interface2String(item["name"])),
+			Name:      name,
 			Arguments: responsesArgumentsString(item["input"]),
 		},
 	}, nil
@@ -328,7 +368,7 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
 	return messages
 }
 
-func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+func responsesRequestToolsToChat(raw json.RawMessage, meta convmeta.Meta) ([]dto.ToolCallRequest, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -338,6 +378,20 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 		return nil, fmt.Errorf("invalid tools: %w", err)
 	}
 
+	if codexToolMappingEnabled(meta) {
+		var strip func(string) bool
+		if opts := convmeta.OptionsOf(meta); opts != nil {
+			strip = opts.Codex.StripBuiltInTool
+		}
+		return codexToolsToChat(tools, meta.EnsureCodexToolContext(), strip)
+	}
+	return responsesToolsToChatNative(tools)
+}
+
+// responsesToolsToChatNative converts Responses tools without codex-style
+// adaptation: ordinary function tools are passed through, everything else
+// (custom, tool_search, namespaces) is preserved verbatim as a custom tool.
+func responsesToolsToChatNative(tools []map[string]any) ([]dto.ToolCallRequest, error) {
 	out := make([]dto.ToolCallRequest, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(kitutil.Interface2String(tool["type"]))
@@ -363,6 +417,126 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 		})
 	}
 	return out, nil
+}
+
+// codexToolsToChat adapts Responses tools for a Chat-completions-only upstream:
+// freeform custom tools (apply_patch) are wrapped as single-argument function
+// tools, namespaces are flattened, tool_search is expressed as a function, and
+// built-in tools flagged by strip are dropped. Every chat-facing name is
+// recorded in ctx so a model tool call can be resolved back to its Responses
+// identity during response conversion.
+func codexToolsToChat(tools []map[string]any, ctx *convmeta.CodexToolContext, strip func(string) bool) ([]dto.ToolCallRequest, error) {
+	out := make([]dto.ToolCallRequest, 0, len(tools))
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(kitutil.Interface2String(tool["type"]))
+		name := strings.TrimSpace(kitutil.Interface2String(tool["name"]))
+		// Built-in tools may carry no name; key the strip decision on the type
+		// in that case so e.g. web_search declarations can be dropped.
+		stripKey := name
+		if stripKey == "" {
+			stripKey = toolType
+		}
+		if strip != nil && stripKey != "" && strip(stripKey) {
+			continue
+		}
+
+		switch toolType {
+		case "function":
+			ns := strings.TrimSpace(kitutil.Interface2String(tool["namespace"]))
+			chatName := ctx.FlattenNamespaceName(ns, name)
+			ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolFunction, Name: name, Namespace: ns})
+			out = append(out, dto.ToolCallRequest{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        chatName,
+					Description: kitutil.Interface2String(tool["description"]),
+					Parameters:  tool["parameters"],
+				},
+			})
+		case "namespace":
+			ns := strings.TrimSpace(kitutil.Interface2String(tool["namespace"]))
+			children, _ := tool["children"].([]any)
+			for _, rawChild := range children {
+				child, ok := rawChild.(map[string]any)
+				if !ok {
+					continue
+				}
+				if strings.TrimSpace(kitutil.Interface2String(child["type"])) != "function" {
+					continue
+				}
+				cname := strings.TrimSpace(kitutil.Interface2String(child["name"]))
+				if strip != nil && cname != "" && strip(cname) {
+					continue
+				}
+				chatName := ctx.FlattenNamespaceName(ns, cname)
+				ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolFunction, Name: cname, Namespace: ns})
+				out = append(out, dto.ToolCallRequest{
+					Type: "function",
+					Function: dto.FunctionRequest{
+						Name:        chatName,
+						Description: kitutil.Interface2String(child["description"]),
+						Parameters:  child["parameters"],
+					},
+				})
+			}
+		case "custom":
+			chatName := ctx.FlattenNamespaceName("", name)
+			ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolCustom, Name: name})
+			out = append(out, customToolToFunctionTool(chatName, tool))
+		case "tool_search":
+			chatName := ctx.FlattenNamespaceName("", "tool_search")
+			ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolToolSearch, Name: "tool_search"})
+			out = append(out, dto.ToolCallRequest{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        chatName,
+					Description: "Search the web.",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"query": map[string]any{"type": "string"},
+							"limit": map[string]any{"type": "integer"},
+						},
+						"required": []string{"query"},
+					},
+				},
+			})
+		default:
+			rawTool, err := kitutil.Marshal(tool)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, dto.ToolCallRequest{
+				Type:   toolType,
+				Custom: rawTool,
+			})
+		}
+	}
+	return out, nil
+}
+
+// customToolToFunctionTool wraps a freeform custom tool as a function tool whose
+// only parameter is a string named by convmeta.ChatToolCustomInputField, so a
+// Chat-completions-only upstream can represent apply_patch-style tools.
+func customToolToFunctionTool(chatName string, tool map[string]any) dto.ToolCallRequest {
+	description := kitutil.Interface2String(tool["description"])
+	return dto.ToolCallRequest{
+		Type: "function",
+		Function: dto.FunctionRequest{
+			Name:        chatName,
+			Description: description,
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					convmeta.ChatToolCustomInputField: map[string]any{
+						"type":        "string",
+						"description": description,
+					},
+				},
+				"required": []string{convmeta.ChatToolCustomInputField},
+			},
+		},
+	}
 }
 
 func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {

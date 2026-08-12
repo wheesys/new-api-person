@@ -336,6 +336,10 @@ type ResponsesOutput struct {
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments json.RawMessage          `json:"arguments,omitempty"`
+	// Input carries the raw input string of a custom_tool_call output (the
+	// Responses wire field `input`), used when a downgraded Chat tool call is
+	// resolved back to its freeform custom tool identity.
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 // ArgumentsString returns function call arguments in the string form expected by Chat Completions.

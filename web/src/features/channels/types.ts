@@ -176,6 +176,22 @@ export interface GetChannelResponse {
   data?: Channel
 }
 
+export interface ChannelHealth {
+  channel_id: number
+  model_name: string
+  state: 'healthy' | 'degraded' | 'open' | 'half_open'
+  reliability: number
+  consecutive_failures: number
+  cooldown_seconds: number
+  open_until?: string
+}
+
+export interface ChannelHealthResponse {
+  success: boolean
+  message?: string
+  data?: ChannelHealth[]
+}
+
 export interface ChannelOpsResponse {
   success: boolean
   message?: string

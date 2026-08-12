@@ -74,6 +74,10 @@ type ResponseStreamOptions struct {
 	Model        string
 	Created      int64
 	IncludeUsage bool
+	// CodexCtx carries the Responses↔Chat tool mapping for a downgraded
+	// (Responses→Chat) request, so streamed tool calls can be resolved back to
+	// their original identity. Nil means no adaptation.
+	CodexCtx *convmeta.CodexToolContext
 }
 
 type ResponseStreamState struct {
@@ -792,7 +796,7 @@ func usageFromClaudeResponse(resp *dto.ClaudeResponse) *dto.Usage {
 	return nil
 }
 
-func convertOAIChatResponseToOAIResponses(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
+func convertOAIChatResponseToOAIResponses(_ context.Context, meta convmeta.Meta, response any) (any, *dto.Usage, error) {
 	chatResponse, err := asOAIChatResponse(response)
 	if err != nil {
 		return nil, nil, err
@@ -801,7 +805,7 @@ func convertOAIChatResponseToOAIResponses(_ context.Context, _ convmeta.Meta, re
 	if id == "" {
 		id = fmt.Sprintf("resp_%s", kitutil.GetUUID())
 	}
-	return ChatCompletionsResponseToResponsesResponse(chatResponse, id)
+	return oaichat.ChatCompletionsResponseToResponsesResponseWithMeta(chatResponse, id, meta)
 }
 
 func convertOAIResponsesResponseToOAIChat(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
@@ -824,6 +828,9 @@ func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
 	state := NewChatToResponsesStreamState(id, strings.TrimSpace(options.Model))
 	if options.Created != 0 {
 		state.Created = options.Created
+	}
+	if options.CodexCtx != nil {
+		state.SetCodexToolContext(options.CodexCtx)
 	}
 	return state
 }

@@ -25,6 +25,7 @@ import type {
   BatchSetTagParams,
   Channel,
   ChannelBalanceResponse,
+  ChannelHealthResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
   CopyChannelParams,
@@ -110,6 +111,14 @@ export async function getChannel(id: number): Promise<GetChannelResponse> {
  */
 export async function getChannelOps(): Promise<ChannelOpsResponse> {
   const res = await api.get('/api/channel/ops', channelActionConfig())
+  return res.data
+}
+
+/**
+ * Get aggregate circuit-breaker health view for every observed channel/model
+ */
+export async function getChannelHealth(): Promise<ChannelHealthResponse> {
+  const res = await api.get('/api/channel/health', channelActionConfig())
   return res.data
 }
 

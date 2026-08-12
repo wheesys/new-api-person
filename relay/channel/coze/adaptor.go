@@ -54,7 +54,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *common.RelayInfo, r
 
 // ConvertOpenAIResponsesRequest implements channel.Adaptor.
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *common.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	return nil, errors.New("not implemented")
+	return nil, common.ErrResponsesNotSupported
 }
 
 // ConvertRerankRequest implements channel.Adaptor.

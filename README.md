@@ -75,6 +75,10 @@
   <strong>Thanks to <a href="https://www.jetbrains.com/?from=new-api">JetBrains</a> for providing free open-source development license for this project</strong>
 </p>
 
+<p align="center">
+  <strong>感谢 <a href="https://github.com/farion1231/cc-switch">cc-switch</a> 提供的 Responses↔Chat 工具调用兼容方案思路（custom 工具包装、namespace 展平、协议降级）</strong>
+</p>
+
 ---
 
 ## 🚀 Quick Start
@@ -196,12 +200,14 @@ docker run --name new-api -d --restart always \
 - 🧩 Protocol-aware context validation for OpenAI Chat Completions, OpenAI Responses, Claude Messages, and Google Gemini
 - 🔒 Provider-bound context blocks unsafe virtual-model switching and disables cross-channel smart retries for explicit models
 - 🚦 User-level model rate limiting
+- 🛡️ Per-channel/model circuit breaker that skips circuit-open channels during routing and surfaces runtime health in the channel list
 
 **Format Conversion:**
 - 🔄 **OpenAI Compatible ⇄ Claude Messages**
 - 🔄 **OpenAI Compatible → Google Gemini**
 - 🔄 **Google Gemini → OpenAI Compatible** - Text only, function calling not supported yet
 - 🚧 **OpenAI Compatible ⇄ OpenAI Responses** - In development
+- 🛠️ **Responses ⇄ Chat Completions** tool-call compatibility for GLM / DeepSeek / Codex
 - 🔄 **Thinking-to-content functionality**
 
 **Reasoning Effort Support:**

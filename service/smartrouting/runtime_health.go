@@ -119,6 +119,23 @@ func (tracker *RuntimeHealthTracker) Snapshot(channelID int, modelName string) R
 	return entry.snapshot(key, now)
 }
 
+// SnapshotAll returns an immutable view of every observed channel/model health
+// entry. Unobserved channel/model pairs are not included (their absence means
+// healthy). It is the aggregate form used by the channel health dashboard.
+func (tracker *RuntimeHealthTracker) SnapshotAll() []RuntimeHealthSnapshot {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+
+	now := tracker.now()
+	tracker.prune(now)
+	snapshots := make([]RuntimeHealthSnapshot, 0, len(tracker.entries))
+	for key, entry := range tracker.entries {
+		entry.lastObservedAt = now
+		snapshots = append(snapshots, entry.snapshot(key, now))
+	}
+	return snapshots
+}
+
 func (tracker *RuntimeHealthTracker) TryAcquireProbe(channelID int, modelName string) bool {
 	key := runtimeHealthKey{channelID: channelID, modelName: strings.TrimSpace(modelName)}
 	tracker.mutex.Lock()
@@ -360,6 +377,12 @@ var defaultRuntimeHealthTracker = NewRuntimeHealthTracker()
 // GetRuntimeHealthSnapshot returns the current process-wide health view.
 func GetRuntimeHealthSnapshot(channelID int, modelName string) RuntimeHealthSnapshot {
 	return defaultRuntimeHealthTracker.Snapshot(channelID, modelName)
+}
+
+// GetRuntimeHealthSnapshotAll returns the current process-wide health view for
+// every observed channel/model pair.
+func GetRuntimeHealthSnapshotAll() []RuntimeHealthSnapshot {
+	return defaultRuntimeHealthTracker.SnapshotAll()
 }
 
 // RecordRuntimeHealthSuccess records a successful process-wide observation.

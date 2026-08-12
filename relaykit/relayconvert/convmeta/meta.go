@@ -36,6 +36,13 @@ type Meta interface {
 	// nil receiver may return a temporary initialized state.
 	EnsureClaudeConvertInfo() *ClaudeConvertInfo
 
+	// EnsureCodexToolContext lazily creates and returns the mutable
+	// Responses↔Chat tool-mapping context. The same instance must be returned
+	// for the lifetime of one request so tool declarations registered during
+	// request conversion can be resolved back when tool calls are converted in
+	// the response or a later turn.
+	EnsureCodexToolContext() *CodexToolContext
+
 	// GetSendResponseCount / IncrSendResponseCount expose the shared
 	// downstream-chunk counter (the host may also increment it).
 	GetSendResponseCount() int
@@ -82,6 +89,7 @@ type Values struct {
 	EstimatePromptTokens int
 
 	ClaudeConvertInfo *ClaudeConvertInfo
+	CodexToolContext  *CodexToolContext
 	SendResponseCount int
 	ConversionChain   []types.RelayFormat
 
@@ -154,6 +162,16 @@ func (v *Values) EnsureClaudeConvertInfo() *ClaudeConvertInfo {
 		v.ClaudeConvertInfo = &ClaudeConvertInfo{LastMessagesType: LastMessageTypeNone}
 	}
 	return v.ClaudeConvertInfo
+}
+
+func (v *Values) EnsureCodexToolContext() *CodexToolContext {
+	if v == nil {
+		return NewCodexToolContext()
+	}
+	if v.CodexToolContext == nil {
+		v.CodexToolContext = NewCodexToolContext()
+	}
+	return v.CodexToolContext
 }
 
 func (v *Values) GetSendResponseCount() int {

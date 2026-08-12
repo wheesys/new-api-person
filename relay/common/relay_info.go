@@ -194,9 +194,16 @@ type RelayInfo struct {
 	// convOptions caches the converter settings snapshot (see ConvOptions).
 	convOptions *convmeta.Options
 
+	// ResponsesChatFallback marks that this request was downgraded from the
+	// Responses API to Chat Completions because the selected channel does not
+	// support native Responses. The codex tool-conversion layer reads it via
+	// ConvOptions() to enable Responses→Chat tool mapping.
+	ResponsesChatFallback bool
+
 	ThinkingContentInfo
 	TokenCountMeta
 	*ClaudeConvertInfo
+	*convmeta.CodexToolContext
 	*RerankerInfo
 	*ResponsesUsageInfo
 	*ChannelMeta
@@ -884,6 +891,16 @@ func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
 	return info.ClaudeConvertInfo
 }
 
+func (info *RelayInfo) EnsureCodexToolContext() *convmeta.CodexToolContext {
+	if info == nil {
+		return convmeta.NewCodexToolContext()
+	}
+	if info.CodexToolContext == nil {
+		info.CodexToolContext = convmeta.NewCodexToolContext()
+	}
+	return info.CodexToolContext
+}
+
 func (info *RelayInfo) GetSendResponseCount() int {
 	if info == nil {
 		return 0
@@ -922,6 +939,10 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 		},
 		OpenRouterDialect:      info != nil && info.GetChannelType() == constant.ChannelTypeOpenRouter,
 		PreserveThinkingSuffix: model_setting.ShouldPreserveThinkingSuffix,
+		Codex: convmeta.CodexOptions{
+			ResponsesChatFallback: info != nil && info.ResponsesChatFallback,
+			StripBuiltInTool:      codexStripBuiltInTool(info),
+		},
 	}
 	if info != nil {
 		info.convOptions = options
@@ -931,6 +952,23 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 
 func (info *RelayInfo) SetFirstResponseTime() {
 	info.SetFirstResponseTimeForAttempt(nil)
+}
+
+// codexStripBuiltInTool returns a tool-stripping predicate for the selected
+// channel, mirroring cc-switch's per-gateway filtering. Gateways known to
+// reject certain built-in Responses tools (e.g. MiniMax rejecting web_search)
+// drop those declarations during a Responses→Chat downgrade so the upstream
+// does not return a 400.
+func codexStripBuiltInTool(info *RelayInfo) func(string) bool {
+	if info == nil {
+		return nil
+	}
+	if info.GetChannelType() == constant.ChannelTypeMiniMax {
+		return func(toolName string) bool {
+			return toolName == dto.BuildInToolWebSearch || toolName == dto.BuildInToolWebSearchPreview
+		}
+	}
+	return nil
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

@@ -7,8 +7,24 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/smartrouting"
 	"github.com/gin-gonic/gin"
 )
+
+// openChannelReselectLimit bounds how many times we re-pick a channel when the
+// random pick lands on a circuit-open channel, preventing a hot loop when every
+// candidate is open.
+const openChannelReselectLimit = 5
+
+// runtimeHealthOpen is a package-level hook over the smartrouting health check,
+// so tests can stub it. Production always delegates to smartrouting.
+var runtimeHealthOpen = func(channelID int, modelName string) bool {
+	return smartrouting.GetRuntimeHealthSnapshot(channelID, modelName).State == smartrouting.ChannelHealthOpen
+}
+
+// randomSatisfiedChannel is a package-level hook over the model channel pick,
+// so tests can stub the weighted-random selection.
+var randomSatisfiedChannel = model.GetRandomSatisfiedChannel
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -115,7 +131,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+			channel, _ = pickChannelSkippingOpen(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -153,10 +169,32 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err = pickChannelSkippingOpen(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+// pickChannelSkippingOpen selects a channel via the normal weighted-random pick,
+// re-picking when the chosen channel is circuit-open so a just-failed / tripped
+// channel is not hot-looped. It falls back to the last picked channel after a
+// bounded number of attempts so an all-open candidate pool still resolves.
+func pickChannelSkippingOpen(group, modelName string, retry int, requestPath string) (*model.Channel, error) {
+	var channel *model.Channel
+	for attempt := 0; attempt < openChannelReselectLimit; attempt++ {
+		var err error
+		channel, err = randomSatisfiedChannel(group, modelName, retry, requestPath)
+		if err != nil {
+			return nil, err
+		}
+		if channel == nil {
+			return nil, nil
+		}
+		if !runtimeHealthOpen(channel.Id, modelName) {
+			return channel, nil
+		}
+	}
+	return channel, nil
 }
