@@ -426,6 +426,10 @@ type ResponsesStreamResponse struct {
 	ItemID       string                         `json:"item_id,omitempty"`
 	Part         *ResponsesReasoningSummaryPart `json:"part,omitempty"`
 	Text         string                         `json:"text,omitempty"`
+	// Input carries the full custom tool input for a custom_tool_call_input.done
+	// event. Codex expects custom tool calls to stream their input via the
+	// custom_tool_call_input.delta/done events (not function_call_arguments).
+	Input string `json:"input,omitempty"`
 }
 
 // GetOpenAIError 从动态错误类型中提取OpenAIError结构

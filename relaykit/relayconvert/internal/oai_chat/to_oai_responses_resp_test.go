@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -222,4 +223,86 @@ func TestChatCompletionsStreamToResponsesReasoningCloseSummary(t *testing.T) {
 		_, hasContent := item["content"]
 		assert.False(t, hasContent, "completed reasoning item must not carry a content array")
 	}
+}
+
+// TestChatCompletionsStreamToResponsesCustomToolUsesCustomInputEvents guards
+// that a custom_tool_call streams its input via custom_tool_call_input.delta /
+// .done (codex rejects function_call_arguments.delta for custom tools with
+// "unhandled responses event").
+func TestChatCompletionsStreamToResponsesCustomToolUsesCustomInputEvents(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	state.Created = 123
+	ctx := convmeta.NewCodexToolContext()
+	ctx.Record("functions__exec", convmeta.CodexToolSpec{Kind: convmeta.CodexToolCustom, Name: "exec"})
+	state.SetCodexToolContext(ctx)
+	toolIndex := 0
+
+	// First chunk declares the tool call (name functions__exec -> custom exec).
+	addedEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Id: "chatcmpl_1", Model: "gpt-test", Created: 123,
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+				ToolCalls: []dto.ToolCallResponse{
+					{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "functions__exec"}},
+				},
+			}},
+		},
+	})
+
+	addedCustom := false
+	for _, ev := range addedEvents {
+		if ev.Type == responsesEventOutputItemAdded && ev.Payload.Item != nil {
+			raw, _ := json.Marshal(ev.Payload.Item)
+			var item map[string]any
+			_ = json.Unmarshal(raw, &item)
+			if item["type"] == "custom_tool_call" {
+				addedCustom = true
+			}
+		}
+	}
+	require.True(t, addedCustom, "custom tool must be emitted as custom_tool_call")
+
+	// Second chunk streams arguments -> must be custom_tool_call_input.delta.
+	argEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+				ToolCalls: []dto.ToolCallResponse{
+					{Index: &toolIndex, Function: dto.FunctionResponse{Arguments: `{"input":"const x=1"}`}},
+				},
+			}},
+		},
+	})
+	foundCustomDelta := false
+	foundFunctionDelta := false
+	for _, ev := range argEvents {
+		switch ev.Type {
+		case responsesEventCustomToolInputDelta:
+			foundCustomDelta = true
+		case responsesEventFunctionArgsDelta:
+			foundFunctionDelta = true
+		}
+	}
+	assert.True(t, foundCustomDelta, "custom tool input must stream via custom_tool_call_input.delta")
+	assert.False(t, foundFunctionDelta, "custom tool must not use function_call_arguments.delta")
+
+	// Finish -> custom_tool_call_input.done, not function_call_arguments.done.
+	finishReason := "tool_calls"
+	finishEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, FinishReason: &finishReason},
+		},
+	})
+	doneEvents := append(finishEvents, FinalizeChatCompletionsStreamToResponses(state)...)
+	foundCustomDone := false
+	foundFunctionDone := false
+	for _, ev := range doneEvents {
+		switch ev.Type {
+		case responsesEventCustomToolInputDone:
+			foundCustomDone = true
+		case responsesEventFunctionArgsDone:
+			foundFunctionDone = true
+		}
+	}
+	assert.True(t, foundCustomDone, "custom tool must close via custom_tool_call_input.done")
+	assert.False(t, foundFunctionDone, "custom tool must not use function_call_arguments.done")
 }
