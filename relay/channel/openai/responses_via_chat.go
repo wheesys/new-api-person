@@ -69,7 +69,6 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseID := helper.GetResponseID(c)
-	loggedToolCalls := false
 	state, err := relayconvert.NewResponseStreamState(types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses, relayconvert.ResponseStreamOptions{
 		ID:       responseID,
 		Model:    info.UpstreamModelName,
@@ -110,16 +109,6 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
 			sr.Error(err)
 			return
-		}
-
-		for _, choice := range chunk.Choices {
-			if !loggedToolCalls && len(choice.Delta.ToolCalls) > 0 {
-				loggedToolCalls = true
-				logger.LogInfo(c, fmt.Sprintf("glm stream: first tool_call seen (channel %d)", info.ChannelId))
-			}
-			if choice.FinishReason != nil && *choice.FinishReason != "" {
-				logger.LogInfo(c, fmt.Sprintf("glm stream: finish_reason=%s (channel %d)", *choice.FinishReason, info.ChannelId))
-			}
 		}
 
 		results, err := relayconvert.ConvertStreamResponseChunk(c, info, state, &chunk)
@@ -166,6 +155,5 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	}
 
-	logger.LogInfo(c, fmt.Sprintf("glm stream end: text=%d chars, tool_calls_seen=%v, prompt=%d, completion=%d (channel %d)", len(state.UsageText()), loggedToolCalls, usage.PromptTokens, usage.CompletionTokens, info.ChannelId))
 	return usage, nil
 }
