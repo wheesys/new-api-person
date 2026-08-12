@@ -75,6 +75,10 @@
   <strong>Thanks to <a href="https://www.jetbrains.com/?from=new-api">JetBrains</a> for providing free open-source development license for this project</strong>
 </p>
 
+<p align="center">
+  <strong>感谢 <a href="https://github.com/farion1231/cc-switch">cc-switch</a> 提供的 Responses↔Chat 工具调用兼容方案思路（custom 工具包装、namespace 展平、协议降级）</strong>
+</p>
+
 ---
 
 ## 🚀 Quick Start
