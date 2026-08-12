@@ -499,6 +499,40 @@ type convertedTextAttemptOptions struct {
 	savedRequestURLPath string
 }
 
+// convertedRequestMessageRoles extracts the role sequence of the converted
+// chat request body so we can diagnose why an upstream rejects a request as
+// missing a prompt (temporary diagnostic helper).
+func convertedRequestMessageRoles(jsonData []byte) string {
+	var body struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		} `json:"messages"`
+	}
+	if err := common.Unmarshal(jsonData, &body); err != nil {
+		return "parse-error: " + err.Error()
+	}
+	parts := make([]string, 0, len(body.Messages))
+	for i, m := range body.Messages {
+		contentStr := ""
+		switch v := m.Content.(type) {
+		case string:
+			contentStr = v
+		case []any:
+			contentStr = fmt.Sprintf("array[%d]", len(v))
+		case nil:
+			contentStr = "<nil>"
+		default:
+			contentStr = fmt.Sprintf("%T", m.Content)
+		}
+		if len(contentStr) > 60 {
+			contentStr = contentStr[:60] + "..."
+		}
+		parts = append(parts, fmt.Sprintf("%d:%s=%q", i, m.Role, contentStr))
+	}
+	return strings.Join(parts, " | ")
+}
+
 func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, convertedRequest any, options convertedTextAttemptOptions, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 	authoritativeTarget, newAPIError := resolveAuthoritativeTextTarget(info, adaptor, policy)
@@ -521,7 +555,7 @@ func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, ad
 			return nil, newAPIErrorFromParamOverride(err)
 		}
 	}
-	logger.LogDebug(c, options.logMessage, jsonData)
+	logger.LogInfo(c, fmt.Sprintf("[TEMP] converted body messages roles for channel %d: %s", info.ChannelId, convertedRequestMessageRoles(jsonData)))
 
 	preparedRequest, err := relaycommon.PrepareFinalJSONRelayRequest(info, jsonData)
 	if err != nil {
