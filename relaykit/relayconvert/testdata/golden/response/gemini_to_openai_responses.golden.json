@@ -26,9 +26,6 @@
       "type": "function_call",
       "id": "call_<uuid>",
       "status": "completed",
-      "role": "",
-      "quality": "",
-      "size": "",
       "call_id": "call_<uuid>",
       "name": "get_weather",
       "arguments": "{\"city\":\"Paris\"}"

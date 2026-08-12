@@ -26,9 +26,6 @@
       "type": "reasoning",
       "id": "chatcmpl-fixed_reasoning_0",
       "status": "completed",
-      "role": "",
-      "quality": "",
-      "size": "",
       "summary": [
         {
           "type": "summary_text",
@@ -40,9 +37,6 @@
       "type": "function_call",
       "id": "call_abc",
       "status": "completed",
-      "role": "",
-      "quality": "",
-      "size": "",
       "call_id": "call_abc",
       "name": "get_weather",
       "arguments": "{\"city\":\"Paris\"}"

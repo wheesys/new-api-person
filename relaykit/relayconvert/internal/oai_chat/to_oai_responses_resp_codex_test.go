@@ -27,8 +27,10 @@ func TestChatToolCallToResponsesOutput_codexCustomRestored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "custom_tool_call", out.Type)
 	assert.Equal(t, "apply_patch", out.Name)
-	// The wrapped input must be extracted back out of the arguments JSON.
-	assert.Equal(t, `"{\"old_string\":\"a\",\"new_string\":\"b\"}"`, string(out.Arguments))
+	// The wrapped input must be extracted back out of the arguments JSON and
+	// carried in the "input" field, not "arguments".
+	assert.Equal(t, `"{\"old_string\":\"a\",\"new_string\":\"b\"}"`, string(out.Input))
+	assert.Empty(t, out.Arguments)
 }
 
 func TestChatToolCallToResponsesOutput_namespaceNameRestored(t *testing.T) {

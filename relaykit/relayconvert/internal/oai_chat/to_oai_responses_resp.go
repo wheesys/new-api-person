@@ -197,12 +197,12 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 				switch spec.Kind {
 				case convmeta.CodexToolCustom:
 					return dto.ResponsesOutput{
-						Type:      responsesOutputTypeCustomToolCall,
-						ID:        callID,
-						Status:    status,
-						CallId:    callID,
-						Name:      spec.Name,
-						Arguments: json.RawMessage(customToolInputFromChatArguments(toolCall.Function.Arguments)),
+						Type:   responsesOutputTypeCustomToolCall,
+						ID:     callID,
+						Status: status,
+						CallId: callID,
+						Name:   spec.Name,
+						Input:  json.RawMessage(customToolInputFromChatArguments(toolCall.Function.Arguments)),
 					}, nil
 				default:
 					name = spec.Name

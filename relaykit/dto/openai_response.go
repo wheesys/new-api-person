@@ -348,20 +348,39 @@ type ResponsesOutput struct {
 	Input json.RawMessage `json:"input,omitempty"`
 }
 
-// MarshalJSON omits the "content" field for reasoning and function_call items.
-// Codex expects a reasoning item to carry "summary" (never a "content" array)
-// and function_call items carry no content; emitting "content": null makes
-// codex fail to parse the item. Message and custom_tool_call items keep their
-// content as-is.
+// MarshalJSON omits fields that Codex does not expect on specific item kinds.
+// - reasoning: must carry "summary" (never a "content" array); content:null
+//   makes codex fail to parse the item
+// - function_call: carries no content
+// - custom_tool_call: carries no role/content/quality/size, uses "input"
+// Message items keep their full content as-is.
 func (r *ResponsesOutput) MarshalJSON() ([]byte, error) {
 	type alias ResponsesOutput
+	// alias drops the custom MarshalJSON, but its Role/Content/Quality/Size
+	// carry non-omitempty tags. Build explicit structs for the kinds that must
+	// omit those fields.
 	switch r.Type {
-	case "reasoning", "function_call":
+	case "reasoning", "function_call", "custom_tool_call":
 		return json.Marshal(&struct {
-			*alias
-			Content []ResponsesOutputContent `json:"content,omitempty"`
+			Type      string                   `json:"type"`
+			ID        string                   `json:"id"`
+			Status    string                   `json:"status"`
+			Result    string                   `json:"result,omitempty"`
+			CallId    string                   `json:"call_id,omitempty"`
+			Name      string                   `json:"name,omitempty"`
+			Arguments json.RawMessage          `json:"arguments,omitempty"`
+			Summary   *[]ResponsesReasoningSummaryPart `json:"summary,omitempty"`
+			Input     json.RawMessage          `json:"input,omitempty"`
 		}{
-			alias: (*alias)(r),
+			Type:      r.Type,
+			ID:        r.ID,
+			Status:    r.Status,
+			Result:    r.Result,
+			CallId:    r.CallId,
+			Name:      r.Name,
+			Arguments: r.Arguments,
+			Summary:   r.Summary,
+			Input:     r.Input,
 		})
 	default:
 		return json.Marshal((*alias)(r))

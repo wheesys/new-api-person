@@ -26,9 +26,6 @@
       "type": "function_call",
       "id": "toolu_abc",
       "status": "completed",
-      "role": "",
-      "quality": "",
-      "size": "",
       "call_id": "toolu_abc",
       "name": "get_weather",
       "arguments": "{\"city\":\"Paris\"}"

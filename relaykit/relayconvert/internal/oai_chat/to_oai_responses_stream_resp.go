@@ -239,11 +239,13 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 		s.toolsByIndex[chatIndex] = tool
 		itemType := responsesOutputTypeFunctionCall
 		outputName := tool.Name
-		var itemArgs []byte = []byte(`""`)
+		var itemArgs json.RawMessage = json.RawMessage(`""`)
+		var itemInput json.RawMessage
 		if tool.Custom != nil {
 			itemType = responsesOutputTypeCustomToolCall
 			outputName = tool.Custom.Name
 			itemArgs = nil
+			itemInput = json.RawMessage(`""`)
 		}
 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemAdded,
@@ -256,6 +258,7 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 				CallId:    tool.ID,
 				Name:      outputName,
 				Arguments: itemArgs,
+				Input:     itemInput,
 			},
 		}))
 	}
@@ -469,12 +472,12 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
 func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool, status string) *dto.ResponsesOutput {
 	if tool.Custom != nil {
 		return &dto.ResponsesOutput{
-			Type:      responsesOutputTypeCustomToolCall,
-			ID:        tool.ID,
-			Status:    status,
-			CallId:    tool.ID,
-			Name:      tool.Custom.Name,
-			Arguments: json.RawMessage(customToolInputFromChatArguments(tool.Arguments.String())),
+			Type:   responsesOutputTypeCustomToolCall,
+			ID:     tool.ID,
+			Status: status,
+			CallId: tool.ID,
+			Name:   tool.Custom.Name,
+			Input:  json.RawMessage(customToolInputFromChatArguments(tool.Arguments.String())),
 		}
 	}
 	return &dto.ResponsesOutput{
