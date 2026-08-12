@@ -204,3 +204,41 @@ func TestResponsesRequestToChatCompletionsRequestWithMeta_codexFlattensAllTools(
 		assert.NotEmptyf(t, tool.Function.Name, "tool[%d] must have a function name", i)
 	}
 }
+
+// TestResponsesRequestToChatCompletionsRequestWithMeta_toolLoopRoundTrip
+// verifies that a second-turn tool-loop request (assistant custom_tool_call +
+// custom_tool_call_output) converts to the chat tool messages glm needs, and
+// that a user prompt is preserved so the upstream does not report a missing
+// prompt parameter.
+func TestResponsesRequestToChatCompletionsRequestWithMeta_toolLoopRoundTrip(t *testing.T) {
+	meta := codexMeta()
+	meta.EnsureCodexToolContext().Record("functions__exec", convmeta.CodexToolSpec{Kind: convmeta.CodexToolCustom, Name: "exec"})
+	req := &dto.OpenAIResponsesRequest{
+		Model: "glm-4",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"检查改动"}]},
+			{"type":"custom_tool_call","id":"call_1","call_id":"call_1","name":"exec","input":"const x=1","status":"completed"},
+			{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}
+		]`),
+	}
+
+	chat, err := ResponsesRequestToChatCompletionsRequestWithMeta(req, meta)
+	require.NoError(t, err)
+
+	// Must have a user prompt (glm rejects a request without one) plus the
+	// assistant tool call and the tool result.
+	hasUser := false
+	var toolResult []dto.Message
+	for _, msg := range chat.Messages {
+		if msg.Role == "user" && fmt.Sprint(msg.Content) != "" {
+			hasUser = true
+		}
+		if msg.Role == "tool" {
+			toolResult = append(toolResult, msg)
+		}
+	}
+	assert.True(t, hasUser, "converted messages must preserve the user prompt")
+	require.Len(t, toolResult, 1, "custom_tool_call_output must become a tool message")
+	assert.Equal(t, "call_1", toolResult[0].ToolCallId)
+	assert.Equal(t, "done", fmt.Sprint(toolResult[0].Content))
+}

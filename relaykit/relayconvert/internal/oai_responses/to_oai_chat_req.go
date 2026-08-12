@@ -211,6 +211,10 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
 		content := responseToolOutputToChatContent(item["output"])
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
+	case responsesInputTypeCustomToolOutput:
+		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
+		content := responseToolOutputToChatContent(item["output"])
+		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
 	case additionalToolsInputType:
 		// Tool catalog carried in the input stream; already merged into
 		// top-level tools by mergeAdditionalToolsFromInput, so skip it here.
