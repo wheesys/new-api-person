@@ -684,6 +684,17 @@ func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo,
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
+	if chatReq, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok && chatReq != nil {
+		names := make([]string, 0, len(chatReq.Tools))
+		for _, tool := range chatReq.Tools {
+			if tool.Function.Name != "" {
+				names = append(names, tool.Type+":"+tool.Function.Name)
+			} else {
+				names = append(names, tool.Type)
+			}
+		}
+		logger.LogInfo(c, fmt.Sprintf("responses-as-chat fallback: upstream tools (channel %d): [%s]", info.ChannelId, strings.Join(names, ", ")))
+	}
 	// The upstream answers in Chat format; forward it back to the Codex client
 	// as a Responses response.
 	attempt.responseMode = preparedTextResponseModeResponsesViaChat
