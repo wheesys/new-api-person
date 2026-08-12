@@ -50,7 +50,16 @@ func ResponsesRequestToChatCompletionsRequestWithMeta(req *dto.OpenAIResponsesRe
 		return nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools, meta)
+	// Codex (Responses API) injects its tool catalog into input items of type
+	// "additional_tools" rather than the top-level "tools" field. Merge those
+	// tool definitions into the top-level tools so the downstream conversion
+	// (including codex tool adaptation) sees the full tool set.
+	mergedTools, err := mergeAdditionalToolsFromInput(req.Tools, req.Input)
+	if err != nil {
+		return nil, err
+	}
+
+	tools, err := responsesRequestToolsToChat(mergedTools, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +211,10 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
 		content := responseToolOutputToChatContent(item["output"])
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
+	case additionalToolsInputType:
+		// Tool catalog carried in the input stream; already merged into
+		// top-level tools by mergeAdditionalToolsFromInput, so skip it here.
+		return messages, nil
 	}
 
 	role := strings.TrimSpace(kitutil.Interface2String(item["role"]))
@@ -368,6 +381,57 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
 	return messages
 }
 
+// additionalToolsInputType is the Responses input item type Codex uses to carry
+// its tool catalog (functions/custom tools) inside the request input array.
+const additionalToolsInputType = "additional_tools"
+
+// mergeAdditionalToolsFromInput extracts tool definitions carried in
+// `input[].type == "additional_tools"` items and merges them into the top-level
+// tools raw JSON. Codex 0.147+ places its tool catalog there instead of the
+// Responses `tools` parameter, so without this the upstream sees no tools at
+// all and never issues tool calls.
+func mergeAdditionalToolsFromInput(toolsRaw, inputRaw json.RawMessage) (json.RawMessage, error) {
+	if !rawJSONPresent(inputRaw) || kitutil.GetJsonType(inputRaw) != "array" {
+		return toolsRaw, nil
+	}
+	var items []map[string]any
+	if err := kitutil.Unmarshal(inputRaw, &items); err != nil {
+		return nil, fmt.Errorf("invalid input array: %w", err)
+	}
+
+	var additional []map[string]any
+	for _, item := range items {
+		if strings.TrimSpace(kitutil.Interface2String(item["type"])) != additionalToolsInputType {
+			continue
+		}
+		rawTools, ok := item["tools"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawTool := range rawTools {
+			if tool, ok := rawTool.(map[string]any); ok {
+				additional = append(additional, tool)
+			}
+		}
+	}
+	if len(additional) == 0 {
+		return toolsRaw, nil
+	}
+
+	var existing []map[string]any
+	if rawJSONPresent(toolsRaw) {
+		if err := kitutil.Unmarshal(toolsRaw, &existing); err != nil {
+			return nil, fmt.Errorf("invalid tools: %w", err)
+		}
+	}
+	merged := append(existing, additional...)
+	out, err := kitutil.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("marshal merged tools: %w", err)
+	}
+	return out, nil
+}
+
 func responsesRequestToolsToChat(raw json.RawMessage, meta convmeta.Meta) ([]dto.ToolCallRequest, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
@@ -455,29 +519,11 @@ func codexToolsToChat(tools []map[string]any, ctx *convmeta.CodexToolContext, st
 			})
 		case "namespace":
 			ns := strings.TrimSpace(kitutil.Interface2String(tool["namespace"]))
-			children, _ := tool["children"].([]any)
-			for _, rawChild := range children {
-				child, ok := rawChild.(map[string]any)
-				if !ok {
-					continue
-				}
-				if strings.TrimSpace(kitutil.Interface2String(child["type"])) != "function" {
-					continue
-				}
-				cname := strings.TrimSpace(kitutil.Interface2String(child["name"]))
-				if strip != nil && cname != "" && strip(cname) {
-					continue
-				}
-				chatName := ctx.FlattenNamespaceName(ns, cname)
-				ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolFunction, Name: cname, Namespace: ns})
-				out = append(out, dto.ToolCallRequest{
-					Type: "function",
-					Function: dto.FunctionRequest{
-						Name:        chatName,
-						Description: kitutil.Interface2String(child["description"]),
-						Parameters:  child["parameters"],
-					},
-				})
+			if ns == "" {
+				ns = strings.TrimSpace(kitutil.Interface2String(tool["name"]))
+			}
+			if err := expandCodexNamespaceToChat(ns, tool, ctx, strip, &out); err != nil {
+				return nil, err
 			}
 		case "custom":
 			chatName := ctx.FlattenNamespaceName("", name)
@@ -513,6 +559,62 @@ func codexToolsToChat(tools []map[string]any, ctx *convmeta.CodexToolContext, st
 		}
 	}
 	return out, nil
+}
+
+// expandCodexNamespaceToChat flattens a Codex catalog namespace into flat chat
+// function tools. Codex namespaces carry their children under either `tools`
+// (catalog format, e.g. from an "additional_tools" input item) or `children`
+// (Responses top-level tools format), and may nest. Function children are
+// flattened with a namespace prefix; custom children (e.g. the `exec` freeform
+// tool) are wrapped as single-argument function tools. Namespaces may also
+// contain further namespaces, handled recursively.
+func expandCodexNamespaceToChat(ns string, namespace map[string]any, ctx *convmeta.CodexToolContext, strip func(string) bool, out *[]dto.ToolCallRequest) error {
+	children, _ := namespace["children"].([]any)
+	if len(children) == 0 {
+		children, _ = namespace["tools"].([]any)
+	}
+	for _, rawChild := range children {
+		child, ok := rawChild.(map[string]any)
+		if !ok {
+			continue
+		}
+		childType := strings.TrimSpace(kitutil.Interface2String(child["type"]))
+		cname := strings.TrimSpace(kitutil.Interface2String(child["name"]))
+		stripKey := cname
+		if stripKey == "" {
+			stripKey = childType
+		}
+		if strip != nil && stripKey != "" && strip(stripKey) {
+			continue
+		}
+		switch childType {
+		case "function":
+			chatName := ctx.FlattenNamespaceName(ns, cname)
+			ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolFunction, Name: cname, Namespace: ns})
+			*out = append(*out, dto.ToolCallRequest{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        chatName,
+					Description: kitutil.Interface2String(child["description"]),
+					Parameters:  child["parameters"],
+				},
+			})
+		case "custom":
+			chatName := ctx.FlattenNamespaceName(ns, cname)
+			ctx.Record(chatName, convmeta.CodexToolSpec{Kind: convmeta.CodexToolCustom, Name: cname, Namespace: ns})
+			*out = append(*out, customToolToFunctionTool(chatName, child))
+		case "namespace":
+			childNs := strings.TrimSpace(kitutil.Interface2String(child["namespace"]))
+			if childNs == "" {
+				childNs = strings.TrimSpace(kitutil.Interface2String(child["name"]))
+			}
+			childNs = ctx.FlattenNamespaceName(ns, childNs)
+			if err := expandCodexNamespaceToChat(childNs, child, ctx, strip, out); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // customToolToFunctionTool wraps a freeform custom tool as a function tool whose
