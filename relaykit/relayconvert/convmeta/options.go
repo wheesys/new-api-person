@@ -7,6 +7,7 @@ package convmeta
 type Options struct {
 	Claude ClaudeOptions
 	Gemini GeminiOptions
+	Codex  CodexOptions
 
 	// OpenRouterDialect marks the upstream as OpenRouter's OpenAI-compatible
 	// surface, which accepts extra fields (reasoning config, cache_control on
@@ -54,6 +55,22 @@ type GeminiOptions struct {
 	// SafetySetting returns the harm threshold for a category. Nil or empty
 	// return means no safetySettings are attached.
 	SafetySetting func(category string) string
+}
+
+// CodexOptions controls how Responses-style tools are adapted for upstreams
+// that only support Chat Completions (GLM, DeepSeek, etc.). Zero value = no
+// adaptation, matching the converter defaults.
+type CodexOptions struct {
+	// ResponsesChatFallback reports whether this request was downgraded from
+	// the Responses API to Chat Completions because the selected channel does
+	// not support native Responses. When true, converters wrap freeform custom
+	// tools (apply_patch) as single-argument function tools and flatten
+	// namespaces so the upstream can represent them.
+	ResponsesChatFallback bool
+	// StripBuiltInTool reports whether a built-in tool (e.g. web_search) must
+	// be stripped because the upstream gateway is known to reject it. Nil means
+	// "keep all built-in tools".
+	StripBuiltInTool func(toolName string) bool
 }
 
 func (o *ClaudeOptions) DefaultMaxTokensFor(modelName string) (int, bool) {

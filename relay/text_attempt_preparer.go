@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,6 +32,7 @@ type preparedTextResponseMode int
 const (
 	preparedTextResponseModeAdaptor preparedTextResponseMode = iota
 	preparedTextResponseModeChatViaResponses
+	preparedTextResponseModeResponsesViaChat
 )
 
 // PreparedTextRelayAttempt owns the exact request snapshot and adaptor used by
@@ -489,6 +491,12 @@ type convertedTextAttemptOptions struct {
 	logMessage           string
 	detectEventStream    bool
 	requestErrorPrefix   string
+	// restoreProtocolMode restores the caller's original relay mode and request
+	// path after the attempt closes. Used when a converted attempt temporarily
+	// switches protocol (e.g. Responses downgraded to Chat Completions).
+	restoreProtocolMode bool
+	savedRelayMode      int
+	savedRequestURLPath string
 }
 
 func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, convertedRequest any, options convertedTextAttemptOptions, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
@@ -530,6 +538,9 @@ func prepareConvertedTextAttempt(c *gin.Context, info *relaycommon.RelayInfo, ad
 		detectEventStream:   options.detectEventStream,
 		requestErrorPrefix:  options.requestErrorPrefix,
 		authoritativeTarget: authoritativeTarget,
+		restoreProtocolMode: options.restoreProtocolMode,
+		savedRelayMode:      options.savedRelayMode,
+		savedRequestURLPath: options.savedRequestURLPath,
 	}, nil
 }
 
@@ -619,6 +630,9 @@ func prepareResponsesTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycom
 
 	convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 	if err != nil {
+		if errors.Is(err, relaycommon.ErrResponsesNotSupported) {
+			return prepareResponsesAsChatFallback(c, info, adaptor, request, policy)
+		}
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	return prepareConvertedTextAttempt(c, info, adaptor, convertedRequest, convertedTextAttemptOptions{
@@ -627,6 +641,67 @@ func prepareResponsesTextAttemptWithAdaptorPolicy(c *gin.Context, info *relaycom
 		logMessage:           "requestBody: %s",
 		detectEventStream:    false,
 	}, policy)
+}
+
+// prepareResponsesAsChatFallback downgrades a Responses request to Chat
+// Completions when the selected channel does not support the Responses API.
+// It reuses the built-in Responses→Chat converter, temporarily switches the
+// relay mode so the upstream URL and response handling follow the Chat path,
+// and restores the original protocol state on attempt close.
+func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.OpenAIResponsesRequest, policy textAttemptPreparationPolicy) (*PreparedTextRelayAttempt, *types.NewAPIError) {
+	savedRelayMode := info.RelayMode
+	savedRequestURLPath := info.RequestURLPath
+
+	result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
+	if err != nil {
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	chatRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return nil, types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	markResponsesChatFallback(c, info)
+
+	info.RelayMode = relayconstant.RelayModeChatCompletions
+	info.RequestURLPath = "/v1/chat/completions"
+
+	convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, chatRequest)
+	if err != nil {
+		info.RelayMode = savedRelayMode
+		info.RequestURLPath = savedRequestURLPath
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	attempt, newAPIError := prepareConvertedTextAttempt(c, info, adaptor, convertedRequest, convertedTextAttemptOptions{
+		removeDisabledFields: true,
+		marshalErrorCode:     types.ErrorCodeConvertRequestFailed,
+		logMessage:           "requestBody: %s",
+		detectEventStream:    false,
+		restoreProtocolMode:  true,
+		savedRelayMode:       savedRelayMode,
+		savedRequestURLPath:  savedRequestURLPath,
+	}, policy)
+	if newAPIError != nil {
+		return nil, newAPIError
+	}
+	// The upstream answers in Chat format; forward it back to the Codex client
+	// as a Responses response.
+	attempt.responseMode = preparedTextResponseModeResponsesViaChat
+	return attempt, nil
+}
+
+// markResponsesChatFallback records that this attempt downgraded from the
+// Responses API to Chat Completions so the tool-conversion layer can enable
+// codex-style tool mapping.
+func markResponsesChatFallback(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	info.ResponsesChatFallback = true
+	if opts := info.ConvOptions(); opts != nil {
+		opts.Codex.ResponsesChatFallback = true
+	}
+	logger.LogWarn(c, fmt.Sprintf("responses request downgraded to chat completions for channel %d (api type %d)", info.ChannelId, info.ApiType))
 }
 
 func prepareClaudeTextAttemptWithAdaptor(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor) (*PreparedTextRelayAttempt, *types.NewAPIError) {
@@ -904,6 +979,9 @@ func ExecutePreparedTextRelayAttempt(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	if attempt.responseMode == preparedTextResponseModeChatViaResponses {
 		return executePreparedChatCompletionsViaResponses(c, info, attempt.adaptor, requestBody)
+	}
+	if attempt.responseMode == preparedTextResponseModeResponsesViaChat {
+		return executePreparedResponsesViaChat(c, info, attempt.adaptor, requestBody)
 	}
 
 	var httpResponse *http.Response

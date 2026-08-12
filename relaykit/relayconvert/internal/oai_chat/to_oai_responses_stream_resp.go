@@ -1,12 +1,14 @@
 package oaichat
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 )
 
 type ChatToResponsesStreamEvent struct {
@@ -19,6 +21,10 @@ type ChatToResponsesStreamState struct {
 	Model   string
 	Created int64
 	Usage   *dto.Usage
+
+	// codexCtx, when set (Responses→Chat downgrade), resolves flat chat tool
+	// names back to their Responses identity during stream conversion.
+	codexCtx *convmeta.CodexToolContext
 
 	status            string
 	incompleteDetails *dto.IncompleteDetails
@@ -37,6 +43,14 @@ type ChatToResponsesStreamState struct {
 	reasoning         strings.Builder
 }
 
+// SetCodexToolContext attaches the Responses↔Chat tool mapping so streamed
+// tool calls can be resolved back to their original custom/namespace identity.
+func (s *ChatToResponsesStreamState) SetCodexToolContext(ctx *convmeta.CodexToolContext) {
+	if s != nil {
+		s.codexCtx = ctx
+	}
+}
+
 type chatToResponsesStreamTool struct {
 	ChatIndex   int
 	OutputIndex int
@@ -44,6 +58,9 @@ type chatToResponsesStreamTool struct {
 	Name        string
 	Arguments   strings.Builder
 	Done        bool
+	// Custom holds the resolved freeform custom tool identity when the flat
+	// chat name maps back to a custom tool (e.g. apply_patch).
+	Custom *convmeta.CodexToolSpec
 }
 
 type chatToResponsesOutputRef struct {
@@ -208,18 +225,27 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 		if tool.ID == "" {
 			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
 		}
+		s.resolveToolIdentity(tool)
 		s.toolsByIndex[chatIndex] = tool
+		itemType := responsesOutputTypeFunctionCall
+		outputName := tool.Name
+		var itemArgs []byte = []byte(`""`)
+		if tool.Custom != nil {
+			itemType = responsesOutputTypeCustomToolCall
+			outputName = tool.Custom.Name
+			itemArgs = nil
+		}
 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
 			Type:        responsesEventOutputItemAdded,
 			OutputIndex: intPtr(tool.OutputIndex),
 			ItemID:      tool.ID,
 			Item: &dto.ResponsesOutput{
-				Type:      responsesOutputTypeFunctionCall,
+				Type:      itemType,
 				ID:        tool.ID,
 				Status:    "in_progress",
 				CallId:    tool.ID,
-				Name:      tool.Name,
-				Arguments: []byte(`""`),
+				Name:      outputName,
+				Arguments: itemArgs,
 			},
 		}))
 	}
@@ -406,6 +432,16 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
 }
 
 func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool, status string) *dto.ResponsesOutput {
+	if tool.Custom != nil {
+		return &dto.ResponsesOutput{
+			Type:      responsesOutputTypeCustomToolCall,
+			ID:        tool.ID,
+			Status:    status,
+			CallId:    tool.ID,
+			Name:      tool.Custom.Name,
+			Arguments: json.RawMessage(customToolInputFromChatArguments(tool.Arguments.String())),
+		}
+	}
 	return &dto.ResponsesOutput{
 		Type:      responsesOutputTypeFunctionCall,
 		ID:        tool.ID,
@@ -414,4 +450,24 @@ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool,
 		Name:      tool.Name,
 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
 	}
+}
+
+// resolveToolIdentity resolves a flat chat tool name back to its Responses
+// identity through the codex tool context. Custom tools are marked so the
+// output is emitted as custom_tool_call; namespaced functions keep their
+// original bare name.
+func (s *ChatToResponsesStreamState) resolveToolIdentity(tool *chatToResponsesStreamTool) {
+	if s == nil || s.codexCtx == nil || tool == nil || tool.Name == "" {
+		return
+	}
+	spec, ok := s.codexCtx.Lookup(tool.Name)
+	if !ok {
+		return
+	}
+	if spec.Kind == convmeta.CodexToolCustom {
+		cp := spec
+		tool.Custom = &cp
+		return
+	}
+	tool.Name = spec.Name
 }

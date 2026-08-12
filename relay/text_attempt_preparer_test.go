@@ -632,3 +632,51 @@ func TestChatViaResponsesAttemptKeepsEffectiveProtocolStateUntilClose(t *testing
 	assert.Equal(t, relayconstant.RelayModeChatCompletions, info.RelayMode)
 	assert.Equal(t, "/v1/chat/completions?source=test", info.RequestURLPath)
 }
+
+// responsesFallbackTestAdaptor reports the Responses API as unsupported so the
+// relay layer exercises the Responses→Chat downgrade path.
+type responsesFallbackTestAdaptor struct {
+	preparedTextTestAdaptor
+}
+
+func (a *responsesFallbackTestAdaptor) ConvertOpenAIResponsesRequest(*gin.Context, *relaycommon.RelayInfo, dto.OpenAIResponsesRequest) (any, error) {
+	return nil, relaycommon.ErrResponsesNotSupported
+}
+
+func TestPrepareResponsesFallbackDowngradesToChatAndRestoresProtocol(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	adaptor := &responsesFallbackTestAdaptor{}
+	info := &relaycommon.RelayInfo{
+		Request:         &dto.OpenAIResponsesRequest{Model: "glm-4", Input: json.RawMessage(`"hi"`)},
+		OriginModelName: "glm-4",
+		RelayMode:       relayconstant.RelayModeResponses,
+		RequestURLPath:  "/v1/responses",
+		RelayFormat:     types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeMiniMax,
+			ApiType:           5,
+			UpstreamModelName: "glm-4",
+		},
+	}
+	info.InitRequestConversionChain()
+
+	attempt, newAPIError := prepareResponsesTextAttemptWithAdaptor(context, info, adaptor)
+	require.Nil(t, newAPIError)
+	require.NotNil(t, attempt)
+
+	// The downgraded attempt must forward the upstream Chat response back to the
+	// Codex client as Responses, and mark the request as downgraded.
+	assert.Equal(t, preparedTextResponseModeResponsesViaChat, attempt.responseMode)
+	assert.True(t, info.ResponsesChatFallback)
+
+	adaptor.mutex.Lock()
+	assert.Equal(t, 1, adaptor.convertOpenAIRequestCount)
+	adaptor.mutex.Unlock()
+
+	// Protocol state is restored after the attempt closes.
+	require.NoError(t, attempt.Close())
+	assert.Equal(t, relayconstant.RelayModeResponses, info.RelayMode)
+	assert.Equal(t, "/v1/responses", info.RequestURLPath)
+}

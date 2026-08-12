@@ -1,12 +1,14 @@
 package oaichat
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
@@ -25,6 +27,7 @@ const (
 	responsesEventReasoningSummaryDelta    = "response.reasoning_summary_text.delta"
 	responsesEventReasoningSummaryDone     = "response.reasoning_summary_text.done"
 	responsesOutputTypeFunctionCall        = "function_call"
+	responsesOutputTypeCustomToolCall      = "custom_tool_call"
 	responsesOutputTypeMessage             = "message"
 	responsesOutputTypeReasoning           = "reasoning"
 	responsesIncompleteReasonContentFilter = "content_filter"
@@ -32,6 +35,15 @@ const (
 )
 
 func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
+	return ChatCompletionsResponseToResponsesResponseWithMeta(resp, id, nil)
+}
+
+// ChatCompletionsResponseToResponsesResponseWithMeta converts a Chat Completions
+// response to a Responses response. When meta indicates a Responses→Chat
+// downgrade, flat chat tool-call names are resolved back through the codex tool
+// context so freeform custom tools (apply_patch) and namespaced functions keep
+// their original Responses identity.
+func ChatCompletionsResponseToResponsesResponseWithMeta(resp *dto.OpenAITextResponse, id string, meta convmeta.Meta) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
 	}
@@ -87,7 +99,7 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
 	}
 
 	for i, toolCall := range choice.Message.ParseToolCalls() {
-		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out))
+		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out), meta)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -169,18 +181,36 @@ func responseStatusString(resp *dto.OpenAIResponsesResponse) string {
 	return strings.TrimSpace(status)
 }
 
-func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string) (dto.ResponsesOutput, error) {
+func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string, meta convmeta.Meta) (dto.ResponsesOutput, error) {
 	callID := strings.TrimSpace(toolCall.ID)
 	if callID == "" {
 		callID = fmt.Sprintf("%s_call_%d", responseID, index)
 	}
 	if toolCall.Type == "" || toolCall.Type == "function" {
+		name := toolCall.Function.Name
+		if meta != nil && convmeta.OptionsOf(meta).Codex.ResponsesChatFallback {
+			if spec, ok := meta.EnsureCodexToolContext().Lookup(name); ok {
+				switch spec.Kind {
+				case convmeta.CodexToolCustom:
+					return dto.ResponsesOutput{
+						Type:      responsesOutputTypeCustomToolCall,
+						ID:        callID,
+						Status:    status,
+						CallId:    callID,
+						Name:      spec.Name,
+						Arguments: json.RawMessage(customToolInputFromChatArguments(toolCall.Function.Arguments)),
+					}, nil
+				default:
+					name = spec.Name
+				}
+			}
+		}
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
 			ID:        callID,
 			Status:    status,
 			CallId:    callID,
-			Name:      toolCall.Function.Name,
+			Name:      name,
 			Arguments: chatArgumentsRawMessage(toolCall.Function.Arguments),
 		}, nil
 	}
@@ -191,6 +221,22 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
+}
+
+// customToolInputFromChatArguments extracts the raw input string of a wrapped
+// custom tool call from its Chat arguments JSON ({"input": "..."}). It returns
+// a JSON string value (quoted) suitable for the custom_tool_call input field,
+// falling back to the raw arguments when the shape is unexpected.
+func customToolInputFromChatArguments(arguments string) []byte {
+	var decoded map[string]any
+	if err := kitutil.Unmarshal([]byte(arguments), &decoded); err == nil {
+		if raw, ok := decoded[convmeta.ChatToolCustomInputField]; ok {
+			if encoded, err := kitutil.Marshal(raw); err == nil {
+				return encoded
+			}
+		}
+	}
+	return chatArgumentsRawMessage(arguments)
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {
