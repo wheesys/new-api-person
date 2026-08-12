@@ -652,6 +652,12 @@ func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo,
 	savedRelayMode := info.RelayMode
 	savedRequestURLPath := info.RequestURLPath
 
+	if request != nil && len(request.Tools) > 0 {
+		logger.LogInfo(c, fmt.Sprintf("responses-as-chat fallback: raw client tools JSON (channel %d): %s", info.ChannelId, string(request.Tools)))
+	} else {
+		logger.LogInfo(c, fmt.Sprintf("responses-as-chat fallback: raw client tools EMPTY (channel %d)", info.ChannelId))
+	}
+
 	result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
 	if err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
