@@ -657,6 +657,11 @@ func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo,
 	} else {
 		logger.LogInfo(c, fmt.Sprintf("responses-as-chat fallback: raw client tools EMPTY (channel %d)", info.ChannelId))
 	}
+	if storage, storageErr := common.GetBodyStorage(c); storageErr == nil {
+		if rawBody, bodyErr := storage.Bytes(); bodyErr == nil {
+			logger.LogInfo(c, fmt.Sprintf("responses-as-chat fallback: raw request body (%d bytes): %.3000s", len(rawBody), rawBody))
+		}
+	}
 
 	result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
 	if err != nil {
