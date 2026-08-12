@@ -200,12 +200,14 @@ docker run --name new-api -d --restart always \
 - 🧩 Protocol-aware context validation for OpenAI Chat Completions, OpenAI Responses, Claude Messages, and Google Gemini
 - 🔒 Provider-bound context blocks unsafe virtual-model switching and disables cross-channel smart retries for explicit models
 - 🚦 User-level model rate limiting
+- 🛡️ Per-channel/model circuit breaker that skips circuit-open channels during routing and surfaces runtime health in the channel list
 
 **Format Conversion:**
 - 🔄 **OpenAI Compatible ⇄ Claude Messages**
 - 🔄 **OpenAI Compatible → Google Gemini**
 - 🔄 **Google Gemini → OpenAI Compatible** - Text only, function calling not supported yet
 - 🚧 **OpenAI Compatible ⇄ OpenAI Responses** - In development
+- 🛠️ **Responses ⇄ Chat Completions** tool-call compatibility for GLM / DeepSeek / Codex
 - 🔄 **Thinking-to-content functionality**
 
 **Reasoning Effort Support:**
