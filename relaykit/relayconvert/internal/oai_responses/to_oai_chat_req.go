@@ -16,6 +16,7 @@ const (
 	responsesInputTypeFunctionCallOutput = "function_call_output"
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
+	responsesInputTypeReasoning          = "reasoning"
 )
 
 const (
@@ -215,6 +216,11 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
 		content := responseToolOutputToChatContent(item["output"])
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
+	case responsesInputTypeReasoning:
+		// Reasoning summaries from a prior turn are not chat messages; skip
+		// them so they do not become empty user messages (which make the
+		// upstream report a missing prompt).
+		return messages, nil
 	case additionalToolsInputType:
 		// Tool catalog carried in the input stream; already merged into
 		// top-level tools by mergeAdditionalToolsFromInput, so skip it here.

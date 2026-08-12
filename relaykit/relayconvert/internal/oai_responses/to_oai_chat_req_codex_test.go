@@ -242,3 +242,31 @@ func TestResponsesRequestToChatCompletionsRequestWithMeta_toolLoopRoundTrip(t *t
 	assert.Equal(t, "call_1", toolResult[0].ToolCallId)
 	assert.Equal(t, "done", fmt.Sprint(toolResult[0].Content))
 }
+
+// TestResponsesRequestToChatCompletionsRequestWithMeta_skipsReasoningInput
+// verifies that prior-turn reasoning summary items in the input are dropped
+// instead of becoming empty user messages (which make glm report a missing
+// prompt parameter, code 1213).
+func TestResponsesRequestToChatCompletionsRequestWithMeta_skipsReasoningInput(t *testing.T) {
+	meta := codexMeta()
+	req := &dto.OpenAIResponsesRequest{
+		Model: "glm-4",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"type":"reasoning","id":"r_1","summary":[{"type":"summary_text","text":"thinking"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}
+		]`),
+	}
+
+	chat, err := ResponsesRequestToChatCompletionsRequestWithMeta(req, meta)
+	require.NoError(t, err)
+
+	// Reasoning item must not become an empty user message.
+	for _, msg := range chat.Messages {
+		contentStr := fmt.Sprint(msg.Content)
+		assert.NotEqual(t, "", contentStr, "messages must not be empty")
+	}
+	assert.Equal(t, 2, len(chat.Messages), "expected user + assistant, reasoning skipped")
+	assert.Equal(t, "user", chat.Messages[0].Role)
+	assert.Equal(t, "assistant", chat.Messages[1].Role)
+}
