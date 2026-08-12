@@ -663,6 +663,8 @@ func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo,
 		}
 	}
 
+	markResponsesChatFallback(c, info)
+
 	result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
 	if err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -671,8 +673,6 @@ func prepareResponsesAsChatFallback(c *gin.Context, info *relaycommon.RelayInfo,
 	if !ok {
 		return nil, types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
-
-	markResponsesChatFallback(c, info)
 
 	info.RelayMode = relayconstant.RelayModeChatCompletions
 	info.RequestURLPath = "/v1/chat/completions"

@@ -179,3 +179,28 @@ func TestResponsesRequestToChatCompletionsRequestWithMeta_additionalToolsNestedN
 	assert.Equal(t, "function", chat.Tools[0].Type)
 	assert.Equal(t, "outer__inner__exec", chat.Tools[0].Function.Name)
 }
+
+// TestResponsesRequestToChatCompletionsRequestWithMeta_codexFlattensAllTools
+// guards the invariant that with codex fallback enabled every tool reaching the
+// upstream is a function tool (GLM rejects type=="namespace" with
+// "tools[0].type:type is illegal").
+func TestResponsesRequestToChatCompletionsRequestWithMeta_codexFlattensAllTools(t *testing.T) {
+	meta := codexMeta()
+	req := &dto.OpenAIResponsesRequest{
+		Model: "glm-4",
+		Input: json.RawMessage(`[{"type":"additional_tools","role":"developer","tools":[
+			{"type":"namespace","name":"functions","tools":[
+				{"type":"custom","name":"exec","input_schema":{"type":"object"}},
+				{"type":"function","name":"get","parameters":{"type":"object"}}
+			]},
+			{"type":"custom","name":"apply_patch","input_schema":{"type":"object"}}
+		]}]`),
+	}
+	chat, err := ResponsesRequestToChatCompletionsRequestWithMeta(req, meta)
+	require.NoError(t, err)
+	require.NotEmpty(t, chat.Tools)
+	for i, tool := range chat.Tools {
+		assert.Equalf(t, "function", tool.Type, "tool[%d] must be function, got %q", i, tool.Type)
+		assert.NotEmptyf(t, tool.Function.Name, "tool[%d] must have a function name", i)
+	}
+}
