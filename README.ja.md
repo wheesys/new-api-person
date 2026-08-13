@@ -2,14 +2,14 @@
 
 ![new-api](/web/public/logo.png)
 
-# New API
+# New API Person
 
-🍥 **次世代大規模モデルゲートウェイとAI資産管理システム**
+🍥 **New API から調整された個人版 · 次世代大規模モデルゲートウェイとAI資産管理システム**
 
 <p align="center">
   <a href="./README.zh_CN.md">简体中文</a> |
   <a href="./README.zh_TW.md">繁體中文</a> |
-  <a href="./README.md">English</a> |
+  <a href="./README.md">简体中文</a> |
   <a href="./README.fr.md">Français</a> |
   <strong>日本語</strong>
 </p>
@@ -34,32 +34,7 @@
 
 ---
 
-## 🤝 信頼できるパートナー
-
-<p align="center">
-  <em>順不同</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a><!--
-  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
-    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
-  </a><!--
-  --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="北京大学" height="80" />
-  </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud 優刻得" height="80" />
-  </a><!--
-  --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
-  </a><!--
-  --><a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
+**New API Person** は [QuantumNous/new-api](https://github.com/QuantumNous/new-api) から調整された個人版配布です。上流の New API のすべての機能を引き継ぎ——40以上の上流 AI プロバイダー（OpenAI、Claude、Gemini、Azure、AWS Bedrock など）を統一 API の背後に集約し、ユーザー管理、課金、レート制限、管理ダッシュボードを備えています。本リポジトリは上流を個人利用シナリオ向けに調整・維持するものであり、公式版ではありません。
 
 ---
 
@@ -83,7 +58,7 @@
 
 ```bash
 # プロジェクトをクローン
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # docker-compose.yml 設定を編集
@@ -98,22 +73,22 @@ docker-compose up -d
 
 ```bash
 # 最新のイメージをプル
-docker pull calciumion/new-api:latest
+docker pull walllee/new-api-person:latest
 
 # SQLiteを使用（デフォルト）
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 
 # MySQLを使用
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 ヒント:** `-v ./data:/data` は現在のディレクトリの `data` フォルダにデータを保存します。絶対パスに変更することもできます：`-v /your/custom/path:/data`
@@ -269,7 +244,7 @@ docker run --name new-api -d --restart always \
 ## 🚢 デプロイ
 
 > [!TIP]
-> **最新のDockerイメージ:** `calciumion/new-api:latest`
+> **最新のDockerイメージ:** `walllee/new-api-person:latest`
 
 ### 📋 デプロイ要件
 
@@ -323,7 +298,7 @@ docker run --name new-api -d --restart always \
 
 ```bash
 # プロジェクトをクローン
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # 設定を編集
@@ -340,21 +315,21 @@ docker-compose up -d
 
 **SQLiteを使用:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 **MySQLを使用:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 パス説明:**
@@ -463,6 +438,6 @@ Docker イメージおよびその他のオブジェクトコード配布物は�
 
 **[公式ドキュメント](https://docs.newapi.pro/ja/docs)** • **[問題フィードバック](https://github.com/wheesys/new-api-person/issues)** • **[最新リリース](https://github.com/wheesys/new-api-person/releases)**
 
-<sub>❤️ で構築された QuantumNous</sub>
+<sub>❤️ で構築された wheesys</sub>
 
 </div>

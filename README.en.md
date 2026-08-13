@@ -2,12 +2,12 @@
 
 ![new-api](/web/public/logo.png)
 
-# New API
+# New API Person
 
-🍥 **Next-Generation Large Model Gateway and AI Asset Management System**
+🍥 **A personal edition adjusted from New API · Next-Generation Large Model Gateway and AI Asset Management System**
 
 <p align="center">
-  <a href="./README.md">中文</a> | 
+  <a href="./README.md">简体中文</a> | 
   <strong>English</strong> | 
   <a href="./README.fr.md">Français</a> | 
   <a href="./README.ja.md">日本語</a>
@@ -28,6 +28,8 @@
 > [!NOTE]  
 > This repository is a modified distribution of [QuantumNous/new-api](https://github.com/QuantumNous/new-api). The direct upstream project is itself developed based on [One API](https://github.com/songquanpeng/one-api) (MIT License).
 
+**New API Person** is a personal-edition distribution adjusted from [QuantumNous/new-api](https://github.com/QuantumNous/new-api). It inherits all the capabilities of upstream New API — aggregating 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard. This repository adapts and maintains the upstream for personal-use scenarios and is not the official version.
+
 > [!IMPORTANT]  
 > - This project is intended solely for lawful and authorized AI API gateway, organization-level authentication, multi-model management, usage analytics, cost accounting, and private deployment scenarios.
 > - Users must lawfully obtain upstream API keys, accounts, model services, and interface permissions, and must comply with upstream terms of service and applicable laws and regulations.
@@ -35,30 +37,6 @@
 > - When providing generative AI services to the public, users should comply with applicable regulatory requirements and fulfill all filing, licensing, content safety, real-name verification, log retention, tax, and upstream authorization obligations required by their jurisdiction.
 
 ---
-
-## 🤝 Trusted Partners
-
-<p align="center">
-  <em>No particular order</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a>
-  <a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="Peking University" height="80" />
-  </a>
-  <a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud" height="80" />
-  </a>
-  <a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
-  </a>
-  <a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
 
 ---
 
@@ -82,7 +60,7 @@
 
 ```bash
 # Clone the project
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # Edit docker-compose.yml configuration
@@ -97,22 +75,22 @@ docker-compose up -d
 
 ```bash
 # Pull the latest image
-docker pull calciumion/new-api:latest
+docker pull walllee/new-api-person:latest
 
 # Using SQLite (default)
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 
 # Using MySQL
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 Tip:** `-v ./data:/data` will save data in the `data` folder of the current directory, you can also change it to an absolute path like `-v /your/custom/path:/data`
@@ -264,7 +242,7 @@ docker run --name new-api -d --restart always \
 ## 🚢 Deployment
 
 > [!TIP]
-> **Latest Docker image:** `calciumion/new-api:latest`
+> **Latest Docker image:** `walllee/new-api-person:latest`
 
 ### 📋 Deployment Requirements
 
@@ -318,7 +296,7 @@ docker run --name new-api -d --restart always \
 
 ```bash
 # Clone the project
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # Edit configuration
@@ -335,21 +313,21 @@ docker-compose up -d
 
 **Using SQLite:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 **Using MySQL:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 Path explanation:** 
@@ -466,6 +444,6 @@ If this project is helpful to you, welcome to give us a ⭐️ Star！
 
 **[Official Documentation](https://docs.newapi.pro/en/docs)** • **[Issue Feedback](https://github.com/wheesys/new-api-person/issues)** • **[Latest Release](https://github.com/wheesys/new-api-person/releases)**
 
-<sub>Built with ❤️ by QuantumNous</sub>
+<sub>Built with ❤️ by wheesys</sub>
 
 </div>

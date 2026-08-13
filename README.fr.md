@@ -2,14 +2,14 @@
 
 ![new-api](/web/public/logo.png)
 
-# New API
+# New API Person
 
-🍥 **Passerelle de modèles étendus de nouvelle génération et système de gestion d'actifs d'IA**
+🍥 **Édition personnelle ajustée de New API · Passerelle de modèles étendus de nouvelle génération et système de gestion d'actifs d'IA**
 
 <p align="center">
   <a href="./README.zh_CN.md">简体中文</a> |
   <a href="./README.zh_TW.md">繁體中文</a> |
-  <a href="./README.md">English</a> |
+  <a href="./README.md">简体中文</a> |
   <strong>Français</strong> |
   <a href="./README.ja.md">日本語</a>
 </p>
@@ -34,32 +34,7 @@
 
 ---
 
-## 🤝 Partenaires de confiance
-
-<p align="center">
-  <em>Sans ordre particulier</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a><!--
-  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
-    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
-  </a><!--
-  --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="Université de Pékin" height="80" />
-  </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud" height="80" />
-  </a><!--
-  --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
-  </a><!--
-  --><a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
+**New API Person** est une distribution d'édition personnelle ajustée à partir de [QuantumNous/new-api](https://github.com/QuantumNous/new-api). Elle hérite de toutes les capacités de New API en amont — agrégeant plus de 40 fournisseurs d'IA en amont (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) derrière une API unifiée, avec gestion des utilisateurs, facturation, limitation de débit et tableau de bord d'administration. Ce dépôt adapte et maintient le projet en amont pour des scénarios d'utilisation personnelle et n'est pas la version officielle.
 
 ---
 
@@ -83,7 +58,7 @@
 
 ```bash
 # Cloner le projet
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # Modifier la configuration docker-compose.yml
@@ -98,22 +73,22 @@ docker-compose up -d
 
 ```bash
 # Tirer la dernière image
-docker pull calciumion/new-api:latest
+docker pull walllee/new-api-person:latest
 
 # Utilisation de SQLite (par défaut)
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 
 # Utilisation de MySQL
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 Astuce:** `-v ./data:/data` sauvegardera les données dans le dossier `data` du répertoire actuel, vous pouvez également le changer en chemin absolu comme `-v /your/custom/path:/data`
@@ -267,7 +242,7 @@ docker run --name new-api -d --restart always \
 ## 🚢 Déploiement
 
 > [!TIP]
-> **Dernière image Docker:** `calciumion/new-api:latest`
+> **Dernière image Docker:** `walllee/new-api-person:latest`
 
 ### 📋 Exigences de déploiement
 
@@ -321,7 +296,7 @@ docker run --name new-api -d --restart always \
 
 ```bash
 # Cloner le projet
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # Modifier la configuration
@@ -338,21 +313,21 @@ docker-compose up -d
 
 **Utilisation de SQLite:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 **Utilisation de MySQL:**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 Explication du chemin:**
@@ -463,6 +438,6 @@ Si ce projet vous est utile, bienvenue à nous donner une ⭐️ Étoile！
 
 **[Documentation officielle](https://docs.newapi.pro/en/docs)** • **[Commentaires sur les problèmes](https://github.com/wheesys/new-api-person/issues)** • **[Dernière version](https://github.com/wheesys/new-api-person/releases)**
 
-<sub>Construit avec ❤️ par QuantumNous</sub>
+<sub>Construit avec ❤️ par wheesys</sub>
 
 </div>

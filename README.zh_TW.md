@@ -2,14 +2,14 @@
 
 ![new-api](/web/public/logo.png)
 
-# New API
+# New API Person
 
-🍥 **新一代大模型網關與AI資產管理系統**
+🍥 **基於 New API 調整的個人版 · 新一代大模型網關與AI資產管理系統**
 
 <p align="center">
   繁體中文 |
   <a href="./README.zh_CN.md">简体中文</a> |
-  <a href="./README.md">English</a> |
+  <a href="./README.md">簡體中文</a> |
   <a href="./README.fr.md">Français</a> |
   <a href="./README.ja.md">日本語</a>
 </p>
@@ -34,32 +34,7 @@
 
 ---
 
-## 🤝 我們信任的合作伙伴
-
-<p align="center">
-  <em>排名不分先後</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a><!--
-  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
-    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
-  </a><!--
-  --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="北京大學" height="80" />
-  </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud 優刻得" height="80" />
-  </a><!--
-  --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="阿里雲" height="80" />
-  </a><!--
-  --><a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
+**New API Person** 是基於 [QuantumNous/new-api](https://github.com/QuantumNous/new-api) 調整的個人版分發。它繼承了上游 New API 的全部能力——將 40+ 上游 AI 服務商（OpenAI、Claude、Gemini、Azure、AWS Bedrock 等）聚合在統一 API 之後，並附帶使用者管理、計費、限流與管理後台。本倉庫在上游基礎上做面向個人使用場景的調整與維護，並非官方版本。
 
 ---
 
@@ -83,7 +58,7 @@
 
 ```bash
 # 複製項目
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # 編輯 docker-compose.yml 配置
@@ -98,22 +73,22 @@ docker-compose up -d
 
 ```bash
 # 拉取最新鏡像
-docker pull calciumion/new-api:latest
+docker pull walllee/new-api-person:latest
 
 # 使用 SQLite（預設）
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 
 # 使用 MySQL
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 提示：** `-v ./data:/data` 會將數據保存在當前目錄的 `data` 資料夾中，你也可以改為絕對路徑如 `-v /your/custom/path:/data`
@@ -267,7 +242,7 @@ docker run --name new-api -d --restart always \
 ## 🚢 部署
 
 > [!TIP]
-> **最新版 Docker 鏡像：** `calciumion/new-api:latest`
+> **最新版 Docker 鏡像：** `walllee/new-api-person:latest`
 
 ### 📋 部署要求
 
@@ -321,7 +296,7 @@ docker run --name new-api -d --restart always \
 
 ```bash
 # 複製項目
-git clone https://github.com/QuantumNous/new-api.git
+git clone https://github.com/wheesys/new-api-person.git
 cd new-api
 
 # 編輯配置
@@ -338,21 +313,21 @@ docker-compose up -d
 
 **使用 SQLite：**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 **使用 MySQL：**
 ```bash
-docker run --name new-api -d --restart always \
+docker run --name new-api-person -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  walllee/new-api-person:latest
 ```
 
 > **💡 路徑說明：**
@@ -463,6 +438,6 @@ Docker 映像和其他目標程式碼發布物應能透過 Git tag、release 或
 
 **[官方文件](https://docs.newapi.pro/zh/docs)** • **[問題回饋](https://github.com/wheesys/new-api-person/issues)** • **[最新發布](https://github.com/wheesys/new-api-person/releases)**
 
-<sub>Built with ❤️ by QuantumNous</sub>
+<sub>Built with ❤️ by wheesys</sub>
 
 </div>
